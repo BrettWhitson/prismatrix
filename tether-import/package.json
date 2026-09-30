@@ -1,0 +1,50 @@
+{
+  "name": "tether",
+  "version": "0.3.1",
+  "private": true,
+  "license": "MIT",
+  "description": "Tether: graph layout and physics. Tidy tree, radial and layered layouts, a Barnes–Hut force simulation, and an elastic network for dragging, on plain arrays.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./*.js": {
+      "types": "./types/*.d.ts",
+      "default": "./src/*.js"
+    },
+    "./*": "./src/*"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test \"tests/*.test.js\"",
+    "format": "prettier --write \"**/*.{js,mjs}\"",
+    "format:check": "prettier --check \"**/*.{js,mjs}\"",
+    "verify": "npm run lint && npm run format:check && npm run typecheck && npm run types:check && npm run docs:check && npm test",
+    "types": "tsc -p . && prettier --write types --log-level warn",
+    "typecheck": "tsc -p . --noEmit",
+    "types:check": "node tools/check-types.mjs",
+    "docs": "node tools/docs.mjs",
+    "docs:check": "node tools/docs.mjs --check"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.0",
+    "globals": "^17.12.0",
+    "prettier": "3.9.9",
+    "typescript": "7.0.2"
+  },
+  "types": "./types/index.d.ts",
+  "files": [
+    "src",
+    "types",
+    "README.md",
+    "API.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ]
+}

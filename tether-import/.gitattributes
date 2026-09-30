@@ -1,0 +1,5 @@
+# Normalise line endings in the repository (LF), whatever the contributor's OS.
+* text=auto eol=lf
+
+*.png binary
+package-lock.json -diff
