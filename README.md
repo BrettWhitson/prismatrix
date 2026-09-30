@@ -1,52 +1,68 @@
-# Prism
+# Prismatrix
 
-A graphing and rendering engine for the browser. Give it nodes and edges; it styles them and draws them on the GPU
-(WebGL2), morphs smoothly from one graph to the next, and handles what the viewer does: hover lineage, selection,
-highlights, panning and zooming, fitting the view and PNG export. It holds 60 fps at 10,000 nodes.
+**Lightning fast and lightweight Graph Rendering and Physics Engine.**
 
-Prism doesn't position anything itself. [Tether](https://github.com/BrettWhitson/tether), its one dependency, does
-all the physics: the layouts, the forces, and how the graph moves when a node is dragged. Prism hands Tether the
-graph and the pointer's moves, and draws the positions Tether returns.
+Give it nodes and edges. It lays them out, draws them on the GPU (WebGL2), moves them believably when you drag them,
+and morphs smoothly from one graph to the next. It holds 60 fps at 10,000 nodes, and has no runtime dependencies and
+no build step: plain ES modules, with TypeScript declarations.
 
-- **Fully customizable:** every option (about 80), theme colour and physics constant is described by a schema
-  (type, range, default, label, hint) and checked. Bad values are clamped or defaulted with a warning, or throw in
-  strict mode. The schemas can build a settings UI; the demo's panel is built that way.
-- **Styling in steps:** options and theme, then class rules, then each node's own `style`, then a `nodeStyle` hook.
-  Every step can change any style field.
-- **Events:** `view.on("nodeTap", …)` returns its own unsubscribe. There are 18 events, from taps and drags to
-  physics settling and option changes.
-- **Plugins:** custom node shapes (a polygon, or a GLSL distance function compiled into the shader), arrowheads,
-  edge routings and animation feels, plus Tether's custom layouts and forces.
-- **Typed:** plain ES modules with no build step, and TypeScript declarations in `types/`.
+Two layers, one package:
+
+- **The view and renderer** (`"prismatrix"`) knows what's in the graph and how to draw it:
+  - styles, from options, a theme, class rules and hooks;
+  - icons or cards;
+  - labels, edges and arrowheads;
+  - hover lineage, selection and highlights;
+  - panning, zooming and fitting;
+  - PNG export.
+- **The layout and physics layer** (`"prismatrix/layout"`) knows where every node is and how nodes move and push on
+  each other:
+  - tidy tree, layered (Sugiyama-style) and radial layouts;
+  - a Barnes–Hut force simulation;
+  - elastic and floating drag physics.
+
+  It has no DOM or WebGL, so it runs in workers, tools and tests on its own.
+
+Everything is described by a schema (type, range, default, label and hint) and checked: 93 options, 17 theme colours
+and 43 physics constants. There are plugins for node shapes (a polygon, or GLSL), arrowheads, edge
+routings, easings, layouts and forces. `view.on(…)` gives events and returns its own unsubscribe.
 
 ```js
-import { GraphView } from "prism";
+import { GraphView } from "prismatrix";
 
 const view = new GraphView({
   container: document.getElementById("graph"),
-  // Layout and physics options go to Tether.
-  options: { direction: "LR", physicsMode: "floating", edgeRouting: "round-taxi" },
-  theme: { edge: "#44506a" },
-  classStyles: { nodes: { important: { ring: "#ffd166", shape: "hexagon" } } },
+  options: { direction: "LR", physicsMode: "floating", nodeLook: "card" },
 });
-
 view.on("nodeTap", ({ id }) => view.select(id));
-view.on("nodeHoverStart", ({ id }) => view.showLineage(id));
-view.on("nodeHoverEnd", () => view.clearLineage());
-
 view.render({
   nodes: [
-    { id: "a", label: "Start", color: "#62a4da" },
-    { id: "b", label: "Next", classes: ["important"] },
+    { id: "a", label: "Start", color: "#62a4da", subtitle: "the root" },
+    { id: "b", label: "Next", value: "42" },
   ],
-  edges: [{ source: "a", target: "b", label: "2" }],
+  edges: [{ source: "a", target: "b" }],
   fit: true,
 });
 ```
 
-Edges run parent → child, from the root outward. The root is the node with `root: true`, or else the first one.
+Laying a graph out without drawing it:
 
-The full reference is in [API.md](API.md), including using a view from a Svelte component.
+```js
+import { LayoutGraph, runLayout } from "prismatrix/layout";
+
+const graph = new LayoutGraph(nodes, edges); // nodes: { id, w, h }; edges: { source, target }
+runLayout(graph, { layout: "tree", direction: "TB" });
+graph.positionOf("a"); // { x, y }
+```
+
+The full reference, covering the view, cards, events, plugins, the layout layer, settings and tuning, is in
+[API.md](API.md).
+
+## Install
+
+```sh
+npm install github:BrettWhitson/prismatrix#v0.4.0
+```
 
 In a browser without a bundler, map the imports:
 
@@ -54,8 +70,8 @@ In a browser without a bundler, map the imports:
 <script type="importmap">
   {
     "imports": {
-      "prism": "./node_modules/prism/src/index.js",
-      "tether/": "./node_modules/tether/src/"
+      "prismatrix": "./node_modules/prismatrix/src/index.js",
+      "prismatrix/layout": "./node_modules/prismatrix/src/layout/index.js"
     }
   }
 </script>
@@ -65,30 +81,24 @@ In a browser without a bundler, map the imports:
 
 | Where | What |
 | --- | --- |
-| `src/index.js` | the public API (Tether's included): import everything from here |
-| `src/graph-view.js` | `GraphView`: calls Tether to lay out and to move nodes, and the renderer to draw; emits the events |
-| `src/options.js` | the options schema: every option, its range and its default |
-| `src/style.js` | the theme schema, and options + theme + classes + hooks → what each node and edge looks like |
-| `src/render/` | the WebGL2 renderer (`WebGLGraph`): instanced nodes, edges and arrowheads, canvas labels, and springs that animate every visual change. It imports nothing from the rest of Prism (a test checks), so it can be used, or split out, on its own. |
-| `src/render/plugins.js` | the shape, arrowhead, routing and easing registries |
+| `src/index.js` | the public API: everything |
+| `src/graph-view.js` | `GraphView`: styles the graph, asks the layout layer for positions and motion, has the renderer draw them, emits the events |
+| `src/options.js`, `src/style.js` | the options and theme schemas, and options + theme + classes + hooks → what each node and edge looks like |
+| `src/render/` | the WebGL2 renderer (`WebGLGraph`) and its plugin registries. It imports nothing outside itself (a test checks). |
+| `src/layout/` | the layout and physics layer: `runLayout`, the layouts, `ForceSimulation`, `ElasticNetwork`, `LivePhysics`, the settings and tuning schemas. It imports nothing outside itself and uses no DOM (a test checks). |
+
+## History
+
+Prismatrix joins two engines: **Prism**, the renderer, and **Tether**, the layout and physics layer. Their full
+histories are in this repository (`git log`, `git blame`). The old tags keep their names: Prism's are `v0.2.0` to
+`v0.3.2`, and Tether's are prefixed `tether-v0.2.0` to `tether-v0.3.1`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
-Prism needs Tether beside it (a peer dependency): install both, from GitHub.
-
 ```sh
-npm install github:BrettWhitson/prism#v0.3.2 github:BrettWhitson/tether#v0.3.1
-```
-
-When upgrading, install Tether first, then Prism: npm checks Prism's peer range against the Tether already
-installed, so upgrading both in one command fails (ERESOLVE) while the old Tether is still there.
-
-```sh
-npm install      # fetches Tether from GitHub (a dev dependency here)
+npm install
 npm run demo     # http://localhost:8650/demo/: every option, colour and constant, live
-npm run verify   # lint, prettier, type check, declarations and docs up to date, tests
+npm run verify   # lint, prettier, type check, declarations and docs up to date, all tests
 npm run types    # regenerate types/ after changing a JSDoc type
 npm run docs     # regenerate API.md's tables after changing a schema
 ```
-
-To work on Prism and Tether together, point Prism at your Tether checkout: `npm install --no-save ../tether`.

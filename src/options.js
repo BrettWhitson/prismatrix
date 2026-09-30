@@ -3,18 +3,18 @@ import {
   defaultsOf,
   describeSchema,
   resolve,
-} from "tether/index.js";
+} from "./layout/index.js";
 
 /**
  * Everything a GraphView can be told, as one schema: type, range, default, label and hint for each option. Pass any
  * subset to the constructor or to setOptions(); they're checked (bad values are clamped or replaced by the default,
- * with a warning, or throw with `strict: true`). Layout and physics options (Tether's settings: layout, direction,
+ * with a warning, or throw with `strict: true`). Layout and physics options (Prismatrix's settings: layout, direction,
  * layered, physicsMode, the forces) take effect on the next render(); everything else at once.
  *
  * OPTIONS (the list, for settings UIs) and DEFAULT_OPTIONS come from this schema.
  */
 
-/** @returns {import('tether/index.js').Field} */
+/** @returns {import('./layout/index.js').Field} */
 const number = (group, label, value, min, max, step, hint) => ({
   type: "number",
   group,
@@ -25,12 +25,12 @@ const number = (group, label, value, min, max, step, hint) => ({
   step,
   hint,
 });
-/** @returns {import('tether/index.js').Field} */
+/** @returns {import('./layout/index.js').Field} */
 const integer = (group, label, value, min, max, step, hint) => ({
   ...number(group, label, value, min, max, step, hint),
   type: "integer",
 });
-/** @returns {import('tether/index.js').Field} */
+/** @returns {import('./layout/index.js').Field} */
 const boolean = (group, label, value, hint) => ({
   type: "boolean",
   group,
@@ -38,7 +38,7 @@ const boolean = (group, label, value, hint) => ({
   default: value,
   hint,
 });
-/** @returns {import('tether/index.js').Field} */
+/** @returns {import('./layout/index.js').Field} */
 const choice = (group, label, value, values, hint, open = false) => ({
   type: "enum",
   group,
@@ -49,9 +49,9 @@ const choice = (group, label, value, values, hint, open = false) => ({
   hint,
 });
 
-/** @type {Readonly<import('tether/index.js').Schema>} */
+/** @type {Readonly<import('./layout/index.js').Schema>} */
 export const OPTIONS_SCHEMA = Object.freeze({
-  // ---------------------------------------------------------------- layout and physics (Tether)
+  // ---------------------------------------------------------------- layout and physics (the layout layer)
   ...SETTINGS_SCHEMA,
 
   // ---------------------------------------------------------------- nodes
@@ -768,7 +768,7 @@ export const OPTIONS_SCHEMA = Object.freeze({
 });
 
 /**
- * @typedef {import('tether/index.js').LayoutSettings & {
+ * @typedef {import('./layout/index.js').LayoutSettings & {
  *   nodeLook: "icon" | "card", cardWidth: number, cardHeight: number, cardIconSize: number, cardIconInset: number,
  *   cardPadding: number, cardTitleSize: number, cardSubtitleSize: number, cardValueSize: number,
  *   cardStripeWidth: number, cardStripeInset: number, cardPortSize: number, cardDetailZoom: number,
@@ -812,12 +812,12 @@ export const OPTIONS = Object.freeze(describeSchema(OPTIONS_SCHEMA));
  */
 export function resolveOptions(patch, options = {}) {
   const out = resolve(OPTIONS_SCHEMA, patch, {
-    scope: "Prism options",
+    scope: "Prismatrix options",
     ...options,
   });
   // Across fields: the zoom limits must be in order (otherwise the minimum wins everywhere).
   if (out.minZoom > out.maxZoom) {
-    const message = `Prism options: minZoom (${out.minZoom}) is above maxZoom (${out.maxZoom}); swapping them`;
+    const message = `Prismatrix options: minZoom (${out.minZoom}) is above maxZoom (${out.maxZoom}); swapping them`;
     if (options.strict) throw new TypeError(message);
     (options.warn ?? console.warn)(message);
     [out.minZoom, out.maxZoom] = [out.maxZoom, out.minZoom];

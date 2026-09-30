@@ -41,7 +41,7 @@ function capture(fn) {
   }
 }
 
-test("the entry point exports Prism's API and Tether's", () => {
+test("the entry point exports the view's API and the layout layer's", () => {
   for (const name of [
     "GraphView",
     "OPTIONS_SCHEMA",
@@ -51,7 +51,7 @@ test("the entry point exports Prism's API and Tether's", () => {
     "registerEdgeRouting",
     "registerEasing",
     "WebGLGraph",
-    // Tether, re-exported
+    // the layout layer
     "runLayout",
     "registerLayout",
     "registerForce",
@@ -61,7 +61,7 @@ test("the entry point exports Prism's API and Tether's", () => {
     assert.ok(prism[name], `${name} is exported`);
 });
 
-test("options: every one is described, and Tether's settings are among them", () => {
+test("options: every one is described, and the layout settings are among them", () => {
   for (const key of ["layout", "direction", "physicsMode", "linkDistance"])
     assert.ok(key in OPTIONS_SCHEMA, key);
   for (const option of OPTIONS) {

@@ -5,7 +5,7 @@ import {
   runLayout,
   flowOf,
   uniqueById,
-} from "tether/index.js";
+} from "./layout/index.js";
 import { WebGLGraph } from "./render/webgl-graph.js";
 import { planTransition } from "./render/transition-plan.js";
 import { labelBox, labelFont, layoutLabel } from "./render/labels.js";
@@ -70,9 +70,9 @@ const HANDLER_EVENTS = {
 };
 
 /**
- * Prism's graphing engine: give it nodes and edges, and it styles them (style.js) and draws them (render/), then
+ * Prismatrix's graphing engine: give it nodes and edges, and it styles them (style.js) and draws them (render/), then
  * handles everything after: morphing to the next graph, hover lineage, selection, highlights, fitting and PNG export.
- * Tether does all the physics: it lays the graph out, and moves nodes when one is dragged (LivePhysics); this view
+ * Prismatrix does all the physics: it lays the graph out, and moves nodes when one is dragged (LivePhysics); this view
  * passes it the pointer's moves and draws the positions it returns.
  *
  * Edges run parent → child, from the root outward. The root is the node with `root: true`, or else the first node.
@@ -98,7 +98,7 @@ export class GraphView extends Emitter {
   #parentOf = new Map();
   #outgoing = new Map();
   #incoming = new Map();
-  /** Tether moves the nodes after the layout (drags, shakes, floating in); this view draws what it returns. */
+  /** Prismatrix moves the nodes after the layout (drags, shakes, floating in); this view draws what it returns. */
   #physics;
   /** Stops the per-frame loop that steps the physics, while one runs. */
   #stopTicker = null;
@@ -116,13 +116,13 @@ export class GraphView extends Emitter {
   /**
    * @param {{ container: HTMLElement, canvasWrapper?: HTMLElement,
    *           options?: Partial<import('./options.js').Options>, theme?: Partial<import('./style.js').Theme>,
-   *           tuning?: Partial<import('tether/index.js').Tuning>, classStyles?: import('./style.js').ClassRules,
+   *           tuning?: Partial<import('./layout/index.js').Tuning>, classStyles?: import('./style.js').ClassRules,
    *           handlers?: Partial<Record<keyof typeof HANDLER_EVENTS, Function>>, strict?: boolean,
    *           rendererOptions?: { preserveDrawingBuffer?: boolean, badgeUrl?: string, colors?: object } }} config
    *   handlers: a shortcut for on(): onNodeTap(id, event), onNodeDoubleTap(id, event), onNodeContextTap(id, event),
    *   onBackgroundTap(), onNodeHoverStart(id, event), onNodeHoverEnd(), onPointerMove(event), onViewportChange()
    *   canvasWrapper: the element whose CSS background follows pan and zoom (see syncBackground)
-   *   tuning: Tether's constants for this view (see setPhysicsTuning)
+   *   tuning: Prismatrix's constants for this view (see setPhysicsTuning)
    *   strict: invalid options and theme colours throw instead of warning
    *   rendererOptions.colors: theme colours (older name; pass them in `theme`)
    */
@@ -214,7 +214,7 @@ export class GraphView extends Emitter {
       (key) => next[key] !== this.#options[key],
     );
     if (!changed.length) return;
-    // In place: Tether's LivePhysics reads this same object on every grab.
+    // In place: Prismatrix's LivePhysics reads this same object on every grab.
     Object.assign(this.#options, next);
     this.#applyOptions();
     this.#restyle();
@@ -311,10 +311,10 @@ export class GraphView extends Emitter {
   render({ nodes, edges, fit = false, anchorNodeId = null, grow = false }) {
     const started = performance.now();
     // Ids are unique: the first of each is kept (with a warning). An edge's id is its `id`, or "source->target".
-    nodes = uniqueById(nodes, "Prism: render() nodes");
+    nodes = uniqueById(nodes, "Prismatrix: render() nodes");
     edges = uniqueById(
       edges.map((edge) => ({ ...edge, id: edgeId(edge) })),
-      "Prism: render() edges (give parallel edges their own ids)",
+      "Prismatrix: render() edges (give parallel edges their own ids)",
     );
     const o = this.#options;
     const graph = this.graph;
@@ -489,12 +489,12 @@ export class GraphView extends Emitter {
     return depths;
   }
 
-  // ---------------------------------------------------------------- physics (Tether)
+  // ---------------------------------------------------------------- physics (the layout layer)
 
   /**
-   * Tether's constants (TUNING_SCHEMA) for this view, checked; everything not given goes back to its default.
+   * Prismatrix's constants (TUNING_SCHEMA) for this view, checked; everything not given goes back to its default.
    * Applies to what's running too; layout constants apply from the next render().
-   * @param {Partial<import('tether/index.js').Tuning>} tuning
+   * @param {Partial<import('./layout/index.js').Tuning>} tuning
    */
   setPhysicsTuning(tuning) {
     this.#physics.tuning = tuning;
@@ -595,7 +595,7 @@ export class GraphView extends Emitter {
   }
 
   /**
-   * Step Tether every frame while anything moves, drawing what moved, and stop when it's still (a node held still
+   * Step Prismatrix every frame while anything moves, drawing what moved, and stop when it's still (a node held still
    * costs nothing); the next drag, release or shake starts it again.
    */
   #drive() {
@@ -727,7 +727,7 @@ export class GraphView extends Emitter {
       flowAxis: resolveFlowAxis(o),
       cornerRadius: o.edgeCornerRadius,
       curvature: o.edgeCurvature ?? 1,
-      portDirection: flowOf(o).rootSide, // where a card's out port sits (Tether knows where the root is)
+      portDirection: flowOf(o).rootSide, // where a card's out port sits (the layout layer knows where the root is)
     };
   }
 

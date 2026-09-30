@@ -1,8 +1,8 @@
 /**
- * Prism's public API. Everything an app needs is exported from here; the modules behind it (prism/<module>.js) stay
+ * Prismatrix's public API. Everything an app needs is exported from here; the modules behind it (prism/<module>.js) stay
  * importable for tools that want one piece, but only this entry point is the stable interface.
  *
- * Layout and physics are Tether's: its whole API is re-exported too (registerLayout, registerForce, the tuning…),
+ * Layout and physics are Prismatrix's: its whole API is re-exported too (registerLayout, registerForce, the tuning…),
  * so an app needs only this one import.
  */
 export { GraphView } from "./graph-view.js";
@@ -38,7 +38,7 @@ export {
   DEFAULT_COLORS,
   DEFAULT_INPUT,
 } from "./render/webgl-graph.js";
-export * from "tether/index.js";
+export * from "./layout/index.js";
 export type Options = import("./options.js").Options;
 export type Theme = import("./style.js").Theme;
 export type NodeStyle = import("./style.js").NodeStyle;

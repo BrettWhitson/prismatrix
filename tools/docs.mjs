@@ -1,7 +1,12 @@
-// API.md's option and theme tables come from the schemas. `node tools/docs.mjs` rewrites them;
+// API.md's option, theme, settings and tuning tables come from the schemas. `node tools/docs.mjs` rewrites them;
 // `--check` fails when they're out of date.
 import { readFileSync, writeFileSync } from "node:fs";
-import { OPTIONS, SETTINGS_OPTIONS, THEME_OPTIONS } from "../src/index.js";
+import {
+  OPTIONS,
+  SETTINGS_OPTIONS,
+  THEME_OPTIONS,
+  TUNING_OPTIONS,
+} from "../src/index.js";
 
 const cell = (text) => String(text).replace(/\|/g, "\\|");
 const range = (o) =>
@@ -16,7 +21,7 @@ const range = (o) =>
 const value = (o) =>
   typeof o.default === "function" ? "" : `\`${JSON.stringify(o.default)}\``;
 
-/** Prism's own options (Tether's settings are documented in Tether's API.md), grouped. */
+/** Prismatrix's own options (Prismatrix's settings are documented in Prismatrix's API.md), grouped. */
 function optionTables() {
   const tether = new Set(SETTINGS_OPTIONS.map((o) => o.key));
   const out = [];
@@ -48,7 +53,42 @@ function themeTable() {
   ].join("\n");
 }
 
-const sections = { options: optionTables(), theme: themeTable() };
+function settingsTable() {
+  const rows = SETTINGS_OPTIONS.map(
+    (o) => `| \`${o.key}\` | ${value(o)} | ${range(o)} | ${cell(o.hint)} |`,
+  );
+  return [
+    "| Setting | Default | Values | What it does |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+  ].join("\n");
+}
+
+function tuningTables() {
+  const out = [];
+  let group;
+  for (const o of TUNING_OPTIONS) {
+    if (o.group !== group) {
+      group = o.group;
+      out.push(
+        "",
+        `**${group}**`,
+        "",
+        "| Constant | Default | Range | What it does |",
+        "| --- | --- | --- | --- |",
+      );
+    }
+    out.push(`| \`${o.key}\` | ${value(o)} | ${range(o)} | ${cell(o.hint)} |`);
+  }
+  return out.join("\n").trim();
+}
+
+const sections = {
+  options: optionTables(),
+  theme: themeTable(),
+  settings: settingsTable(),
+  tuning: tuningTables(),
+};
 const path = new URL("../API.md", import.meta.url);
 const before = readFileSync(path, "utf8");
 let after = before;

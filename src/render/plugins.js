@@ -42,7 +42,7 @@ function warnUnknown(kind, name, fallback) {
   if (warned.has(key)) return;
   warned.add(key);
   console.warn(
-    `Prism: unknown ${kind} ${JSON.stringify(name)} (not registered); drawing ${fallback}`,
+    `Prismatrix: unknown ${kind} ${JSON.stringify(name)} (not registered); drawing ${fallback}`,
   );
 }
 

@@ -1,4 +1,4 @@
-// Prism's API, all of it adjustable: every option, theme colour and Tether tuning constant gets a control built from
+// Prismatrix's API, all of it adjustable: every option, theme colour and Prismatrix tuning constant gets a control built from
 // its schema, plugins of each kind are registered below, and the events scroll by in the log.
 import {
   DEFAULT_OPTIONS,
@@ -197,7 +197,7 @@ $("shake").onclick = () => view.settle({ heat: 0.8, scatter: 60 });
 // ---------------------------------------------------------------- controls, from the schemas
 
 const panel = $("panel");
-/** Options that re-run the layout when they change (Tether's settings and the sizes it leaves room for). */
+/** Options that re-run the layout when they change (Prismatrix's settings and the sizes it leaves room for). */
 const RELAYOUT = new Set([
   "layout",
   "direction",

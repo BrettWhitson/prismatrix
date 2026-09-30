@@ -40,7 +40,7 @@ import {
 } from "./plugins.js";
 
 /**
- * Prism's renderer. This is its engine: WebGL2 draws every node, edge and arrowhead in a handful of instanced calls, a
+ * Prismatrix's renderer. This is its engine: WebGL2 draws every node, edge and arrowhead in a handful of instanced calls, a
  * 2D canvas on top draws the labels, and springs move everything (nodes, fades, glows, the camera), so any change can
  * interrupt any other and motion stays continuous. Layout is the caller's: nodes arrive with positions.
  *
@@ -1121,7 +1121,7 @@ export class WebGLGraph {
       if (!broken.size) throw error;
       for (const name of broken) disableShape(name); // reported once: later shaders leave it out
       console.warn(
-        `Prism: node shape${broken.size > 1 ? "s" : ""} ${[...broken].map((n) => `"${n}"`).join(", ")} didn't compile and ${broken.size > 1 ? "are" : "is"} drawn as the default shape:
+        `Prismatrix: node shape${broken.size > 1 ? "s" : ""} ${[...broken].map((n) => `"${n}"`).join(", ")} didn't compile and ${broken.size > 1 ? "are" : "is"} drawn as the default shape:
 ${error.message}`,
       );
       this.nodeProgram = build(broken);

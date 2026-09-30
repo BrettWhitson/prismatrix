@@ -68,5 +68,5 @@ createServer(async (request, response) => {
   });
   response.end(body);
 }).listen(port, () =>
-  console.log(`Prism demo: http://localhost:${port}/demo/`),
+  console.log(`Prismatrix demo: http://localhost:${port}/demo/`),
 );

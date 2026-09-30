@@ -1,22 +1,22 @@
-/** Every colour Prism draws with. Pass a partial theme to GraphView (or setTheme) to change any of them. */
+/** Every colour Prismatrix draws with. Pass a partial theme to GraphView (or setTheme) to change any of them. */
 export declare const THEME_SCHEMA: Readonly<{
-  node: import("tether/schema.js").Field;
-  nodeFill: import("tether/schema.js").Field;
-  edge: import("tether/schema.js").Field;
-  ancestors: import("tether/schema.js").Field;
-  descendants: import("tether/schema.js").Field;
-  highlight: import("tether/schema.js").Field;
-  focus: import("tether/schema.js").Field;
-  selected: import("tether/schema.js").Field;
-  hover: import("tether/schema.js").Field;
-  labelText: import("tether/schema.js").Field;
-  edgeLabelText: import("tether/schema.js").Field;
-  labelBackdrop: import("tether/schema.js").Field;
-  edgeLabelBackdrop: import("tether/schema.js").Field;
-  cardBorder: import("tether/schema.js").Field;
-  cardText: import("tether/schema.js").Field;
-  cardMuted: import("tether/schema.js").Field;
-  portFill: import("tether/schema.js").Field;
+  node: import("./layout/schema.js").Field;
+  nodeFill: import("./layout/schema.js").Field;
+  edge: import("./layout/schema.js").Field;
+  ancestors: import("./layout/schema.js").Field;
+  descendants: import("./layout/schema.js").Field;
+  highlight: import("./layout/schema.js").Field;
+  focus: import("./layout/schema.js").Field;
+  selected: import("./layout/schema.js").Field;
+  hover: import("./layout/schema.js").Field;
+  labelText: import("./layout/schema.js").Field;
+  edgeLabelText: import("./layout/schema.js").Field;
+  labelBackdrop: import("./layout/schema.js").Field;
+  edgeLabelBackdrop: import("./layout/schema.js").Field;
+  cardBorder: import("./layout/schema.js").Field;
+  cardText: import("./layout/schema.js").Field;
+  cardMuted: import("./layout/schema.js").Field;
+  portFill: import("./layout/schema.js").Field;
 }>;
 export type Theme = {
   node: string;
@@ -46,7 +46,7 @@ export type Theme = {
 /** @type {Readonly<Theme>} */
 export declare const DEFAULT_THEME: Readonly<Theme>;
 /** The theme as a list, for settings UIs. */
-export declare const THEME_OPTIONS: readonly (import("tether/schema.js").Field & {
+export declare const THEME_OPTIONS: readonly (import("./layout/schema.js").Field & {
   key: string;
 })[];
 /** The theme colours the renderer draws interaction and labels with (WebGLGraph's colors). */
@@ -193,55 +193,55 @@ export type ClassRules = {
  * value that can't be used is left out (the style keeps what it had), and a number out of range is clamped.
  */
 export declare const NODE_STYLE_SCHEMA: Readonly<{
-  size: import("tether/schema.js").Field;
-  shape: import("tether/schema.js").Field;
-  fill: import("tether/schema.js").Field;
-  fillAlpha: import("tether/schema.js").Field;
-  border: import("tether/schema.js").Field;
-  borderWidth: import("tether/schema.js").Field;
-  pattern: import("tether/schema.js").Field;
-  iconAlpha: import("tether/schema.js").Field;
-  aura: import("tether/schema.js").Field;
-  ring: import("tether/schema.js").Field;
-  badge: import("tether/schema.js").Field;
-  label: import("tether/schema.js").Field;
-  fontSize: import("tether/schema.js").Field;
-  bold: import("tether/schema.js").Field;
-  labelPriority: import("tether/schema.js").Field;
-  events: import("tether/schema.js").Field;
-  icon: import("tether/schema.js").Field;
-  look: import("tether/schema.js").Field;
-  width: import("tether/schema.js").Field;
-  height: import("tether/schema.js").Field;
-  stripe: import("tether/schema.js").Field;
-  portIn: import("tether/schema.js").Field;
-  portOut: import("tether/schema.js").Field;
-  subtitle: import("tether/schema.js").Field;
-  value: import("tether/schema.js").Field;
-  tag: import("tether/schema.js").Field;
-  tagColor: import("tether/schema.js").Field;
-  valueColor: import("tether/schema.js").Field;
-  iconSize: import("tether/schema.js").Field;
-  iconInset: import("tether/schema.js").Field;
-  stripeWidth: import("tether/schema.js").Field;
-  stripeInset: import("tether/schema.js").Field;
-  portSize: import("tether/schema.js").Field;
-  subtitleSize: import("tether/schema.js").Field;
-  valueSize: import("tether/schema.js").Field;
-  cardPadding: import("tether/schema.js").Field;
+  size: import("./layout/schema.js").Field;
+  shape: import("./layout/schema.js").Field;
+  fill: import("./layout/schema.js").Field;
+  fillAlpha: import("./layout/schema.js").Field;
+  border: import("./layout/schema.js").Field;
+  borderWidth: import("./layout/schema.js").Field;
+  pattern: import("./layout/schema.js").Field;
+  iconAlpha: import("./layout/schema.js").Field;
+  aura: import("./layout/schema.js").Field;
+  ring: import("./layout/schema.js").Field;
+  badge: import("./layout/schema.js").Field;
+  label: import("./layout/schema.js").Field;
+  fontSize: import("./layout/schema.js").Field;
+  bold: import("./layout/schema.js").Field;
+  labelPriority: import("./layout/schema.js").Field;
+  events: import("./layout/schema.js").Field;
+  icon: import("./layout/schema.js").Field;
+  look: import("./layout/schema.js").Field;
+  width: import("./layout/schema.js").Field;
+  height: import("./layout/schema.js").Field;
+  stripe: import("./layout/schema.js").Field;
+  portIn: import("./layout/schema.js").Field;
+  portOut: import("./layout/schema.js").Field;
+  subtitle: import("./layout/schema.js").Field;
+  value: import("./layout/schema.js").Field;
+  tag: import("./layout/schema.js").Field;
+  tagColor: import("./layout/schema.js").Field;
+  valueColor: import("./layout/schema.js").Field;
+  iconSize: import("./layout/schema.js").Field;
+  iconInset: import("./layout/schema.js").Field;
+  stripeWidth: import("./layout/schema.js").Field;
+  stripeInset: import("./layout/schema.js").Field;
+  portSize: import("./layout/schema.js").Field;
+  subtitleSize: import("./layout/schema.js").Field;
+  valueSize: import("./layout/schema.js").Field;
+  cardPadding: import("./layout/schema.js").Field;
 }>;
 export declare const EDGE_STYLE_SCHEMA: Readonly<{
-  color: import("tether/schema.js").Field;
-  width: import("tether/schema.js").Field;
-  alpha: import("tether/schema.js").Field;
-  pattern: import("tether/schema.js").Field;
-  patternToward: import("tether/schema.js").Field;
-  arrowAtSource: import("tether/schema.js").Field;
-  arrowAtTarget: import("tether/schema.js").Field;
-  arrowScale: import("tether/schema.js").Field;
-  label: import("tether/schema.js").Field;
-  fontSize: import("tether/schema.js").Field;
-  glow: import("tether/schema.js").Field;
+  color: import("./layout/schema.js").Field;
+  width: import("./layout/schema.js").Field;
+  alpha: import("./layout/schema.js").Field;
+  pattern: import("./layout/schema.js").Field;
+  patternToward: import("./layout/schema.js").Field;
+  arrowAtSource: import("./layout/schema.js").Field;
+  arrowAtTarget: import("./layout/schema.js").Field;
+  arrowScale: import("./layout/schema.js").Field;
+  label: import("./layout/schema.js").Field;
+  fontSize: import("./layout/schema.js").Field;
+  glow: import("./layout/schema.js").Field;
 }>;
 /** "auto" puts labels where the layout leaves room: beside horizontal trees, below everything else. */
 export declare function resolveLabelPosition(o: any): any;

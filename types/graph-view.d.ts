@@ -1,4 +1,4 @@
-import { Emitter } from "tether/index.js";
+import { Emitter } from "./layout/index.js";
 import { WebGLGraph } from "./render/webgl-graph.js";
 export type GraphNode = {
   id: string;
@@ -144,9 +144,9 @@ declare const HANDLER_EVENTS: {
   onViewportChange: string;
 };
 /**
- * Prism's graphing engine: give it nodes and edges, and it styles them (style.js) and draws them (render/), then
+ * Prismatrix's graphing engine: give it nodes and edges, and it styles them (style.js) and draws them (render/), then
  * handles everything after: morphing to the next graph, hover lineage, selection, highlights, fitting and PNG export.
- * Tether does all the physics: it lays the graph out, and moves nodes when one is dragged (LivePhysics); this view
+ * Prismatrix does all the physics: it lays the graph out, and moves nodes when one is dragged (LivePhysics); this view
  * passes it the pointer's moves and draws the positions it returns.
  *
  * Edges run parent → child, from the root outward. The root is the node with `root: true`, or else the first node.
@@ -165,13 +165,13 @@ export declare class GraphView extends Emitter<GraphViewEvents> {
   /**
    * @param {{ container: HTMLElement, canvasWrapper?: HTMLElement,
    *           options?: Partial<import('./options.js').Options>, theme?: Partial<import('./style.js').Theme>,
-   *           tuning?: Partial<import('tether/index.js').Tuning>, classStyles?: import('./style.js').ClassRules,
+   *           tuning?: Partial<import('./layout/index.js').Tuning>, classStyles?: import('./style.js').ClassRules,
    *           handlers?: Partial<Record<keyof typeof HANDLER_EVENTS, Function>>, strict?: boolean,
    *           rendererOptions?: { preserveDrawingBuffer?: boolean, badgeUrl?: string, colors?: object } }} config
    *   handlers: a shortcut for on(): onNodeTap(id, event), onNodeDoubleTap(id, event), onNodeContextTap(id, event),
    *   onBackgroundTap(), onNodeHoverStart(id, event), onNodeHoverEnd(), onPointerMove(event), onViewportChange()
    *   canvasWrapper: the element whose CSS background follows pan and zoom (see syncBackground)
-   *   tuning: Tether's constants for this view (see setPhysicsTuning)
+   *   tuning: Prismatrix's constants for this view (see setPhysicsTuning)
    *   strict: invalid options and theme colours throw instead of warning
    *   rendererOptions.colors: theme colours (older name; pass them in `theme`)
    */
@@ -190,7 +190,7 @@ export declare class GraphView extends Emitter<GraphViewEvents> {
     canvasWrapper?: HTMLElement;
     options?: Partial<import("./options.js").Options>;
     theme?: Partial<import("./style.js").Theme>;
-    tuning?: Partial<import("tether/index.js").Tuning>;
+    tuning?: Partial<import("./layout/index.js").Tuning>;
     classStyles?: import("./style.js").ClassRules;
     handlers?: Partial<Record<keyof typeof HANDLER_EVENTS, Function>>;
     strict?: boolean;
@@ -253,11 +253,11 @@ export declare class GraphView extends Emitter<GraphViewEvents> {
     grow?: boolean;
   }): void;
   /**
-   * Tether's constants (TUNING_SCHEMA) for this view, checked; everything not given goes back to its default.
+   * Prismatrix's constants (TUNING_SCHEMA) for this view, checked; everything not given goes back to its default.
    * Applies to what's running too; layout constants apply from the next render().
-   * @param {Partial<import('tether/index.js').Tuning>} tuning
+   * @param {Partial<import('./layout/index.js').Tuning>} tuning
    */
-  setPhysicsTuning(tuning: Partial<import("tether/index.js").Tuning>): void;
+  setPhysicsTuning(tuning: Partial<import("./layout/index.js").Tuning>): void;
   get physicsTuning(): any;
   /** The layout's force simulation (for developer tools: its alpha, positions, tuning). */
   get simulation(): any;

@@ -5,10 +5,10 @@ import {
   describeSchema,
   flowOf,
   resolve,
-} from "tether/index.js";
+} from "./layout/index.js";
 
 /**
- * Prism's look: an element's classes + data + the options + the theme → the plain values the renderer draws. States
+ * Prismatrix's look: an element's classes + data + the options + the theme → the plain values the renderer draws. States
  * read as an aura, a ring, a badge or a card stack; interaction states (hover, selection, lineage, highlights) aren't
  * here at all: the renderer animates those itself. Pure: no DOM.
  *
@@ -19,7 +19,7 @@ import {
  * their own order) → the node's or edge's own `style` → the nodeStyle / edgeStyle hook (options).
  */
 
-/** @returns {import('tether/index.js').Field} */
+/** @returns {import('./layout/index.js').Field} */
 const color = (label, value, hint) => ({
   type: "color",
   group: "Theme",
@@ -28,7 +28,7 @@ const color = (label, value, hint) => ({
   hint,
 });
 
-/** Every colour Prism draws with. Pass a partial theme to GraphView (or setTheme) to change any of them. */
+/** Every colour Prismatrix draws with. Pass a partial theme to GraphView (or setTheme) to change any of them. */
 export const THEME_SCHEMA = Object.freeze({
   node: color(
     "Node",
@@ -110,7 +110,10 @@ export const RENDERER_COLOR_KEYS = Object.freeze([
  * @returns {Theme}
  */
 export function resolveTheme(patch, options = {}) {
-  return resolve(THEME_SCHEMA, patch, { scope: "Prism theme", ...options });
+  return resolve(THEME_SCHEMA, patch, {
+    scope: "Prismatrix theme",
+    ...options,
+  });
 }
 
 /**
@@ -179,7 +182,7 @@ export function resolveTheme(patch, options = {}) {
  * @typedef {{ nodes?: Record<string, NodeRule>, edges?: Record<string, EdgeRule> }} ClassRules
  */
 
-/** @returns {import('tether/index.js').Field} */
+/** @returns {import('./layout/index.js').Field} */
 const field = (type, extra = {}) => ({ type, default: undefined, ...extra });
 
 /**
@@ -268,7 +271,9 @@ function applyStyle(style, changes, schema, source) {
     if (value === undefined) continue;
     const rule = schema[key];
     if (!rule) {
-      warnStyle(`Prism: ${source}: unknown style field "${key}" (ignored)`);
+      warnStyle(
+        `Prismatrix: ${source}: unknown style field "${key}" (ignored)`,
+      );
       continue;
     }
     if (value === null) {
@@ -280,14 +285,14 @@ function applyStyle(style, changes, schema, source) {
       if (isRichText(value)) style[key] = value;
       else
         warnStyle(
-          `Prism: ${source}: "${key}" expected a string or a list of runs (strings, { text, color }, { mark }, { dot }); got ${describe(value)}, ignored`,
+          `Prismatrix: ${source}: "${key}" expected a string or a list of runs (strings, { text, color }, { mark }, { dot }); got ${describe(value)}, ignored`,
         );
       continue;
     }
     const checked = checkField(rule, value);
     if (checked.problem) {
       warnStyle(
-        `Prism: ${source}: "${key}" ${checked.problem}; got ${describe(value)}, ${checked.value === undefined ? "ignored" : `using ${describe(checked.value)}`}`,
+        `Prismatrix: ${source}: "${key}" ${checked.problem}; got ${describe(value)}, ${checked.value === undefined ? "ignored" : `using ${describe(checked.value)}`}`,
       );
       if (checked.value === undefined) continue;
     }

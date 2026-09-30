@@ -1,6 +1,8 @@
-/** @type {Readonly<import('tether/index.js').Schema>} */
-export declare const OPTIONS_SCHEMA: Readonly<import("tether/index.js").Schema>;
-export type Options = import("tether/index.js").LayoutSettings & {
+/** @type {Readonly<import('./layout/index.js').Schema>} */
+export declare const OPTIONS_SCHEMA: Readonly<
+  import("./layout/index.js").Schema
+>;
+export type Options = import("./layout/index.js").LayoutSettings & {
   nodeLook: "icon" | "card";
   cardWidth: number;
   cardHeight: number;
@@ -97,7 +99,7 @@ export type Options = import("tether/index.js").LayoutSettings & {
     | null;
 };
 /**
- * @typedef {import('tether/index.js').LayoutSettings & {
+ * @typedef {import('./layout/index.js').LayoutSettings & {
  *   nodeLook: "icon" | "card", cardWidth: number, cardHeight: number, cardIconSize: number, cardIconInset: number,
  *   cardPadding: number, cardTitleSize: number, cardSubtitleSize: number, cardValueSize: number,
  *   cardStripeWidth: number, cardStripeInset: number, cardPortSize: number, cardDetailZoom: number,
@@ -129,7 +131,7 @@ export type Options = import("tether/index.js").LayoutSettings & {
 /** @type {Readonly<Options>} */
 export declare const DEFAULT_OPTIONS: Readonly<Options>;
 /** The options as a list, in schema order, for settings UIs: { key, type, default, min, max, step, values, label, group, hint }. */
-export declare const OPTIONS: readonly (import("tether/schema.js").Field & {
+export declare const OPTIONS: readonly (import("./layout/schema.js").Field & {
   key: string;
 })[];
 /**
