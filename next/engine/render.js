@@ -38,16 +38,26 @@ function branches(graph) {
   return out;
 }
 
-/** The node and everything above and below it in the forest. */
+/**
+ * The node and everything above and below it: every node it can be reached from and every node it reaches, along
+ * any edge (so in a merged tree a shared ingredient lights up with every recipe that uses it).
+ */
 export function lineage(graph, index) {
   const set = new Set([index]);
-  for (let p = graph.nodes[index].parent; p >= 0; p = graph.nodes[p].parent)
-    set.add(p);
-  const stack = [index];
-  while (stack.length) {
-    for (const c of graph.nodes[stack.pop()].children) {
-      set.add(c);
-      stack.push(c);
+  for (const [lists, end] of [
+    [graph.incoming, "source"],
+    [graph.outgoing, "target"],
+  ]) {
+    const stack = [index];
+    const seen = new Set([index]);
+    while (stack.length) {
+      for (const ei of lists[stack.pop()]) {
+        const next = graph.edges[ei][end];
+        if (seen.has(next)) continue;
+        seen.add(next);
+        set.add(next);
+        stack.push(next);
+      }
     }
   }
   return set;

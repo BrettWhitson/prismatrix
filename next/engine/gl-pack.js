@@ -119,7 +119,9 @@ export function packEdges(scene, reuse = {}) {
       looks.radius[t.index] + end,
     );
     if (!pts) continue;
-    if (corner > 0 && e.tree) pts = rounded(pts, corner); // bundled cross-links are already smooth
+    // Bundled cross-links are already smooth; layered edges follow their bends, tree edge or not.
+    if (corner > 0 && (e.tree || routing.kind === "layered"))
+      pts = rounded(pts, corner);
     const rgb = colour(
       edge.colorBy === "target" ? looks.fill[t.index] : edge.color,
     );

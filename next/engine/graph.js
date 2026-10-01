@@ -61,6 +61,13 @@ export class Graph {
       if (!s || !t || s === t) continue;
       this.edges.push({ source: s.index, target: t.index, tree: false });
     }
+    /** @type {number[][]} per node, the indices of the edges out of it and into it */
+    this.outgoing = this.nodes.map(() => []);
+    this.incoming = this.nodes.map(() => []);
+    this.edges.forEach((e, i) => {
+      this.outgoing[e.source].push(i);
+      this.incoming[e.target].push(i);
+    });
     /** @type {number[]} roots of the forest, in the order they were found */
     this.roots = [];
     /** @type {number[]} every node, parents before children (breadth first per root) */

@@ -13,4 +13,5 @@ export { footprint, labelAnchor, labelAngle } from "./boxes.js";
 export { defaultsOf, resolve } from "./schema.js";
 export { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
 export { tidy } from "./tidy.js";
+export { layeredLayout, countCrossings } from "./layered.js";
 export { GraphView } from "./view.js";

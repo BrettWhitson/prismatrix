@@ -3,6 +3,7 @@
 
 import { bool, range, select } from "./schema.js";
 import { tidy } from "./tidy.js";
+import { layeredLayout } from "./layered.js";
 
 /**
  * @typedef {object} Routing How edges bend for this layout.
@@ -334,7 +335,10 @@ export function radialLayout(
 
 /** Keeps a node on its level (tree) or its ring (radial) while physics moves it. */
 export function constrainer(routing, opts) {
-  if (routing.kind === "tree" && opts.levelLock) {
+  if (
+    (routing.kind === "tree" || routing.kind === "layered") &&
+    opts.levelLock
+  ) {
     const across = routing.direction === "LR" || routing.direction === "RL";
     return across
       ? (n) => {
@@ -433,6 +437,55 @@ export const LAYOUTS = {
             "Lock to level",
             false,
             "Nodes only slide sideways along their level.",
+          ),
+        ],
+        defaults: { anchor: 60, links: 40, friction: 9 },
+      },
+    },
+  },
+  merged: {
+    label: "Merged tree",
+    run: layeredLayout,
+    options: [
+      select(
+        "direction",
+        "Direction",
+        [
+          { value: "TB", label: "Top → bottom" },
+          { value: "BT", label: "Bottom → top" },
+          { value: "LR", label: "Left → right" },
+          { value: "RL", label: "Right → left" },
+        ],
+        "TB",
+      ),
+      range(
+        "levelGap",
+        "Level gap",
+        20,
+        300,
+        5,
+        90,
+        "At least this far apart; more when labels need it.",
+      ),
+      range(
+        "nodeGap",
+        "Node gap",
+        0,
+        120,
+        1,
+        16,
+        "Space between neighbours on a layer.",
+      ),
+    ],
+    physics: {
+      static: {},
+      elastic: {
+        options: [
+          bool(
+            "levelLock",
+            "Lock to level",
+            false,
+            "Nodes only slide sideways along their layer.",
           ),
         ],
         defaults: { anchor: 60, links: 40, friction: 9 },

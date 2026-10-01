@@ -296,6 +296,14 @@ export function bspline(control) {
  * follows the edge shape.
  */
 export function edgeRoute(graph, routing, shape, e, junction = null) {
+  if (routing.kind === "layered")
+    return layeredPoints(
+      routing,
+      shape,
+      e,
+      graph.nodes[e.source],
+      graph.nodes[e.target],
+    );
   if (!e.tree && shape !== "straight") return bundledPoints(graph, e);
   return edgePoints(
     routing,
@@ -304,6 +312,42 @@ export function edgeRoute(graph, routing, shape, e, junction = null) {
     graph.nodes[e.target],
     junction,
   );
+}
+
+/**
+ * A layered layout's edge: through its bend points (one per layer it crosses). Bends were placed for the nodes'
+ * homes; when the ends move (a drag, physics), the bends move with them, each in proportion to how far along the
+ * edge it is. Straight and fan draw a polyline; step and curve repeat the tree's step or curve between each pair.
+ */
+export function layeredPoints(routing, shape, e, s, t) {
+  const bends = routing.bends.get(e) ?? [];
+  const k = bends.length;
+  const dsx = s.x - (s.homeX ?? s.x),
+    dsy = s.y - (s.homeY ?? s.y),
+    dtx = t.x - (t.homeX ?? t.x),
+    dty = t.y - (t.homeY ?? t.y);
+  const points = [{ x: s.x, y: s.y }];
+  bends.forEach(([bx, by], i) => {
+    const f = (i + 1) / (k + 1);
+    points.push({
+      x: bx + dsx * (1 - f) + dtx * f,
+      y: by + dsy * (1 - f) + dty * f,
+    });
+  });
+  points.push({ x: t.x, y: t.y });
+  if (shape !== "step" && shape !== "curve")
+    return points.flatMap((p) => [p.x, p.y]);
+  const tree = { kind: "tree", direction: routing.direction };
+  const out = [];
+  for (let i = 1; i < points.length; i++) {
+    const piece =
+      shape === "step"
+        ? treeStep(routing.direction, points[i - 1], points[i])
+        : curve(tree, points[i - 1], points[i]);
+    // Each piece starts where the last ended: keep that point once.
+    out.push(...(i === 1 ? piece : piece.slice(2)));
+  }
+  return out;
 }
 
 function treeStep(direction, s, t) {
