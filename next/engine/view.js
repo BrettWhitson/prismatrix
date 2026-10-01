@@ -3,6 +3,7 @@
 
 import { ANIMATION_OPTIONS, EASINGS, approach } from "./animation.js";
 import { LINE, footprint, labelAngle, reach } from "./boxes.js";
+import { departures, withGhosts } from "./ghosts.js";
 import { Graph } from "./graph.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
@@ -105,6 +106,8 @@ export class GraphView {
     this.version = 0;
     this.shadeVersion = 0; // bumped when only brightness changes (hover, fades): no geometry to rebuild
     this.focusCache = { key: -1, set: null };
+    /** @type {import("./ghosts.js").Ghost[]} nodes that left the graph, folding away */
+    this.ghosts = [];
     this.anim = resolve(ANIMATION_OPTIONS);
     // Per node, 0–1: how lit it is by the hover (eased toward its target), and how far it has faded in.
     this.shade = new Float32Array(0);
@@ -128,7 +131,20 @@ export class GraphView {
    */
   setGraph({ nodes, edges }) {
     const previous = this.graph.nodes.length ? this.graph : null;
+    const previousLooks = this.looks;
     this.graph = new Graph(nodes, edges);
+    // Nodes that left fold back into what's left of their family; ghosts still leaving from an earlier change
+    // carry on (unless their node came back).
+    const now = performance.now();
+    this.ghosts = [
+      ...this.ghosts.filter(
+        (g) =>
+          !this.graph.byId.has(g.id) && now - g.start < this.anim.transition,
+      ),
+      ...(previous && this.anim.transition > 0
+        ? departures(previous, this.graph, previousLooks, now)
+        : []),
+    ];
     this.sim = new Simulation(this.graph);
     this.hover = -1;
     this.shade = new Float32Array(this.graph.nodes.length).fill(1);
@@ -537,15 +553,35 @@ export class GraphView {
       busy = true;
     }
     const drawStart = performance.now();
-    this.renderer.draw({
+    // Ghosts are drawn from a display graph; everything else (physics, hover, hit-testing) uses the real one.
+    let shown = {
       graph: this.graph,
+      looks: this.looks,
+      shade: this.shade,
+      appear: this.appear,
+    };
+    if (this.ghosts.length) {
+      shown = withGhosts(
+        this.graph,
+        this.ghosts,
+        shown,
+        now,
+        this.anim.transition,
+        EASINGS[this.anim.easing] ?? EASINGS.smooth,
+      );
+      this.ghosts = shown.live;
+      this.version++; // ghosts move every frame
+      busy = true;
+    }
+    this.renderer.draw({
+      graph: shown.graph,
       routing: this.routing,
       camera: this.camera,
       node: this.node,
       edge: this.edge,
-      looks: this.looks,
-      shade: this.shade,
-      appear: this.appear,
+      looks: shown.looks,
+      shade: shown.shade,
+      appear: shown.appear,
       dim: this.anim.hoverDim,
       version: this.version,
       shadeVersion: this.shadeVersion,
