@@ -11,4 +11,5 @@ export { NODE_OPTIONS, EDGE_OPTIONS, PALETTE } from "./style.js";
 export { edgePoints, fanJunctions, trim } from "./geometry.js";
 export { footprint, labelAnchor, labelAngle } from "./boxes.js";
 export { defaultsOf, resolve } from "./schema.js";
+export { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
 export { GraphView } from "./view.js";

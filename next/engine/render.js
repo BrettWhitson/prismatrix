@@ -90,12 +90,48 @@ function worldTransform({ camera, width, height, dpr }) {
 }
 
 /**
- * Edges go onto their own layer at full strength, and the layer onto the scene at the edge opacity, so where edges
- * overlap (siblings sharing a trunk, the joints of a tapered edge) they don't add up to brighter lines. Dimmed edges
- * (outside the hovered lineage) get a pass of their own. Fully opaque edges with nothing dimmed skip the layer.
+ * How visible things are: faded in (`scene.appear`, 0–1 per node, for nodes arriving) and lit or dimmed by hover
+ * (`scene.shade`, 0–1 per node, 1 lit). `scene.dim` is how far a fully dimmed thing fades; edges and labels fade a
+ * little further than nodes so the lit lineage stands out. Either array may be missing (everything 1).
+ */
+export function nodeAlpha(scene, i) {
+  const appear = scene.appear ? scene.appear[i] : 1;
+  const shade = scene.shade ? scene.shade[i] : 1;
+  return appear * (1 - (scene.dim ?? 0.75) * (1 - shade));
+}
+
+export function labelAlpha(scene, i) {
+  const appear = scene.appear ? scene.appear[i] : 1;
+  const shade = scene.shade ? scene.shade[i] : 1;
+  return (
+    appear * (1 - Math.min(1, ((scene.dim ?? 0.75) * 0.8) / 0.75) * (1 - shade))
+  );
+}
+
+export function edgeAlpha(scene, e) {
+  const appear = scene.appear
+    ? Math.min(scene.appear[e.source], scene.appear[e.target])
+    : 1;
+  const shade = scene.shade
+    ? Math.min(scene.shade[e.source], scene.shade[e.target])
+    : 1;
+  return (
+    appear *
+    (1 - Math.min(1, ((scene.dim ?? 0.75) * 0.85) / 0.75) * (1 - shade))
+  );
+}
+
+/** Edge brightness is drawn in steps of this, so edges at the same step can share a layer. */
+const ALPHA_STEPS = 16;
+
+/**
+ * Edges go onto their own layer at full strength, and the layer onto the scene at the edge's brightness, so where
+ * edges overlap (siblings sharing a trunk, the joints of a tapered edge) they don't add up to brighter lines. Edges
+ * at different brightnesses (dimmed by hover, fading in) get a layer pass per brightness step. Fully opaque edges at
+ * full brightness skip the layer.
  */
 export function drawEdges(ctx, scene) {
-  const { graph, routing, edge, looks, focus } = scene;
+  const { graph, routing, edge, looks } = scene;
   const world = worldTransform(scene);
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
   const draw = (target, e) =>
@@ -113,38 +149,38 @@ export function drawEdges(ctx, scene) {
     target.lineCap = "round";
     target.lineJoin = "round";
   };
-  if (!focus && edge.opacity >= 1) {
+  const groups = new Map();
+  for (const e of graph.edges) {
+    const step = Math.round(edgeAlpha(scene, e) * ALPHA_STEPS);
+    if (!step) continue;
+    const group = groups.get(step);
+    if (group) group.push(e);
+    else groups.set(step, [e]);
+  }
+  if (edge.opacity >= 1 && groups.size === 1 && groups.has(ALPHA_STEPS)) {
     style(ctx);
     for (const e of graph.edges) draw(ctx, e);
     return;
   }
-  const lit = [],
-    dim = [];
-  for (const e of graph.edges)
-    (!focus || (focus.has(e.source) && focus.has(e.target)) ? lit : dim).push(
-      e,
-    );
   const layer = edgeLayer(ctx.canvas);
-  const pass = (edges, strength) => {
-    if (!edges.length) return;
+  for (const step of [...groups.keys()].sort((x, y) => x - y)) {
     layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     style(layer.ctx);
-    for (const e of edges) draw(layer.ctx, e);
+    for (const e of groups.get(step)) draw(layer.ctx, e);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = edge.opacity * strength;
+    ctx.globalAlpha = (edge.opacity * step) / ALPHA_STEPS;
     ctx.drawImage(layer.canvas, 0, 0);
-  };
-  pass(dim, 0.15);
-  pass(lit, 1);
+  }
   ctx.globalAlpha = 1;
 }
 
 export function drawNodes(ctx, scene) {
-  const { graph, node, looks, focus, background } = scene;
+  const { graph, node, looks, background } = scene;
   ctx.setTransform(...worldTransform(scene));
   for (const n of graph.nodes) {
-    ctx.globalAlpha = !focus || focus.has(n.index) ? 1 : 0.25;
+    ctx.globalAlpha = nodeAlpha(scene, n.index);
+    if (!ctx.globalAlpha) continue;
     drawNode(
       ctx,
       node,
@@ -159,14 +195,15 @@ export function drawNodes(ctx, scene) {
 
 /** Labels with room kept for them (label collision) always show; otherwise they drop out when too small to read. */
 export function drawLabels(ctx, scene) {
-  const { graph, node, looks, focus, camera } = scene;
+  const { graph, node, looks, camera } = scene;
   const labelPx = node.labelSize * camera.k;
   if (node.labels === "off" || (!node.labelCollide && labelPx < 6)) return;
   ctx.setTransform(...worldTransform(scene));
   ctx.font = `${node.labelSize}px system-ui, sans-serif`;
   ctx.fillStyle = "#d5d9e4";
   for (const n of graph.nodes) {
-    ctx.globalAlpha = !focus || focus.has(n.index) ? 1 : 0.2;
+    ctx.globalAlpha = labelAlpha(scene, n.index);
+    if (!ctx.globalAlpha) continue;
     drawLabel(ctx, n, looks.radius[n.index] * reach(node.shape));
   }
   ctx.globalAlpha = 1;

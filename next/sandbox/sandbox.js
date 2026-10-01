@@ -1,6 +1,7 @@
 // The sandbox: a sample graph, the engine's view, and a panel built straight from the engine's option schemas.
 
 import {
+  ANIMATION_OPTIONS,
   EDGE_OPTIONS,
   GraphView,
   LAYOUTS,
@@ -92,6 +93,7 @@ const settings = {
   layouts: stored.layouts ?? {}, // per layout: { options, mode, physics: { [mode]: options } }
   node: resolve(NODE_OPTIONS, stored.node),
   edge: resolve(EDGE_OPTIONS, stored.edge),
+  animation: resolve(ANIMATION_OPTIONS, stored.animation),
 };
 
 /**
@@ -193,6 +195,7 @@ const view = new GraphView(
 
 function applyAll() {
   const s = layoutState();
+  view.setAnimation(settings.animation);
   view.setNodeStyle(settings.node);
   view.setEdgeStyle(settings.edge);
   view.setLayout(settings.layout, s.options);
@@ -405,6 +408,11 @@ function render() {
     section("Edges", (body) =>
       controls(body, EDGE_OPTIONS, settings.edge, () =>
         view.setEdgeStyle(settings.edge),
+      ),
+    ),
+    section("Animation", (body) =>
+      controls(body, ANIMATION_OPTIONS, settings.animation, () =>
+        view.setAnimation(settings.animation),
       ),
     ),
   );

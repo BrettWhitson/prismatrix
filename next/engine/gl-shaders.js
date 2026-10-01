@@ -117,13 +117,13 @@ export const SEGMENT_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec4 a_ends;
 layout(location = 2) in vec2 a_half;
-layout(location = 3) in vec3 a_colour;
+layout(location = 3) in vec4 a_colour;
 ${COMMON_VERTEX}
 
 out vec2 v_world;
 flat out vec4 v_ends;
 flat out vec2 v_half;
-flat out vec3 v_colour;
+flat out vec4 v_colour;
 
 void main() {
   vec2 a = a_ends.xy, b = a_ends.zw;
@@ -146,7 +146,7 @@ precision highp float;
 in vec2 v_world;
 flat in vec4 v_ends;
 flat in vec2 v_half;
-flat in vec3 v_colour;
+flat in vec4 v_colour;
 ${COMMON_FRAGMENT}
 out vec4 outColour;
 
@@ -154,8 +154,8 @@ void main() {
   vec2 a = v_ends.xy, ab = v_ends.zw - a;
   float t = clamp(dot(v_world - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
   float d = length(v_world - (a + ab * t)) - mix(v_half.x, v_half.y, t);
-  float alpha = cover(d);
-  outColour = vec4(v_colour * alpha, alpha);
+  float alpha = cover(d) * v_colour.a;
+  outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
 /** An edge's end: an arrowhead (a triangle pointing along the edge) or a dot, just short of the target. */
@@ -163,12 +163,12 @@ export const END_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec4 a_tip;    // tip x, y, direction x, y
 layout(location = 2) in vec2 a_shape;  // size, kind
-layout(location = 3) in vec3 a_colour;
+layout(location = 3) in vec4 a_colour;
 ${COMMON_VERTEX}
 
 out vec2 v_local;
 flat out vec2 v_shape;
-flat out vec3 v_colour;
+flat out vec4 v_colour;
 
 void main() {
   vec2 dir = a_tip.zw;
@@ -186,7 +186,7 @@ export const END_FRAGMENT = `#version 300 es
 precision highp float;
 in vec2 v_local;
 flat in vec2 v_shape;
-flat in vec3 v_colour;
+flat in vec4 v_colour;
 ${COMMON_FRAGMENT}
 out vec4 outColour;
 
@@ -213,8 +213,8 @@ void main() {
     vec2 side = vec2(cos(0.45), sin(0.45)) * size;
     d = triangle(v_local, vec2(0.0), side, vec2(side.x, -side.y));
   }
-  float alpha = cover(d);
-  outColour = vec4(v_colour * alpha, alpha);
+  float alpha = cover(d) * v_colour.a;
+  outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
 /** A whole-screen triangle that lays a texture onto the canvas at an opacity. */

@@ -20,7 +20,7 @@ test("colours are parsed to 0–1 channels", () => {
   assert.deepEqual(parseColour("#ff8000"), [1, 128 / 255, 0]);
 });
 
-test("nodes pack as centre, radius, colour, dimming and shape, in index order", () => {
+test("nodes pack as centre, radius, colour, visibility and shape, in index order", () => {
   const g = new Graph([{ id: "a" }, { id: "b" }], []);
   g.nodes[1].x = 10;
   g.nodes[1].y = -5;
@@ -28,7 +28,8 @@ test("nodes pack as centre, radius, colour, dimming and shape, in index order", 
     graph: g,
     node: { shape: "hexagon" },
     looks: { radius: [4, 6], fill: ["#000000", "#ffffff"] },
-    focus: new Set([0]),
+    shade: Float32Array.of(1, 0), // a lit, b fully dimmed by the hover
+    dim: 0.75,
   };
   const out = packNodes(scene);
   assert.ok(out.length >= 2 * NODE_STRIDE);
@@ -36,9 +37,9 @@ test("nodes pack as centre, radius, colour, dimming and shape, in index order", 
     [...out.subarray(NODE_STRIDE, 2 * NODE_STRIDE)],
     [10, -5, 6, 1, 1, 1, 0.25, SHAPE_IDS.hexagon],
   );
-  assert.equal(out[6], 1, "the focused node isn't dimmed");
+  assert.equal(out[6], 1, "the lit node is fully visible");
   assert.equal(
-    packNodes({ ...scene, focus: null }, out),
+    packNodes({ ...scene, shade: null }, out),
     out,
     "the buffer is reused when it fits",
   );
@@ -46,6 +47,8 @@ test("nodes pack as centre, radius, colour, dimming and shape, in index order", 
 
 import { radialLayout, treeLayout } from "../../next/engine/layouts.js";
 import { cubic, edgePoints, rounded } from "../../next/engine/geometry.js";
+import { edgeAlpha, labelAlpha, nodeAlpha } from "../../next/engine/render.js";
+import { EASINGS, approach } from "../../next/engine/animation.js";
 import {
   END_STRIDE,
   SEGMENT_STRIDE,
@@ -175,20 +178,27 @@ test("a taper narrows continuously from parent to child", () => {
   );
 });
 
-test("dimmed edges come first, arrows follow their edges, and the ends sit at the tip", () => {
+test("edges carry their brightness, arrows follow their edges, and the ends sit at the tip", () => {
   const g = small();
   const routing = radialLayout(g, {});
   for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
   const a = g.byId.get("a"),
-    a1 = g.byId.get("a1"),
-    root = g.byId.get("root");
-  const focus = new Set([root.index, a.index, a1.index]); // b's edge is dimmed
-  const out = packEdges(
-    scene(g, routing, { arrow: "arrow", colorBy: "target" }, focus),
-  );
-  assert.equal(out.dimSegments, 1);
-  assert.equal(out.dimEnds, 1);
+    b = g.byId.get("b");
+  const shade = new Float32Array(g.nodes.length).fill(1);
+  shade[b.index] = 0; // b's edge is dimmed
+  const out = packEdges({
+    ...scene(g, routing, { arrow: "arrow", colorBy: "target" }),
+    shade,
+    dim: 0.75,
+  });
+  assert.equal(out.segmentCount, 3);
   assert.equal(out.endCount, 3);
+  assert.equal(out.bright, false, "not every edge is at full brightness");
+  const alphas = [0, 1, 2]
+    .map((i) => out.segments[i * SEGMENT_STRIDE + 9])
+    .sort();
+  assert.ok(Math.abs(alphas[0] - 0.15) < 1e-6, "the dimmed edge fades to 15%");
+  assert.deepEqual(alphas.slice(1), [1, 1]);
   for (let i = 0; i < out.endCount; i++) {
     const o = i * END_STRIDE;
     assert.ok(
@@ -196,9 +206,9 @@ test("dimmed edges come first, arrows follow their edges, and the ends sit at th
       "unit direction",
     );
   }
-  // The lit edge root → a ends with its tip just touching a's edge.
+  // The edge root → a ends with its tip just touching a's edge.
   let nearest = Infinity;
-  for (let i = out.dimEnds; i < out.endCount; i++) {
+  for (let i = 0; i < out.endCount; i++) {
     const o = i * END_STRIDE;
     nearest = Math.min(
       nearest,
@@ -206,6 +216,46 @@ test("dimmed edges come first, arrows follow their edges, and the ends sit at th
     );
   }
   assert.ok(Math.abs(nearest - 5) < 1e-6);
+  assert.equal(packEdges(scene(g, routing)).bright, true);
+});
+
+test("visibility: hover dims nodes, labels and edges by different amounts, and fading in scales it all", () => {
+  const scene = {
+    shade: Float32Array.of(1, 0),
+    appear: Float32Array.of(1, 0.5),
+    dim: 0.75,
+  };
+  assert.equal(nodeAlpha(scene, 0), 1);
+  assert.ok(Math.abs(nodeAlpha(scene, 1) - 0.5 * 0.25) < 1e-6);
+  assert.ok(
+    labelAlpha(scene, 1) < nodeAlpha(scene, 1),
+    "labels fade further than nodes",
+  );
+  const edge = { source: 0, target: 1 };
+  assert.ok(
+    Math.abs(edgeAlpha(scene, edge) - 0.5 * 0.15) < 1e-6,
+    "an edge is as dim as its dimmer end",
+  );
+  assert.equal(nodeAlpha({}, 0), 1, "nothing to fade: fully visible");
+  assert.equal(nodeAlpha({ ...scene, dim: 0 }, 1), 0.5, "no dimming at all");
+});
+
+test("approach eases toward its target and lands on it; 0 ms jumps straight there", () => {
+  let v = 0;
+  const seen = [];
+  for (let i = 0; i < 60 && v !== 1; i++)
+    seen.push((v = approach(v, 1, 1 / 60, 200)));
+  assert.equal(v, 1, "it arrives");
+  assert.ok(seen[1] - seen[0] < seen[0], "fast at first, then slowing");
+  assert.equal(approach(0.3, 0, 1 / 60, 0), 0);
+});
+
+test("every easing starts at 0 and ends at 1", () => {
+  for (const [name, ease] of Object.entries(EASINGS)) {
+    assert.ok(Math.abs(ease(0)) < 1e-9, name);
+    assert.ok(Math.abs(ease(1) - 1) < 1e-9, name);
+  }
+  assert.ok(EASINGS.back(0.8) > 1, "overshoot goes past and comes back");
 });
 
 test("packing grows its buffers mid-frame without losing what's already in them", () => {

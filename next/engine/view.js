@@ -1,6 +1,7 @@
 // GraphView: one canvas, one graph. Owns the camera, the pointer, the animation loop, and hands positions between
 // layout, physics and the renderer.
 
+import { ANIMATION_OPTIONS, EASINGS, approach } from "./animation.js";
 import { LINE, footprint, labelAngle, reach } from "./boxes.js";
 import { Graph } from "./graph.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
@@ -10,7 +11,6 @@ import { WebGLRenderer, webglAvailable } from "./webgl.js";
 import { resolve } from "./schema.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
 
-const TRANSITION_MS = 650;
 const BACKGROUND = "#0e1016";
 const MAX_THROW = 1800; // fastest throw or pan glide, in screen px/s
 /** Node options that change how much room nodes take, so changing them lays the graph out again. */
@@ -31,8 +31,6 @@ function changes(before, after) {
     if (before[k] !== after[k]) out[k] = after[k];
   return out;
 }
-
-const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
 export class GraphView {
   /**
@@ -82,6 +80,10 @@ export class GraphView {
     // frame until it moves (panning and zooming redraw without rebuilding).
     this.version = 0;
     this.focusCache = { key: -1, set: null };
+    this.anim = resolve(ANIMATION_OPTIONS);
+    // Per node, 0–1: how lit it is by the hover (eased toward its target), and how far it has faded in.
+    this.shade = new Float32Array(0);
+    this.appear = new Float32Array(0);
     this.fps = 60;
 
     this.renderer = null;
@@ -92,18 +94,38 @@ export class GraphView {
     this.#bindPointer();
   }
 
-  /** Replace the graph. Nodes start at the centre and grow into the layout. */
+  /**
+   * Replace the graph. The first graph grows into its layout; after that the change morphs: nodes that are still
+   * there glide from where they are to their new place, new ones arrive as the animation's `enter` setting says,
+   * and the camera eases to the new framing (unless it was moved by hand).
+   */
   setGraph({ nodes, edges }) {
+    const previous = this.graph.nodes.length ? this.graph : null;
     this.graph = new Graph(nodes, edges);
     this.sim = new Simulation(this.graph);
     this.hover = -1;
-    this.#relayout({ fit: "instant" });
+    this.shade = new Float32Array(this.graph.nodes.length).fill(1);
+    this.appear = new Float32Array(this.graph.nodes.length).fill(1);
+    this.#relayout({
+      fit: !previous ? "instant" : this.framed ? "animate" : null,
+      arrive: previous ?? false,
+    });
     this.#emit("graph", {
       nodes: this.graph.nodes.length,
       edges: this.graph.edges.length,
       roots: this.graph.roots.length,
       depth: this.graph.maxDepth,
+      kept: previous
+        ? this.graph.nodes.filter((n) => previous.byId.has(n.id)).length
+        : 0,
     });
+  }
+
+  /** How things move between states: see ANIMATION_OPTIONS. */
+  setAnimation(opts) {
+    this.anim = resolve(ANIMATION_OPTIONS, opts);
+    this.#wake();
+    this.#emit("animation", this.anim);
   }
 
   setLayout(name, opts = {}) {
@@ -237,7 +259,7 @@ export class GraphView {
     this.unbind?.();
   }
 
-  #relayout({ fit }) {
+  #relayout({ fit, arrive = undefined }) {
     this.version++;
     this.looks = nodeLooks(this.graph, this.node);
     const sizing = this.#sizing();
@@ -248,9 +270,9 @@ export class GraphView {
     );
     this.#placeLabels(sizing);
     this.#configureSim();
+    if (arrive !== undefined) this.#arrive(arrive || null);
     if (fit === "instant") {
-      // Everything grows out of the centre into a camera already framing the result.
-      for (const n of this.graph.nodes) n.x = n.y = 0;
+      // A camera already framing where everything is heading.
       this.camera = this.#framing(true);
       this.cameraTween = null;
       this.glide = null;
@@ -317,6 +339,66 @@ export class GraphView {
     }
   }
 
+  /**
+   * Where a new graph's nodes start. Nodes the previous graph had start where they were. New ones, by the `enter`
+   * setting: grow out of their nearest ancestor that was already there (or their root's new place), fade in where
+   * they land, or just appear there.
+   */
+  #arrive(previous) {
+    const { nodes } = this.graph;
+    const root = new Int32Array(nodes.length);
+    for (const i of this.graph.order)
+      root[i] = nodes[i].parent < 0 ? i : root[nodes[i].parent];
+    const enter = this.anim.enter;
+    for (const n of nodes) {
+      const old = previous?.byId.get(n.id);
+      if (old) {
+        n.x = old.x;
+        n.y = old.y;
+        continue;
+      }
+      this.appear[n.index] = enter === "none" ? 1 : 0;
+      if (enter !== "grow") {
+        n.x = n.homeX;
+        n.y = n.homeY;
+        continue;
+      }
+      let from = null;
+      for (let p = n.parent; p >= 0 && !from; p = nodes[p].parent)
+        from = previous?.byId.get(nodes[p].id) ?? null;
+      const r = nodes[root[n.index]];
+      n.x = from ? from.x : r.homeX;
+      n.y = from ? from.y : r.homeY;
+    }
+  }
+
+  /** Progress 0–1 of an animation that started at `start` and lasts `ms`, eased. */
+  #progress(now, start, ms) {
+    const t = ms > 0 ? Math.min((now - start) / ms, 1) : 1;
+    return { t, f: (EASINGS[this.anim.easing] ?? EASINGS.smooth)(t) };
+  }
+
+  /** Ease hover emphasis and fade-ins toward their targets. Returns true while anything is still changing. */
+  #fade(dt, focus) {
+    let changing = false;
+    const { shade, appear } = this;
+    for (let i = 0; i < shade.length; i++) {
+      const target = !focus || focus.has(i) ? 1 : 0;
+      if (shade[i] !== target) {
+        shade[i] = approach(shade[i], target, dt, this.anim.hoverFade);
+        changing = true;
+      }
+      if (appear[i] < 1) {
+        appear[i] =
+          this.anim.transition > 0
+            ? Math.min(1, appear[i] + (dt * 1000) / this.anim.transition)
+            : 1;
+        changing = true;
+      }
+    }
+    return changing;
+  }
+
   #configureSim() {
     this.sim.configure(
       this.mode,
@@ -348,8 +430,11 @@ export class GraphView {
 
     let busy;
     if (this.tween) {
-      const t = Math.min((now - this.tween.start) / TRANSITION_MS, 1);
-      const f = ease(t);
+      const { t, f } = this.#progress(
+        now,
+        this.tween.start,
+        this.anim.transition,
+      );
       for (const n of this.graph.nodes) {
         if (this.sim.held.has(n.index)) continue;
         const [x0, y0] = this.tween.from[n.index];
@@ -369,8 +454,11 @@ export class GraphView {
     }
     const simMs = performance.now() - now;
     if (this.cameraTween) {
-      const t = Math.min((now - this.cameraTween.start) / TRANSITION_MS, 1);
-      const f = ease(t);
+      const { t, f } = this.#progress(
+        now,
+        this.cameraTween.start,
+        this.anim.camera,
+      );
       const { from, to } = this.cameraTween;
       // Zoom moves in log space so it feels even.
       this.camera = {
@@ -390,6 +478,10 @@ export class GraphView {
         graph: this.graph,
         set: focusOn >= 0 ? lineage(this.graph, focusOn) : null,
       };
+    if (this.#fade(dt, this.focusCache.set)) {
+      this.version++;
+      busy = true;
+    }
     const drawStart = performance.now();
     this.renderer.draw({
       graph: this.graph,
@@ -398,8 +490,9 @@ export class GraphView {
       node: this.node,
       edge: this.edge,
       looks: this.looks,
-      focus: this.focusCache.set,
-      focusKey: focusOn,
+      shade: this.shade,
+      appear: this.appear,
+      dim: this.anim.hoverDim,
       version: this.version,
       width: this.width,
       height: this.height,

@@ -1,6 +1,7 @@
 // What the WebGL renderer sends the GPU each frame, worked out on the CPU. Pure: no GL, so it can be tested.
 
 import { edgePoints, fanJunctions, rounded, trim } from "./geometry.js";
+import { edgeAlpha, nodeAlpha } from "./render.js";
 
 /** Shape names to the ids the node shader switches on. */
 export const SHAPE_IDS = {
@@ -12,12 +13,12 @@ export const SHAPE_IDS = {
   ring: 5,
 };
 
-/** Floats per node: centre x, y; radius; colour r, g, b, a (a carries dimming); shape id. */
+/** Floats per node: centre x, y; radius; colour r, g, b, a (a: how visible, see nodeAlpha); shape id. */
 export const NODE_STRIDE = 8;
-/** Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b. */
-export const SEGMENT_STRIDE = 9;
-/** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour. */
-export const END_STRIDE = 9;
+/** Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b, a (a: see edgeAlpha). */
+export const SEGMENT_STRIDE = 10;
+/** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour r, g, b, a. */
+export const END_STRIDE = 10;
 
 /** "#rrggbb" to [r, g, b] in 0–1. */
 export function parseColour(hex) {
@@ -48,7 +49,7 @@ function palette() {
  * @returns {Float32Array}
  */
 export function packNodes(scene, out) {
-  const { graph, node, looks, focus } = scene;
+  const { graph, node, looks } = scene;
   out = room(out, graph.nodes.length * NODE_STRIDE);
   const shape = SHAPE_IDS[node.shape] ?? 0;
   const colour = palette();
@@ -61,7 +62,7 @@ export function packNodes(scene, out) {
     out[o + 3] = rgb[0];
     out[o + 4] = rgb[1];
     out[o + 5] = rgb[2];
-    out[o + 6] = !focus || focus.has(n.index) ? 1 : 0.25;
+    out[o + 6] = nodeAlpha(scene, n.index);
     out[o + 7] = shape;
   }
   return out;
@@ -69,14 +70,14 @@ export function packNodes(scene, out) {
 
 /**
  * Every edge as straight segments (curves and rounded corners already broken down) and every arrow or dot at an
- * edge's end. Edges outside the hovered lineage come first, so each group can be drawn in a pass of its own.
+ * edge's end, each carrying the edge's brightness. `bright` is true when every edge is at full brightness.
  * @param {object} scene
  * @param {{ segments?: Float32Array, ends?: Float32Array }} [reuse] buffers from the last frame
- * @returns {{ segments: Float32Array, ends: Float32Array, dimSegments: number, segmentCount: number,
- *   dimEnds: number, endCount: number }}
+ * @returns {{ segments: Float32Array, ends: Float32Array, segmentCount: number, endCount: number,
+ *   bright: boolean }}
  */
 export function packEdges(scene, reuse = {}) {
-  const { graph, routing, edge, looks, focus } = scene;
+  const { graph, routing, edge, looks } = scene;
   const colour = palette();
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
   const corner =
@@ -86,9 +87,13 @@ export function packEdges(scene, reuse = {}) {
   let segments = reuse.segments ?? null;
   let ends = reuse.ends ?? null;
   let segmentCount = 0,
-    endCount = 0;
+    endCount = 0,
+    bright = true;
 
-  const add = (e) => {
+  for (const e of graph.edges) {
+    const alpha = edgeAlpha(scene, e);
+    if (alpha <= 0) continue;
+    if (alpha < 1) bright = false;
     const s = graph.nodes[e.source],
       t = graph.nodes[e.target];
     let junction = null;
@@ -102,7 +107,7 @@ export function packEdges(scene, reuse = {}) {
       looks.radius[s.index],
       looks.radius[t.index] + end,
     );
-    if (!pts) return;
+    if (!pts) continue;
     if (corner > 0) pts = rounded(pts, corner);
     const rgb = colour(
       edge.colorBy === "target" ? looks.fill[t.index] : edge.color,
@@ -131,6 +136,7 @@ export function packEdges(scene, reuse = {}) {
       segments[o + 6] = rgb[0];
       segments[o + 7] = rgb[1];
       segments[o + 8] = rgb[2];
+      segments[o + 9] = alpha;
     }
 
     if (end > 0) {
@@ -151,20 +157,14 @@ export function packEdges(scene, reuse = {}) {
       ends[o + 6] = rgb[0];
       ends[o + 7] = rgb[1];
       ends[o + 8] = rgb[2];
+      ends[o + 9] = alpha;
     }
-  };
-
-  const lit = (e) => !focus || (focus.has(e.source) && focus.has(e.target));
-  if (focus) for (const e of graph.edges) if (!lit(e)) add(e);
-  const dimSegments = segmentCount,
-    dimEnds = endCount;
-  for (const e of graph.edges) if (lit(e)) add(e);
+  }
   return {
     segments: segments ?? new Float32Array(0),
     ends: ends ?? new Float32Array(0),
-    dimSegments,
     segmentCount,
-    dimEnds,
     endCount,
+    bright,
   };
 }

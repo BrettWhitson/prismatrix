@@ -3,8 +3,9 @@
 //
 //   GL layer (background, edges, arrowheads, nodes)  →  the view's own canvas (2D labels; takes the pointer)
 //
-// Edges are drawn onto a texture and the texture onto the scene at the edge opacity, so where edges overlap they
-// don't add up to brighter lines (the Canvas 2D renderer does the same with an offscreen canvas).
+// Edges are drawn onto a texture keeping, at each pixel, the brightest edge there (a MAX blend), and the texture
+// onto the scene at the edge opacity: where edges overlap they don't add up to brighter lines, whatever each
+// edge's own brightness (dimmed by hover, fading in). The Canvas 2D renderer gets the same result another way.
 
 import { clearTo, drawLabels } from "./render.js";
 import {
@@ -33,9 +34,6 @@ export {
   packNodes,
   parseColour,
 } from "./gl-pack.js";
-
-/** Dimmed edges (outside the hovered lineage) are drawn at this share of the edge opacity. */
-const DIM_EDGES = 0.15;
 
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
@@ -183,12 +181,12 @@ class GLLayer {
     this.segments = new InstancedQuads(gl, corners, SEGMENT_STRIDE, [
       [1, 4, 0], // ends
       [2, 2, 4], // half-widths
-      [3, 3, 6], // colour
+      [3, 4, 6], // colour
     ]);
     this.ends = new InstancedQuads(gl, corners, END_STRIDE, [
       [1, 4, 0], // tip, direction
       [2, 2, 4], // size, kind
-      [3, 3, 6], // colour
+      [3, 4, 6], // colour
     ]);
     this.emptyVao = gl.createVertexArray();
     this.target = null; // the offscreen texture edges are drawn onto
@@ -263,7 +261,6 @@ class GLLayer {
     const fresh =
       scene.version === undefined ||
       scene.version !== this.built?.version ||
-      scene.focusKey !== this.built.focusKey ||
       scene.graph !== this.built.graph;
     if (fresh) {
       this.edgeData = packEdges(scene, this.edgeData);
@@ -271,41 +268,34 @@ class GLLayer {
       this.ends.upload(this.edgeData.ends, this.edgeData.endCount);
       this.nodeData = packNodes(scene, this.nodeData);
       this.nodes.upload(this.nodeData, graph.nodes.length);
-      this.built = {
-        version: scene.version,
-        focusKey: scene.focusKey,
-        graph: scene.graph,
-      };
+      this.built = { version: scene.version, graph: scene.graph };
     }
     const e = this.edgeData;
-    const drawEdges = (s0, s1, e0, e1) => {
+    const drawEdges = () => {
       this.#use(this.segmentProgram, scene);
-      this.segments.draw(s0, s1);
+      this.segments.draw(0, e.segmentCount);
       this.#use(this.endProgram, scene);
-      this.ends.draw(e0, e1);
+      this.ends.draw(0, e.endCount);
     };
-    if (!scene.focus && edge.opacity >= 1) {
-      drawEdges(0, e.segmentCount, 0, e.endCount);
-    } else {
+    if (e.bright && edge.opacity >= 1) {
+      drawEdges();
+    } else if (e.segmentCount || e.endCount) {
       const target = this.#edgeTarget();
-      const pass = (s0, s1, e0, e1, strength) => {
-        if (s1 <= s0 && e1 <= e0) return;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        drawEdges(s0, s1, e0, e1);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        const u = this.#use(this.compositeProgram, scene);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, target.texture);
-        gl.uniform1i(u.u_texture, 0);
-        gl.uniform1f(u.u_alpha, edge.opacity * strength);
-        gl.bindVertexArray(this.emptyVao);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-        gl.bindVertexArray(null);
-      };
-      pass(0, e.dimSegments, 0, e.dimEnds, DIM_EDGES);
-      pass(e.dimSegments, e.segmentCount, e.dimEnds, e.endCount, 1);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.blendEquation(gl.MAX);
+      drawEdges();
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      const u = this.#use(this.compositeProgram, scene);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, target.texture);
+      gl.uniform1i(u.u_texture, 0);
+      gl.uniform1f(u.u_alpha, edge.opacity);
+      gl.bindVertexArray(this.emptyVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindVertexArray(null);
     }
 
     // Nodes
