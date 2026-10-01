@@ -6,7 +6,6 @@
 // edge's own brightness (dimmed by hover, fading in). The Canvas 2D renderer gets the same result another way.
 
 import { clearTo, labelAlpha } from "./render.js";
-import { reach } from "./boxes.js";
 import { LABEL_STRIDE, LabelLayer } from "./gl-text.js";
 import {
   END_STRIDE,
@@ -403,7 +402,7 @@ class GLLayer {
       cellH = scene.height / 2 ** step / 2;
     const key = `${node.labelSize}|${step}|${Math.floor(camera.x / cellW)}|${Math.floor(camera.y / cellH)}`;
     if (fresh || this.labelPending || key !== this.labelKey) {
-      const built = this.labelLayer.build(scene, labelAlpha, reach(node.shape));
+      const built = this.labelLayer.build(scene, labelAlpha);
       this.labels.upload(built.data, built.count);
       this.labelGroups = built.groups;
       this.labelPending = built.pending;

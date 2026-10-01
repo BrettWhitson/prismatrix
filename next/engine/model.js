@@ -11,6 +11,8 @@
 //
 // The JSON format is documented in next/MODEL.md.
 
+import { NODE_OPTIONS } from "./style.js";
+
 export const GRAPH_FORMAT = "prismatrix-graph";
 export const GRAPH_VERSION = 1;
 
@@ -18,16 +20,27 @@ export const GRAPH_VERSION = 1;
  * @typedef {object} ModelNode
  * @property {string} id
  * @property {string} label    shown on the node; defaults to the id
+ * @property {NodeStyle} style how this node looks, overriding the view's node options (see NODE_STYLE)
  * @property {object} data     anything else, untouched by the engine
+ *
+ * @typedef {object} NodeStyle
+ * @property {string} [color]  "#rrggbb"
+ * @property {number} [size]   diameter, world px
+ * @property {string} [shape]  one of the node shapes (circle, square, rounded, diamond, hexagon, ring)
+ *
+ * @typedef {object} EdgeStyle
+ * @property {string} [color]  "#rrggbb"
+ * @property {number} [width]  world px
  *
  * @typedef {object} ModelEdge
  * @property {string} id       given, or "source>target" (with "#2", "#3"… for repeats)
  * @property {string} source   node id
  * @property {string} target   node id
+ * @property {EdgeStyle} style how this edge looks, overriding the view's edge options (see EDGE_STYLE)
  * @property {object} data
  *
  * @typedef {object} Issue
- * @property {"duplicate-node" | "missing-endpoint" | "self-loop" | "duplicate-edge-id" | "bad-input"} kind
+ * @property {"duplicate-node" | "missing-endpoint" | "self-loop" | "duplicate-edge-id" | "bad-style" | "bad-input"} kind
  * @property {string} message
  * @property {string} [id]
  */
@@ -43,6 +56,44 @@ function freeze(value) {
 
 const plain = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+const SHAPES = NODE_OPTIONS.find((o) => o.key === "shape").choices.map(
+  (c) => c.value,
+);
+const colour = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+const number = (lo, hi) => (v) =>
+  typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+
+/** What a node's `style` may set, and what each value must be. */
+export const NODE_STYLE = {
+  color: colour,
+  size: number(1, 400),
+  shape: (v) => SHAPES.includes(v),
+};
+/** What an edge's `style` may set. */
+export const EDGE_STYLE = {
+  color: colour,
+  width: number(0.1, 40),
+};
+
+/**
+ * The valid part of a node's or edge's `style`; anything unknown or out of range is reported and left out, so a
+ * bad style never breaks a graph.
+ */
+function checkStyle(raw, rules, what, problem) {
+  const style = {};
+  for (const [key, value] of Object.entries(plain(raw))) {
+    if (!rules[key])
+      problem("bad-style", `${what}: unknown style "${key}" (ignored)`);
+    else if (!rules[key](value))
+      problem(
+        "bad-style",
+        `${what}: style ${key} ${JSON.stringify(value)} isn't valid (ignored)`,
+      );
+    else style[key] = value;
+  }
+  return style;
+}
 
 /** The model's own copy of a node's or edge's data (so freezing it never touches the caller's objects). */
 function copyData(value) {
@@ -98,6 +149,9 @@ export class GraphModel {
         freeze({
           id,
           label: raw.label === undefined ? id : String(raw.label),
+          style: checkStyle(raw.style, NODE_STYLE, `node "${id}"`, (k, m) =>
+            problem(k, m, id),
+          ),
           data: copyData(raw.data),
         }),
       );
@@ -141,7 +195,12 @@ export class GraphModel {
         id = `${id}#${edges.length}`;
       }
       this.edgeIndex.set(id, edges.length);
-      edges.push(freeze({ id, source, target, data: copyData(raw.data) }));
+      const style = checkStyle(raw.style, EDGE_STYLE, `edge "${id}"`, (k, m) =>
+        problem(k, m, id),
+      );
+      edges.push(
+        freeze({ id, source, target, style, data: copyData(raw.data) }),
+      );
     }
     this.edges = Object.freeze(edges);
 
@@ -356,6 +415,7 @@ export class GraphModel {
         nodesKept.push(n.id);
         if (
           old.label !== n.label ||
+          JSON.stringify(old.style) !== JSON.stringify(n.style) ||
           JSON.stringify(old.data) !== JSON.stringify(n.data)
         )
           nodesChanged.push(n.id);
@@ -389,12 +449,14 @@ export class GraphModel {
       nodes: this.nodes.map((n) => ({
         id: n.id,
         ...(n.label !== n.id && { label: n.label }),
+        ...(Object.keys(n.style).length && { style: n.style }),
         ...(Object.keys(n.data).length && { data: n.data }),
       })),
       edges: this.edges.map((e) => ({
         id: e.id,
         source: e.source,
         target: e.target,
+        ...(Object.keys(e.style).length && { style: e.style }),
         ...(Object.keys(e.data).length && { data: e.data }),
       })),
     };

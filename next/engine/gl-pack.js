@@ -60,9 +60,8 @@ function palette() {
  * @returns {Float32Array}
  */
 export function packNodes(scene, out) {
-  const { graph, node, looks } = scene;
+  const { graph, looks } = scene;
   out = room(out, graph.nodes.length * NODE_STRIDE);
-  const shape = SHAPE_IDS[node.shape] ?? 0;
   const colour = palette();
   for (const n of graph.nodes) {
     const rgb = colour(looks.fill[n.index]);
@@ -74,7 +73,7 @@ export function packNodes(scene, out) {
     out[o + 4] = rgb[1];
     out[o + 5] = rgb[2];
     out[o + 6] = nodeAlpha(scene, n.index);
-    out[o + 7] = shape;
+    out[o + 7] = SHAPE_IDS[looks.shape[n.index]] ?? 0;
   }
   return out;
 }
@@ -122,9 +121,8 @@ export function packEdges(scene, reuse = {}) {
     // Bundled cross-links are already smooth; layered edges follow their bends, tree edge or not.
     if (corner > 0 && (e.tree || routing.kind === "layered"))
       pts = rounded(pts, corner);
-    const rgb = colour(
-      edge.colorBy === "target" ? looks.fill[t.index] : edge.color,
-    );
+    const rgb = colour(looks.edgeColour[edgeIndex]);
+    const width = looks.edgeWidth[edgeIndex];
 
     const points = pts.length / 2;
     segments = room(segments, (segmentCount + points) * SEGMENT_STRIDE);
@@ -135,7 +133,7 @@ export function packEdges(scene, reuse = {}) {
       for (let i = 2; i < pts.length; i += 2)
         total += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
     const half = (walked) =>
-      (edge.taper ? edge.width * (2 - 1.7 * (walked / total)) : edge.width) / 2;
+      (edge.taper ? width * (2 - 1.7 * (walked / total)) : width) / 2;
     let walked = 0;
     for (let i = 2; i < pts.length; i += 2) {
       const length = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);

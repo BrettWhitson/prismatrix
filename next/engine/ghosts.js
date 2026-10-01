@@ -37,6 +37,7 @@ export function departures(previous, next, looks, now) {
       labelAngle: n.labelAngle ?? Math.PI / 2,
       radius: looks.radius[n.index],
       fill: looks.fill[n.index],
+      shape: looks.shape?.[n.index] ?? "circle",
       x0: n.x,
       y0: n.y,
       ancestors,
@@ -91,10 +92,14 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
   const edges = graph.edges.slice();
   const radius = new Float64Array(count + live.length);
   const fill = new Array(count + live.length);
+  const shape = new Array(count + live.length);
   const shade = new Float32Array(count + live.length).fill(1);
   const appear = new Float32Array(count + live.length).fill(1);
   radius.set(base.looks.radius);
-  for (let i = 0; i < count; i++) fill[i] = base.looks.fill[i];
+  for (let i = 0; i < count; i++) {
+    fill[i] = base.looks.fill[i];
+    shape[i] = base.looks.shape?.[i] ?? "circle";
+  }
   if (base.shade) shade.set(base.shade.subarray(0, count));
   if (base.appear) appear.set(base.appear.subarray(0, count));
 
@@ -130,6 +135,7 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
     });
     radius[i] = g.radius;
     fill[i] = g.fill;
+    shape[i] = g.shape;
     appear[i] = 1 - t;
   }
   // An edge from each ghost's parent (its first ancestor) if that's still drawn, real or ghost.
@@ -141,6 +147,24 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
     if (source === undefined) continue;
     edges.push({ source, target: index.get(g.id), tree: true, ghost: true });
   }
+  // Colours and widths for the ghost edges, as the view's edge options would give them.
+  const fallback = base.looks.edgeDefault ?? {
+    colour: "#5b6478",
+    width: 1.5,
+    byTarget: false,
+  };
+  const edgeColour = edges.map((e, i) =>
+    i < graph.edges.length
+      ? (base.looks.edgeColour?.[i] ?? fallback.colour)
+      : fallback.byTarget
+        ? fill[e.target]
+        : fallback.colour,
+  );
+  const edgeWidth = Float64Array.from(edges, (_, i) =>
+    i < graph.edges.length
+      ? (base.looks.edgeWidth?.[i] ?? fallback.width)
+      : fallback.width,
+  );
   return {
     graph: {
       nodes,
@@ -149,7 +173,7 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
       roots: graph.roots,
       order: graph.order,
     },
-    looks: { ...base.looks, radius, fill },
+    looks: { ...base.looks, radius, fill, shape, edgeColour, edgeWidth },
     shade,
     appear,
     live,

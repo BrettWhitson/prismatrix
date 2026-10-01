@@ -27,7 +27,11 @@ test("nodes pack as centre, radius, colour, visibility and shape, in index order
   const scene = {
     graph: g,
     node: { shape: "hexagon" },
-    looks: { radius: [4, 6], fill: ["#000000", "#ffffff"] },
+    looks: {
+      radius: [4, 6],
+      fill: ["#000000", "#ffffff"],
+      shape: ["hexagon", "hexagon"],
+    },
     shade: Float32Array.of(1, 0), // a lit, b fully dimmed by the hover
     dim: 0.75,
   };
@@ -89,6 +93,14 @@ function scene(g, routing, edge = {}, focus = null) {
     looks: {
       radius: g.nodes.map(() => 5),
       fill: g.nodes.map(() => "#00ff00"),
+      shape: g.nodes.map(() => "circle"),
+      // As looksOf would give them: the edge colour (or the child's), and the edge width.
+      edgeColour: g.edges.map(() =>
+        ({ ...EDGE, ...edge }).colorBy === "target"
+          ? "#00ff00"
+          : { ...EDGE, ...edge }.color,
+      ),
+      edgeWidth: g.edges.map(() => ({ ...EDGE, ...edge }).width),
     },
     focus,
   };
@@ -333,4 +345,40 @@ test("brightness follows each segment's own edge, and refilling it never touches
       );
   }
   assert.deepEqual(packed.segments.slice(0, geometry.length), geometry);
+});
+
+import { looksOf } from "../../next/engine/render.js";
+
+test("each node's and edge's own style wins over the view's options", () => {
+  const g = new Graph(
+    [
+      { id: "a", style: { color: "#ff0000", size: 30, shape: "diamond" } },
+      { id: "b" },
+    ],
+    [{ source: "a", target: "b", style: { color: "#00ff00", width: 5 } }],
+  );
+  const node = {
+    size: 10,
+    sizeBy: "uniform",
+    colorBy: "single",
+    color: "#123456",
+    shape: "circle",
+  };
+  const looks = looksOf(g, node, {
+    colorBy: "single",
+    color: "#abcdef",
+    width: 1,
+  });
+  assert.deepEqual(
+    [looks.radius[0], looks.fill[0], looks.shape[0]],
+    [15, "#ff0000", "diamond"],
+  );
+  assert.deepEqual(
+    [looks.radius[1], looks.fill[1], looks.shape[1]],
+    [5, "#123456", "circle"],
+  );
+  assert.deepEqual([looks.edgeColour[0], looks.edgeWidth[0]], ["#00ff00", 5]);
+  const packed = packNodes({ graph: g, looks });
+  assert.equal(packed[7], SHAPE_IDS.diamond);
+  assert.equal(packed[NODE_STRIDE + 7], SHAPE_IDS.circle);
 });

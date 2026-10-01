@@ -4,27 +4,67 @@ import { labelAnchor, reach } from "./boxes.js";
 import { edgeRoute, fanJunctions, trim } from "./geometry.js";
 import { PALETTE } from "./style.js";
 
-/** Per-node radius and colour for a graph and node options. */
-export function nodeLooks(graph, node) {
-  const radius = new Float64Array(graph.nodes.length);
-  const fill = new Array(graph.nodes.length);
+/**
+ * How every node and edge looks: each element's own `style` (from the model) first, then the view's node and edge
+ * options (sizing, colouring rules, defaults).
+ * @returns {{ radius: Float64Array, fill: string[], shape: string[], edgeColour: string[], edgeWidth: Float64Array,
+ *   edgeDefault: { colour: string, width: number, byTarget: boolean } }}
+ */
+export function looksOf(graph, node, edge) {
+  const count = graph.nodes.length;
+  const radius = new Float64Array(count);
+  const fill = new Array(count);
+  const shape = new Array(count);
   const branch = branches(graph);
   for (const n of graph.nodes) {
+    const style = n.style ?? {};
     let scale = 1;
     if (node.sizeBy === "descendants")
       scale = 1 + 0.35 * Math.log2(1 + n.descendants);
     else if (node.sizeBy === "depth") scale = Math.max(0.4, 1 - n.depth * 0.14);
-    radius[n.index] = (node.size / 2) * scale;
+    radius[n.index] =
+      style.size !== undefined ? style.size / 2 : (node.size / 2) * scale;
+    shape[n.index] = style.shape ?? node.shape;
     fill[n.index] =
-      node.colorBy === "single"
+      style.color ??
+      (node.colorBy === "single"
         ? node.color
         : node.colorBy === "branch"
           ? n.depth === 0
             ? "#e6e9f2"
             : PALETTE[branch[n.index] % PALETTE.length]
-          : PALETTE[n.depth % PALETTE.length];
+          : PALETTE[n.depth % PALETTE.length]);
   }
-  return { radius, fill };
+  const edgeColour = graph.edges.map(
+    (e) =>
+      e.style?.color ??
+      (edge.colorBy === "target" ? fill[e.target] : edge.color),
+  );
+  const edgeWidth = Float64Array.from(
+    graph.edges,
+    (e) => e.style?.width ?? edge.width,
+  );
+  return {
+    radius,
+    fill,
+    shape,
+    edgeColour,
+    edgeWidth,
+    edgeDefault: {
+      colour: edge.color,
+      width: edge.width,
+      byTarget: edge.colorBy === "target",
+    },
+  };
+}
+
+/** Node looks only (radius, fill, shape), for callers that don't draw edges. */
+export function nodeLooks(graph, node) {
+  return looksOf(graph, node, {
+    colorBy: "single",
+    color: "#000000",
+    width: 1,
+  });
 }
 
 /** Which of its root's children each node descends from (roots get their own number). */
@@ -144,6 +184,7 @@ export function drawEdges(ctx, scene) {
   const { graph, routing, edge, looks } = scene;
   const world = worldTransform(scene);
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
+  const index = new Map(graph.edges.map((e, i) => [e, i]));
   const draw = (target, e) =>
     drawEdge(
       target,
@@ -158,6 +199,7 @@ export function drawEdges(ctx, scene) {
       looks,
       graph.nodes[e.source],
       graph.nodes[e.target],
+      index.get(e),
     );
   const style = (target) => {
     target.setTransform(...world);
@@ -198,7 +240,8 @@ export function drawNodes(ctx, scene) {
     if (!ctx.globalAlpha) continue;
     drawNode(
       ctx,
-      node,
+      looks.shape[n.index],
+      node.outline,
       n,
       looks.radius[n.index],
       looks.fill[n.index],
@@ -219,7 +262,7 @@ export function drawLabels(ctx, scene) {
   for (const n of graph.nodes) {
     ctx.globalAlpha = labelAlpha(scene, n.index);
     if (!ctx.globalAlpha) continue;
-    drawLabel(ctx, n, looks.radius[n.index] * reach(node.shape));
+    drawLabel(ctx, n, looks.radius[n.index] * reach(looks.shape[n.index]));
   }
   ctx.globalAlpha = 1;
 }
@@ -244,11 +287,12 @@ function edgeLayer(canvas) {
   return layer;
 }
 
-function drawEdge(ctx, route, edge, looks, s, t) {
+function drawEdge(ctx, route, edge, looks, s, t, ei) {
   const end = edge.arrow === "none" ? 0 : edge.arrowSize * 0.9;
   const pts = trim(route, looks.radius[s.index], looks.radius[t.index] + end);
   if (!pts) return;
-  const colour = edge.colorBy === "target" ? looks.fill[t.index] : edge.color;
+  const colour = looks.edgeColour[ei];
+  const width = looks.edgeWidth[ei];
   ctx.strokeStyle = colour;
   ctx.fillStyle = colour;
 
@@ -262,14 +306,14 @@ function drawEdge(ctx, route, edge, looks, s, t) {
       const len = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
       const f = (walked + len / 2) / total;
       walked += len;
-      ctx.lineWidth = edge.width * (2 - 1.7 * f);
+      ctx.lineWidth = width * (2 - 1.7 * f);
       ctx.beginPath();
       ctx.moveTo(pts[i - 2], pts[i - 1]);
       ctx.lineTo(pts[i], pts[i + 1]);
       ctx.stroke();
     }
   } else {
-    ctx.lineWidth = edge.width;
+    ctx.lineWidth = width;
     ctx.beginPath();
     roundedPolyline(ctx, pts, edge.corner);
     ctx.stroke();
@@ -321,10 +365,10 @@ function roundedPolyline(ctx, pts, radius) {
   ctx.lineTo(pts.at(-2), pts.at(-1));
 }
 
-function drawNode(ctx, node, n, r, fill, background) {
+function drawNode(ctx, shape, outline, n, r, fill, background) {
   ctx.beginPath();
   const { x, y } = n;
-  switch (node.shape) {
+  switch (shape) {
     case "square":
       ctx.rect(x - r, y - r, r * 2, r * 2);
       break;
@@ -348,7 +392,7 @@ function drawNode(ctx, node, n, r, fill, background) {
     default:
       ctx.arc(x, y, r, 0, Math.PI * 2);
   }
-  if (node.shape === "ring") {
+  if (shape === "ring") {
     ctx.fillStyle = background;
     ctx.fill();
     ctx.lineWidth = Math.max(1.5, r * 0.35);
@@ -358,8 +402,8 @@ function drawNode(ctx, node, n, r, fill, background) {
   }
   ctx.fillStyle = fill;
   ctx.fill();
-  if (node.outline > 0) {
-    ctx.lineWidth = node.outline;
+  if (outline > 0) {
+    ctx.lineWidth = outline;
     ctx.strokeStyle = background;
     ctx.stroke();
   }

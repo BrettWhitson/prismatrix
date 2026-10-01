@@ -22,4 +22,5 @@ export {
   SNAPSHOT_FORMAT,
   SNAPSHOT_VERSION,
 } from "./snapshot.js";
+export { GraphController, roughMeasure, alongRings } from "./controller.js";
 export { GraphView } from "./view.js";

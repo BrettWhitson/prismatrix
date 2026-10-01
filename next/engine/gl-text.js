@@ -6,7 +6,7 @@
 // they're small. When the zoom crosses a step, or panning brings new labels near, they fill in over the next
 // frames a few milliseconds at a time, while the previous atlas stands in, so labels never blink out.
 
-import { labelAnchor } from "./boxes.js";
+import { labelAnchor, reach } from "./boxes.js";
 
 /** The atlas page size in texels. 2048 is safe on every WebGL2 device. */
 const PAGE = 2048;
@@ -163,7 +163,7 @@ export class LabelLayer {
   /**
    * @returns {{ data: Float32Array, groups: { page: any, first: number, count: number }[], pending: boolean }}
    */
-  build(scene, labelAlpha, reach) {
+  build(scene, labelAlpha) {
     const { graph, node, looks, camera, dpr, width, height } = scene;
     const scale = bucketScale(camera.k, dpr);
     if (
@@ -239,7 +239,7 @@ export class LabelLayer {
         const box = labelBox(
           n.x,
           n.y,
-          looks.radius[n.index] * reach,
+          looks.radius[n.index] * reach(looks.shape[n.index]),
           n.labelAngle,
           size,
           textWidth,

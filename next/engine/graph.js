@@ -12,6 +12,7 @@ import { GraphModel } from "./model.js";
  * @typedef {object} Node
  * @property {string} id
  * @property {string} label
+ * @property {object} style     the model node's style overrides (frozen)
  * @property {object} data      the model node's data (frozen)
  * @property {number} index     position in graph.nodes (the same as in the model)
  * @property {number} x
@@ -33,6 +34,7 @@ import { GraphModel } from "./model.js";
  * @property {number} source index of the source node
  * @property {number} target index of the target node
  * @property {boolean} tree  true when this edge is the target's parent link in the forest
+ * @property {object} style  the model edge's style overrides (frozen)
  * @property {object} data   the model edge's data (frozen)
  */
 
@@ -51,6 +53,7 @@ export class Graph {
     this.nodes = model.nodes.map((m, index) => ({
       id: m.id,
       label: m.label,
+      style: m.style,
       data: m.data,
       index,
       x: 0,
@@ -73,6 +76,7 @@ export class Graph {
       source: model.ends[i][0],
       target: model.ends[i][1],
       tree: !!forest.tree[i],
+      style: e.style,
       data: e.data,
     }));
     /** @type {ReadonlyArray<ReadonlyArray<number>>} per node, the indices of the edges out of it and into it */
