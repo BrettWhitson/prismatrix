@@ -755,3 +755,187 @@ test("radial: partial sweeps and forests lay out without overlaps, inside the sw
   radialLayout(forest, {}, sized(forest));
   assert.equal(overlapsAtHome(forest, sized(forest)), 0);
 });
+
+// ---- radial edges that don't loop, and bundled cross-links -------------------------------------------------
+
+import {
+  bspline,
+  bundledPoints,
+  edgeRoute,
+  stepLoops,
+} from "../../next/engine/geometry.js";
+
+test("a radial step edge falls back to a curve when it would loop", () => {
+  const routing = { kind: "radial", cx: 0, cy: 0 };
+  // Laid out normally: parent on ring 100, child on ring 200 nearby. The arc runs at radius 150.
+  const normal = edgePoints(
+    routing,
+    "step",
+    { x: 100, y: 0 },
+    { x: 0, y: 200 },
+  );
+  const middle = normal.slice(2, -2);
+  for (let i = 0; i < middle.length; i += 2)
+    assert.ok(Math.abs(Math.hypot(middle[i], middle[i + 1]) - 150) < 1e-6);
+  // The child dragged inside the parent's ring: no arc, so nothing doubles back round the centre.
+  const inward = edgePoints(
+    routing,
+    "step",
+    { x: 200, y: 0 },
+    { x: -50, y: 10 },
+  );
+  const radii = [];
+  for (let i = 0; i < inward.length; i += 2)
+    radii.push(Math.hypot(inward[i], inward[i + 1]));
+  assert.ok(
+    !radii.slice(1, -1).every((r) => Math.abs(r - 125) < 1e-6),
+    "not the ring arc",
+  );
+  assert.ok(Math.max(...radii) <= 200 + 1e-6, "stays inside the outer end");
+  assert.ok(stepLoops(200, 50, 10, 100));
+  assert.ok(
+    stepLoops(100, 200, 300, 150),
+    "an arc much longer than the way across",
+  );
+  assert.ok(!stepLoops(100, 200, 200, 150));
+});
+
+/** root → a → a1, root → b → b1, plus a cross-link a1 → b1 (a shared ingredient). */
+function sharedIngredient() {
+  const g = new Graph(
+    ["root", "a", "b", "a1", "b1"].map((id) => ({ id })),
+    [
+      ["root", "a"],
+      ["root", "b"],
+      ["a", "a1"],
+      ["b", "b1"],
+      ["a1", "b1"],
+    ].map(([source, target]) => ({ source, target })),
+  );
+  radialLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  return g;
+}
+
+test("a cross-link bundles along the tree: from one end to the other via their common ancestor", () => {
+  const g = sharedIngredient();
+  const cross = g.edges.find((e) => !e.tree);
+  assert.ok(cross, "the second way into b1 is a cross-link");
+  const pts = bundledPoints(g, cross, 1);
+  const s = g.byId.get("a1"),
+    t = g.byId.get("b1"),
+    root = g.byId.get("root");
+  assert.deepEqual(pts.slice(0, 2), [s.x, s.y]);
+  assert.deepEqual(pts.slice(-2), [t.x, t.y]);
+  // Fully bundled, it bends in towards the root (the common ancestor), well off the straight line.
+  let nearest = Infinity;
+  for (let i = 0; i < pts.length; i += 2)
+    nearest = Math.min(
+      nearest,
+      Math.hypot(pts[i] - root.x, pts[i + 1] - root.y),
+    );
+  const chordMid = Math.hypot(
+    (s.x + t.x) / 2 - root.x,
+    (s.y + t.y) / 2 - root.y,
+  );
+  assert.ok(nearest < chordMid * 0.7, `${nearest} vs ${chordMid}`);
+  // Strength 0 is the straight line (sampled).
+  const flat = bundledPoints(g, cross, 0);
+  for (let i = 0; i < flat.length; i += 2) {
+    const cross2 =
+      (t.x - s.x) * (flat[i + 1] - s.y) - (t.y - s.y) * (flat[i] - s.x);
+    assert.ok(Math.abs(cross2) / Math.hypot(t.x - s.x, t.y - s.y) < 1e-6);
+  }
+});
+
+test("cross-links between separate trees go straight; straight edges stay straight; tree edges keep their shape", () => {
+  const g = new Graph(
+    ["a", "a1", "b", "b1"].map((id) => ({ id })),
+    [
+      ["a", "a1"],
+      ["b", "b1"],
+      ["a1", "b1"],
+    ].map(([source, target]) => ({ source, target })),
+  );
+  // b's tree is reachable from a's through the cross-link, so the forest decides what's a root; whatever it
+  // decides, a route must start and end at its nodes.
+  const routing = radialLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  for (const e of g.edges) {
+    const pts = edgeRoute(g, routing, "curve", e);
+    assert.deepEqual(pts.slice(0, 2), [
+      g.nodes[e.source].x,
+      g.nodes[e.source].y,
+    ]);
+    assert.deepEqual(pts.slice(-2), [g.nodes[e.target].x, g.nodes[e.target].y]);
+  }
+  const shared = sharedIngredient();
+  const cross = shared.edges.find((e) => !e.tree);
+  assert.equal(
+    edgeRoute(shared, { kind: "radial", cx: 0, cy: 0 }, "straight", cross)
+      .length,
+    4,
+  );
+});
+
+test("step arcs never fall back on a radial tree nobody has moved", () => {
+  for (let seed = 1; seed <= 60; seed++) {
+    const g = randomGraph(seed, 20 + seed * 5, 0.3 + (seed % 10) * 0.3);
+    radialLayout(g, { spacing: seed % 2 ? "tidy" : "leaves" });
+    for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+    for (const e of g.edges) {
+      const s = g.nodes[e.source],
+        t = g.nodes[e.target];
+      const rs = Math.hypot(s.x, s.y),
+        rt = Math.hypot(t.x, t.y);
+      if (rs < 1e-6) continue;
+      let d = Math.atan2(t.y, t.x) - Math.atan2(s.y, s.x);
+      if (d > Math.PI) d -= Math.PI * 2;
+      if (d < -Math.PI) d += Math.PI * 2;
+      const arc = ((rs + rt) / 2) * Math.abs(d);
+      assert.ok(
+        !stepLoops(rs, rt, arc, Math.hypot(t.x - s.x, t.y - s.y)),
+        `seed ${seed}`,
+      );
+    }
+  }
+});
+
+test("a clamped B-spline starts and ends on its end points", () => {
+  const pts = bspline([
+    [0, 0],
+    [50, 100],
+    [100, 0],
+  ]);
+  assert.deepEqual(pts.slice(0, 2), [0, 0]);
+  assert.ok(Math.abs(pts.at(-2) - 100) < 1e-9 && Math.abs(pts.at(-1)) < 1e-9);
+});
+
+test("the root's radial edges stay spokes when physics nudges it off the centre", () => {
+  const routing = { kind: "radial", cx: 0, cy: 0 };
+  const root = { x: 20, y: -15, homeX: 0, homeY: 0 };
+  const child = { x: 0, y: 150, homeX: 0, homeY: 150 };
+  assert.deepEqual(
+    edgePoints(routing, "step", root, child),
+    [20, -15, 0, 150],
+    "straight out",
+  );
+  // The curve leaves along the direction of the child, not of the drift.
+  const pts = edgePoints(routing, "curve", root, child);
+  for (let i = 0; i < pts.length; i += 2)
+    assert.ok(pts[i + 1] >= -15 - 1e-9, "never swings back past the root");
+});
+
+test("a radial step edge whose ends have left their rings is drawn as a curve", () => {
+  const routing = { kind: "radial", cx: 0, cy: 0 };
+  const parent = { x: 100, y: 0, homeX: 100, homeY: 0 };
+  const onRing = { x: 0, y: 200, homeX: 0, homeY: 200 };
+  const arc = edgePoints(routing, "step", parent, onRing);
+  assert.ok(
+    Math.abs(Math.hypot(arc[4], arc[5]) - 150) < 1e-6,
+    "on its ring: the ring arc",
+  );
+  const drifted = { x: 0, y: 140, homeX: 0, homeY: 200 }; // 60 in from its ring, more than a quarter of 100
+  const curved = edgePoints(routing, "step", parent, drifted);
+  assert.deepEqual(curved, edgePoints(routing, "curve", parent, drifted));
+});

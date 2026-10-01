@@ -1,6 +1,6 @@
 // What the WebGL renderer sends the GPU each frame, worked out on the CPU. Pure: no GL, so it can be tested.
 
-import { edgePoints, fanJunctions, rounded, trim } from "./geometry.js";
+import { edgeRoute, fanJunctions, rounded, trim } from "./geometry.js";
 import { edgeAlpha, nodeAlpha } from "./render.js";
 
 /** Shape names to the ids the node shader switches on. */
@@ -103,12 +103,12 @@ export function packEdges(scene, reuse = {}) {
         junction = { x: jx, y: junctions[e.source * 2 + 1] };
     }
     let pts = trim(
-      edgePoints(routing, edge.shape, s, t, junction),
+      edgeRoute(graph, routing, edge.shape, e, junction),
       looks.radius[s.index],
       looks.radius[t.index] + end,
     );
     if (!pts) continue;
-    if (corner > 0) pts = rounded(pts, corner);
+    if (corner > 0 && e.tree) pts = rounded(pts, corner); // bundled cross-links are already smooth
     const rgb = colour(
       edge.colorBy === "target" ? looks.fill[t.index] : edge.color,
     );

@@ -1,7 +1,7 @@
 // Canvas 2D drawing. Deliberately plain for now: the look is what's being worked out, speed comes later.
 
 import { labelAnchor, reach } from "./boxes.js";
-import { edgePoints, fanJunctions, trim } from "./geometry.js";
+import { edgeRoute, fanJunctions, trim } from "./geometry.js";
 import { PALETTE } from "./style.js";
 
 /** Per-node radius and colour for a graph and node options. */
@@ -137,12 +137,17 @@ export function drawEdges(ctx, scene) {
   const draw = (target, e) =>
     drawEdge(
       target,
-      routing,
+      edgeRoute(
+        graph,
+        routing,
+        edge.shape,
+        e,
+        junctions && e.tree ? junctionAt(junctions, e.source) : null,
+      ),
       edge,
       looks,
       graph.nodes[e.source],
       graph.nodes[e.target],
-      junctions && e.tree ? junctionAt(junctions, e.source) : null,
     );
   const style = (target) => {
     target.setTransform(...world);
@@ -229,13 +234,9 @@ function edgeLayer(canvas) {
   return layer;
 }
 
-function drawEdge(ctx, routing, edge, looks, s, t, junction) {
+function drawEdge(ctx, route, edge, looks, s, t) {
   const end = edge.arrow === "none" ? 0 : edge.arrowSize * 0.9;
-  const pts = trim(
-    edgePoints(routing, edge.shape, s, t, junction),
-    looks.radius[s.index],
-    looks.radius[t.index] + end,
-  );
+  const pts = trim(route, looks.radius[s.index], looks.radius[t.index] + end);
   if (!pts) return;
   const colour = edge.colorBy === "target" ? looks.fill[t.index] : edge.color;
   ctx.strokeStyle = colour;
