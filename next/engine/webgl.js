@@ -1,160 +1,41 @@
-// The WebGL2 renderer, built up a layer at a time. Today the GPU draws the nodes; edges and labels are still drawn
-// with Canvas 2D on layers below and above it, so the scene stacks up as:
+// The WebGL2 renderer, built up a step at a time. The GPU draws the background, edges and nodes on a canvas of its
+// own, beneath the view's canvas; labels are still drawn on the view's canvas with Canvas 2D:
 //
-//   edge layer (2D, background + edges)  →  GL layer (nodes)  →  the view's own canvas (2D, labels; takes input)
+//   GL layer (background, edges, arrowheads, nodes)  →  the view's own canvas (2D labels; takes the pointer)
 //
-// Each node is one instance of a unit quad. The fragment shader draws its shape as a signed distance field (how far a
-// pixel is outside the shape), which gives smooth, resolution-independent edges and outlines at any zoom.
+// Edges are drawn onto a texture and the texture onto the scene at the edge opacity, so where edges overlap they
+// don't add up to brighter lines (the Canvas 2D renderer does the same with an offscreen canvas).
 
-import { clearTo, drawEdges, drawLabels } from "./render.js";
+import { clearTo, drawLabels } from "./render.js";
+import {
+  END_STRIDE,
+  NODE_STRIDE,
+  SEGMENT_STRIDE,
+  packEdges,
+  packNodes,
+  parseColour,
+} from "./gl-pack.js";
+import {
+  COMPOSITE_FRAGMENT,
+  COMPOSITE_VERTEX,
+  END_FRAGMENT,
+  END_VERTEX,
+  NODE_FRAGMENT,
+  NODE_VERTEX,
+  SEGMENT_FRAGMENT,
+  SEGMENT_VERTEX,
+} from "./gl-shaders.js";
 
-/** Shape names to the ids the shader switches on. */
-export const SHAPE_IDS = {
-  circle: 0,
-  square: 1,
-  rounded: 2,
-  diamond: 3,
-  hexagon: 4,
-  ring: 5,
-};
+export {
+  NODE_STRIDE,
+  SHAPE_IDS,
+  packEdges,
+  packNodes,
+  parseColour,
+} from "./gl-pack.js";
 
-/** Floats per node instance: centre x, y; radius; colour r, g, b, a (a carries dimming); shape id. */
-export const NODE_STRIDE = 8;
-
-const VERTEX = `#version 300 es
-layout(location = 0) in vec2 a_corner;
-layout(location = 1) in vec2 a_centre;
-layout(location = 2) in float a_radius;
-layout(location = 3) in vec4 a_colour;
-layout(location = 4) in float a_shape;
-
-uniform vec2 u_view;      // canvas size in CSS px
-uniform vec3 u_camera;    // world x, y at the centre of the view, and zoom
-uniform float u_outline;  // outline width, world px
-uniform float u_pixel;    // one device pixel, in world px
-
-out vec2 v_local;
-flat out float v_radius;
-flat out vec4 v_colour;
-flat out float v_shape;
-
-void main() {
-  float reach = a_shape == 3.0 ? 1.25 : a_shape == 4.0 ? 1.1 : 1.0;
-  float ring = a_shape == 5.0 ? max(1.5, a_radius * 0.35) * 0.5 : 0.0;
-  // Big enough for the shape, half its outline or ring stroke, and a couple of pixels of anti-aliasing.
-  float extent = a_radius * reach + max(u_outline * 0.5, ring) + 2.0 * u_pixel;
-  vec2 local = a_corner * extent;
-  vec2 css = (a_centre + local - u_camera.xy) * u_camera.z + u_view * 0.5;
-  vec2 clip = css / u_view * 2.0 - 1.0;
-  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
-  v_local = local;
-  v_radius = a_radius;
-  v_colour = a_colour;
-  v_shape = a_shape;
-}`;
-
-const FRAGMENT = `#version 300 es
-precision highp float;
-
-in vec2 v_local;
-flat in float v_radius;
-flat in vec4 v_colour;
-flat in float v_shape;
-
-uniform float u_outline;
-uniform float u_pixel;
-uniform vec3 u_background;
-
-out vec4 outColour;
-
-float box(vec2 p, vec2 b) {
-  vec2 d = abs(p) - b;
-  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
-}
-
-float roundedBox(vec2 p, vec2 b, float r) {
-  vec2 q = abs(p) - b + r;
-  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-}
-
-// A hexagon with points at top and bottom; r is the distance from the centre to a point.
-float hexagon(vec2 p, float r) {
-  const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
-  p = abs(p.yx);
-  float apothem = r * 0.866025404;
-  p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
-  p -= vec2(clamp(p.x, -k.z * apothem, k.z * apothem), apothem);
-  return length(p) * sign(p.y);
-}
-
-// Coverage of a pixel whose centre is d world px outside an edge.
-float cover(float d) {
-  return clamp(0.5 - d / u_pixel, 0.0, 1.0);
-}
-
-void main() {
-  vec2 p = v_local;
-  float r = v_radius;
-  vec3 colour = v_colour.rgb;
-  float alpha;
-  if (v_shape == 5.0) {
-    // A ring: background inside, a stroke in the node's colour around it.
-    float half_ = max(1.5, r * 0.35) * 0.5;
-    float d = length(p) - r;
-    float stroke = cover(abs(d) - half_);
-    alpha = max(cover(d), stroke);
-    colour = mix(u_background, colour, alpha > 0.0 ? stroke / alpha : 0.0);
-  } else {
-    float d = v_shape == 1.0 ? box(p, vec2(r))
-      : v_shape == 2.0 ? roundedBox(p, vec2(r), r * 0.45)
-      : v_shape == 3.0 ? (abs(p.x) + abs(p.y) - r * 1.25) * 0.707106781
-      : v_shape == 4.0 ? hexagon(p, r * 1.1)
-      : length(p) - r;
-    if (u_outline > 0.0) {
-      // An outline in the background colour, centred on the shape's edge.
-      float half_ = u_outline * 0.5;
-      alpha = cover(d - half_);
-      float line = cover(abs(d) - half_);
-      colour = mix(colour, u_background, alpha > 0.0 ? line / alpha : 0.0);
-    } else alpha = cover(d);
-  }
-  alpha *= v_colour.a;
-  outColour = vec4(colour * alpha, alpha); // premultiplied
-}`;
-
-/** "#rrggbb" to [r, g, b] in 0–1. */
-export function parseColour(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
-}
-
-/**
- * Every node as instance data for the shader, into `out` (grown if too small). Pure: no GL, so it can be tested.
- * @returns {Float32Array}
- */
-export function packNodes(scene, out) {
-  const { graph, node, looks, focus } = scene;
-  const count = graph.nodes.length;
-  if (!out || out.length < count * NODE_STRIDE)
-    out = new Float32Array(Math.max(count, 64) * NODE_STRIDE);
-  const shape = SHAPE_IDS[node.shape] ?? 0;
-  const colours = new Map();
-  for (const n of graph.nodes) {
-    const fill = looks.fill[n.index];
-    let rgb = colours.get(fill);
-    if (!rgb) colours.set(fill, (rgb = parseColour(fill)));
-    const o = n.index * NODE_STRIDE;
-    out[o] = n.x;
-    out[o + 1] = n.y;
-    out[o + 2] = looks.radius[n.index];
-    out[o + 3] = rgb[0];
-    out[o + 4] = rgb[1];
-    out[o + 5] = rgb[2];
-    out[o + 6] = !focus || focus.has(n.index) ? 1 : 0.25;
-    out[o + 7] = shape;
-  }
-  return out;
-}
+/** Dimmed edges (outside the hovered lineage) are drawn at this share of the edge opacity. */
+const DIM_EDGES = 0.15;
 
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
@@ -165,6 +46,7 @@ function compile(gl, type, source) {
   return shader;
 }
 
+/** A linked program and its uniform locations. */
 function program(gl, vertex, fragment) {
   const p = gl.createProgram();
   gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vertex));
@@ -172,7 +54,13 @@ function program(gl, vertex, fragment) {
   gl.linkProgram(p);
   if (!gl.getProgramParameter(p, gl.LINK_STATUS))
     throw new Error(`Prismatrix shader link: ${gl.getProgramInfoLog(p)}`);
-  return p;
+  const uniforms = {};
+  const count = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < count; i++) {
+    const { name } = gl.getActiveUniform(p, i);
+    uniforms[name] = gl.getUniformLocation(p, name);
+  }
+  return { program: p, uniforms };
 }
 
 /** True when this browser can give us a WebGL2 context. */
@@ -184,12 +72,77 @@ export function webglAvailable() {
   }
 }
 
-/** Nodes drawn with WebGL2 on a canvas of their own. */
-class NodeLayer {
+/**
+ * Instances of a unit quad, each with attributes read from one buffer of floats.
+ * @param {[location: number, size: number, offset: number][]} layout attribute location, floats, float offset
+ */
+class InstancedQuads {
+  constructor(gl, corners, stride, layout) {
+    this.gl = gl;
+    this.stride = stride;
+    this.layout = layout;
+    this.vao = gl.createVertexArray();
+    this.buffer = gl.createBuffer();
+    this.capacity = 0;
+    gl.bindVertexArray(this.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    for (const [location] of layout) {
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribDivisor(location, 1);
+    }
+    this.#point(0);
+    gl.bindVertexArray(null);
+  }
+
+  /** Point the attributes at instance `first`: how a range is drawn without base-instance support. */
+  #point(first) {
+    const { gl } = this;
+    const bytes = this.stride * 4;
+    for (const [location, size, offset] of this.layout)
+      gl.vertexAttribPointer(
+        location,
+        size,
+        gl.FLOAT,
+        false,
+        bytes,
+        first * bytes + offset * 4,
+      );
+  }
+
+  upload(data, count) {
+    const { gl } = this;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    const bytes = count * this.stride * 4;
+    if (bytes > this.capacity) {
+      this.capacity = Math.max(bytes, this.capacity * 2, 4096);
+      gl.bufferData(gl.ARRAY_BUFFER, this.capacity, gl.DYNAMIC_DRAW);
+    }
+    if (count)
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, count * this.stride);
+  }
+
+  /** Draw instances [first, end). */
+  draw(first, end) {
+    if (end <= first) return;
+    const { gl } = this;
+    gl.bindVertexArray(this.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    this.#point(first);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, end - first);
+    gl.bindVertexArray(null);
+  }
+}
+
+/** Background, edges and nodes, drawn with WebGL2 on one canvas. */
+class GLLayer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.data = null;
     this.lost = false;
+    this.edgeData = {};
+    this.nodeData = null;
     canvas.addEventListener("webglcontextlost", (e) => {
       e.preventDefault(); // ask for it back
       this.lost = true;
@@ -205,17 +158,14 @@ class NodeLayer {
     const gl = this.canvas.getContext("webgl2", {
       antialias: false, // the shaders anti-alias themselves
       premultipliedAlpha: true,
+      alpha: false, // the background is opaque
     });
     if (!gl) throw new Error("WebGL2 is not available");
     this.gl = gl;
-    this.program = program(gl, VERTEX, FRAGMENT);
-    this.uniforms = Object.fromEntries(
-      ["u_view", "u_camera", "u_outline", "u_pixel", "u_background"].map(
-        (name) => [name, gl.getUniformLocation(this.program, name)],
-      ),
-    );
-    this.vao = gl.createVertexArray();
-    gl.bindVertexArray(this.vao);
+    this.nodeProgram = program(gl, NODE_VERTEX, NODE_FRAGMENT);
+    this.segmentProgram = program(gl, SEGMENT_VERTEX, SEGMENT_FRAGMENT);
+    this.endProgram = program(gl, END_VERTEX, END_FRAGMENT);
+    this.compositeProgram = program(gl, COMPOSITE_VERTEX, COMPOSITE_FRAGMENT);
 
     const corners = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, corners);
@@ -224,62 +174,146 @@ class NodeLayer {
       new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
       gl.STATIC_DRAW,
     );
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    this.nodes = new InstancedQuads(gl, corners, NODE_STRIDE, [
+      [1, 2, 0], // centre
+      [2, 1, 2], // radius
+      [3, 4, 3], // colour
+      [4, 1, 7], // shape
+    ]);
+    this.segments = new InstancedQuads(gl, corners, SEGMENT_STRIDE, [
+      [1, 4, 0], // ends
+      [2, 2, 4], // half-widths
+      [3, 3, 6], // colour
+    ]);
+    this.ends = new InstancedQuads(gl, corners, END_STRIDE, [
+      [1, 4, 0], // tip, direction
+      [2, 2, 4], // size, kind
+      [3, 3, 6], // colour
+    ]);
+    this.emptyVao = gl.createVertexArray();
+    this.target = null; // the offscreen texture edges are drawn onto
+    this.built = null; // what the buffers hold; nothing yet (or after a lost context)
+  }
 
-    this.instances = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
-    const bytes = NODE_STRIDE * 4;
-    const attribute = (location, size, offset) => {
-      gl.enableVertexAttribArray(location);
-      gl.vertexAttribPointer(
-        location,
-        size,
-        gl.FLOAT,
-        false,
-        bytes,
-        offset * 4,
-      );
-      gl.vertexAttribDivisor(location, 1);
-    };
-    attribute(1, 2, 0); // centre
-    attribute(2, 1, 2); // radius
-    attribute(3, 4, 3); // colour
-    attribute(4, 1, 7); // shape
-    gl.bindVertexArray(null);
-    this.capacity = 0;
+  /** The offscreen texture and framebuffer, the size of the canvas. */
+  #edgeTarget() {
+    const { gl } = this;
+    const { width, height } = this.canvas;
+    if (this.target?.width === width && this.target?.height === height)
+      return this.target;
+    if (this.target) {
+      gl.deleteFramebuffer(this.target.framebuffer);
+      gl.deleteTexture(this.target.texture);
+    }
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA8,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
+    for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
+      gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST);
+    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
+      gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER,
+      gl.COLOR_ATTACHMENT0,
+      gl.TEXTURE_2D,
+      texture,
+      0,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.target = { width, height, texture, framebuffer };
+    return this.target;
+  }
+
+  /** Set the uniforms every program shares. */
+  #use({ program: p, uniforms: u }, scene) {
+    const { gl } = this;
+    const { width, height, dpr, camera } = scene;
+    gl.useProgram(p);
+    if (u.u_view) gl.uniform2f(u.u_view, width, height);
+    if (u.u_camera) gl.uniform3f(u.u_camera, camera.x, camera.y, camera.k);
+    if (u.u_pixel) gl.uniform1f(u.u_pixel, 1 / (camera.k * dpr));
+    return u;
   }
 
   draw(scene) {
     if (this.lost) return;
     const { gl } = this;
-    const { width, height, dpr, camera, node, background, graph } = scene;
+    const { edge, node, background, graph } = scene;
+    const bg = parseColour(background);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.clearColor(0, 0, 0, 0);
+    gl.clearColor(bg[0], bg[1], bg[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    const count = graph.nodes.length;
-    if (!count) return;
-
-    this.data = packNodes(scene, this.data);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
-    if (this.data.byteLength > this.capacity) {
-      gl.bufferData(gl.ARRAY_BUFFER, this.data.byteLength, gl.DYNAMIC_DRAW);
-      this.capacity = this.data.byteLength;
-    }
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.data, 0, count * NODE_STRIDE);
-
-    gl.useProgram(this.program);
-    const u = this.uniforms;
-    gl.uniform2f(u.u_view, width, height);
-    gl.uniform3f(u.u_camera, camera.x, camera.y, camera.k);
-    gl.uniform1f(u.u_outline, node.outline);
-    gl.uniform1f(u.u_pixel, 1 / (camera.k * dpr));
-    gl.uniform3f(u.u_background, ...parseColour(background));
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    gl.bindVertexArray(this.vao);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
-    gl.bindVertexArray(null);
+
+    // Rebuild what goes to the GPU only when something changed besides the camera.
+    const fresh =
+      scene.version === undefined ||
+      scene.version !== this.built?.version ||
+      scene.focusKey !== this.built.focusKey ||
+      scene.graph !== this.built.graph;
+    if (fresh) {
+      this.edgeData = packEdges(scene, this.edgeData);
+      this.segments.upload(this.edgeData.segments, this.edgeData.segmentCount);
+      this.ends.upload(this.edgeData.ends, this.edgeData.endCount);
+      this.nodeData = packNodes(scene, this.nodeData);
+      this.nodes.upload(this.nodeData, graph.nodes.length);
+      this.built = {
+        version: scene.version,
+        focusKey: scene.focusKey,
+        graph: scene.graph,
+      };
+    }
+    const e = this.edgeData;
+    const drawEdges = (s0, s1, e0, e1) => {
+      this.#use(this.segmentProgram, scene);
+      this.segments.draw(s0, s1);
+      this.#use(this.endProgram, scene);
+      this.ends.draw(e0, e1);
+    };
+    if (!scene.focus && edge.opacity >= 1) {
+      drawEdges(0, e.segmentCount, 0, e.endCount);
+    } else {
+      const target = this.#edgeTarget();
+      const pass = (s0, s1, e0, e1, strength) => {
+        if (s1 <= s0 && e1 <= e0) return;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        drawEdges(s0, s1, e0, e1);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        const u = this.#use(this.compositeProgram, scene);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, target.texture);
+        gl.uniform1i(u.u_texture, 0);
+        gl.uniform1f(u.u_alpha, edge.opacity * strength);
+        gl.bindVertexArray(this.emptyVao);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.bindVertexArray(null);
+      };
+      pass(0, e.dimSegments, 0, e.dimEnds, DIM_EDGES);
+      pass(e.dimSegments, e.segmentCount, e.dimEnds, e.endCount, 1);
+    }
+
+    // Nodes
+    const count = graph.nodes.length;
+    const u = this.#use(this.nodeProgram, scene);
+    gl.uniform1f(u.u_outline, node.outline);
+    gl.uniform3f(u.u_background, ...bg);
+    this.nodes.draw(0, count);
   }
 
   dispose() {
@@ -287,57 +321,47 @@ class NodeLayer {
   }
 }
 
-/** A canvas laid exactly over `under`'s box, beneath it, ignoring the pointer. */
-function layerBeneath(top) {
-  const layer = document.createElement("canvas");
-  Object.assign(layer.style, { position: "absolute", pointerEvents: "none" });
-  top.parentElement.insertBefore(layer, top);
-  return layer;
-}
-
 /**
- * The WebGL renderer for a view's canvas. It adds two canvases beneath the view's own (an edge layer and the GL
- * node layer) and draws labels on the view's canvas, which stays on top to take the pointer.
+ * The WebGL renderer for a view's canvas. It adds a GL canvas beneath the view's own, and draws labels on the
+ * view's canvas, which stays on top to take the pointer.
  */
 export class WebGLRenderer {
   constructor(canvas) {
     this.name = "webgl";
     this.top = canvas;
     this.topCtx = canvas.getContext("2d");
-    this.edgeCanvas = layerBeneath(canvas);
-    this.edgeCtx = this.edgeCanvas.getContext("2d");
-    this.glCanvas = layerBeneath(canvas);
-    // Positioned, so it paints after (above) the absolutely positioned layers before it.
+    this.glCanvas = document.createElement("canvas");
+    Object.assign(this.glCanvas.style, {
+      position: "absolute",
+      pointerEvents: "none",
+    });
+    canvas.parentElement.insertBefore(this.glCanvas, canvas);
+    // Positioned, so it paints after (above) the absolutely positioned layer before it.
     this.previousPosition = canvas.style.position;
     if (getComputedStyle(canvas).position === "static")
       canvas.style.position = "relative";
-    this.nodes = new NodeLayer(this.glCanvas);
+    this.layer = new GLLayer(this.glCanvas);
   }
 
   resize(width, height, dpr) {
-    for (const layer of [this.edgeCanvas, this.glCanvas]) {
-      Object.assign(layer.style, {
-        left: `${this.top.offsetLeft}px`,
-        top: `${this.top.offsetTop}px`,
-        width: `${width}px`,
-        height: `${height}px`,
-      });
-      layer.width = Math.round(width * dpr);
-      layer.height = Math.round(height * dpr);
-    }
+    Object.assign(this.glCanvas.style, {
+      left: `${this.top.offsetLeft}px`,
+      top: `${this.top.offsetTop}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+    });
+    this.glCanvas.width = Math.round(width * dpr);
+    this.glCanvas.height = Math.round(height * dpr);
   }
 
   draw(scene) {
-    clearTo(this.edgeCtx, scene, scene.background);
-    drawEdges(this.edgeCtx, scene);
-    this.nodes.draw(scene);
+    this.layer.draw(scene);
     clearTo(this.topCtx, scene, null);
     drawLabels(this.topCtx, scene);
   }
 
   dispose() {
-    this.nodes.dispose();
-    this.edgeCanvas.remove();
+    this.layer.dispose();
     this.glCanvas.remove();
     this.top.style.position = this.previousPosition;
   }

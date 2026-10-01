@@ -78,6 +78,10 @@ export class GraphView {
     this.cameraTween = null;
     this.frame = 0;
     this.last = 0;
+    // Bumped whenever node positions, the graph or the styles change: a renderer can keep what it built for a
+    // frame until it moves (panning and zooming redraw without rebuilding).
+    this.version = 0;
+    this.focusCache = { key: -1, set: null };
     this.fps = 60;
 
     this.renderer = null;
@@ -129,6 +133,7 @@ export class GraphView {
   }
 
   setNodeStyle(opts) {
+    this.version++;
     const before = this.node;
     this.node = resolve(NODE_OPTIONS, opts);
     if (SIZE_KEYS.some((k) => before[k] !== this.node[k]))
@@ -139,6 +144,7 @@ export class GraphView {
   }
 
   setEdgeStyle(opts) {
+    this.version++;
     const before = this.edge;
     this.edge = resolve(EDGE_OPTIONS, opts);
     this.#wake();
@@ -232,6 +238,7 @@ export class GraphView {
   }
 
   #relayout({ fit }) {
+    this.version++;
     this.looks = nodeLooks(this.graph, this.node);
     const sizing = this.#sizing();
     this.routing = LAYOUTS[this.layout].run(
@@ -353,9 +360,11 @@ export class GraphView {
         this.tween = null;
         this.sim.wake();
       }
+      this.version++;
       busy = true;
     } else {
       this.sim.advance(dt);
+      if (this.sim.moved) this.version++;
       busy = !this.sim.asleep;
     }
     const simMs = performance.now() - now;
@@ -375,6 +384,12 @@ export class GraphView {
     if (this.glide) busy = this.#coast(dt) || busy;
 
     const focusOn = this.pointer?.node ?? this.hover;
+    if (this.focusCache.key !== focusOn || this.focusCache.graph !== this.graph)
+      this.focusCache = {
+        key: focusOn,
+        graph: this.graph,
+        set: focusOn >= 0 ? lineage(this.graph, focusOn) : null,
+      };
     const drawStart = performance.now();
     this.renderer.draw({
       graph: this.graph,
@@ -383,7 +398,9 @@ export class GraphView {
       node: this.node,
       edge: this.edge,
       looks: this.looks,
-      focus: focusOn >= 0 ? lineage(this.graph, focusOn) : null,
+      focus: this.focusCache.set,
+      focusKey: focusOn,
+      version: this.version,
       width: this.width,
       height: this.height,
       dpr: this.dpr,
@@ -538,6 +555,7 @@ export class GraphView {
       const dx = p.x + ptr.offset.x - n.x,
         dy = p.y + ptr.offset.y - n.y;
       track(ptr, dx, dy, e);
+      this.version++;
       for (const i of ptr.carried) {
         this.graph.nodes[i].x += dx;
         this.graph.nodes[i].y += dy;

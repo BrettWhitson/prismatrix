@@ -176,6 +176,8 @@ export class Simulation {
     this.time = 0;
     this.carry = 0;
     this.energy = 0;
+    this.moved = false; // whether the last advance moved any node
+    this.pushed = false; // whether collision moved a node this step
     this.quiet = 0; // steps in a row with nothing moving
     this.since = 0; // seconds since the last wake
     /** @type {Set<number>} nodes held by the pointer: forces don't move them */
@@ -233,6 +235,7 @@ export class Simulation {
 
   /** Advance by `dt` seconds of wall time in fixed steps. Returns the mean squared speed. */
   advance(dt) {
+    this.moved = false;
     this.carry = Math.min(this.carry + dt, 1 / 20);
     const start = now();
     while (this.carry >= STEP) {
@@ -294,12 +297,15 @@ export class Simulation {
         for (const n of nodes) if (!this.held.has(n.index)) this.constrain(n);
     }
     let fastest = 0;
+    if (this.pushed) this.moved = true;
+    this.pushed = false;
     for (const n of nodes) {
       const v2 = n.vx * n.vx + n.vy * n.vy;
       energy += v2;
       if (v2 > fastest) fastest = v2;
     }
     energy = nodes.length ? energy / nodes.length : 0;
+    if (fastest > 0) this.moved = true;
     // At rest means every node, not the average: one node still moving among thousands barely shifts the mean.
     this.quiet = fastest < SLEEP ? this.quiet + 1 : 0;
     return energy;
@@ -419,6 +425,7 @@ export class Simulation {
     if (oy <= 0) return;
     const shares = this.#shares(a, b);
     if (!shares) return;
+    this.pushed = true;
     if (ox < oy) {
       const dir =
         a.x + (a.box.x0 + a.box.x1) / 2 <= b.x + (b.box.x0 + b.box.x1) / 2
@@ -458,6 +465,7 @@ export class Simulation {
       dy /= d;
     }
     const push = min - (d < 1e-6 ? 0 : d);
+    this.pushed = true;
     a.x -= dx * push * shares[0];
     a.y -= dy * push * shares[0];
     b.x += dx * push * shares[1];
