@@ -16,8 +16,10 @@ import { startTelemetry } from "./telemetry.js";
 // Bumped when option meanings change, so old settings don't carry over.
 const STORAGE_KEY = "prismatrix-sandbox-2";
 
-// The 2D canvas renderer slows down past a few thousand nodes; bigger graphs wait for the WebGL one.
-const MAX_NODES = 5000;
+// No real limit with WebGL: this only stops a typo (or a deep balanced tree) from freezing the tab.
+const MAX_NODES = 1_000_000;
+// Graphs bigger than this rebuild when a slider is let go, not on every step of the drag.
+const LIVE_NODES = 3000;
 
 const GRAPH_OPTIONS = [
   select(
@@ -33,13 +35,25 @@ const GRAPH_OPTIONS = [
     "depth",
     "Depth",
     1,
-    7,
+    14,
     1,
     4,
     `Balanced tree only. Stops at ${MAX_NODES.toLocaleString()} nodes.`,
   ),
-  range("branching", "Branching", 1, 8, 1, 3, "Balanced tree only."),
-  range("count", "Nodes", 2, 600, 1, 80, "Random tree only."),
+  range("branching", "Branching", 1, 10, 1, 3, "Balanced tree only."),
+  {
+    ...range(
+      "count",
+      "Nodes",
+      2,
+      100_000,
+      1,
+      80,
+      `Random tree only. Type a number for more (up to ${MAX_NODES.toLocaleString()}).`,
+    ),
+    log: true,
+    open: true,
+  },
   range(
     "bushiness",
     "Bushiness",
@@ -49,15 +63,19 @@ const GRAPH_OPTIONS = [
     1.4,
     "Random tree: high piles children near the root, low makes long chains.",
   ),
-  range(
-    "crossLinks",
-    "Cross-links",
-    0,
-    40,
-    1,
-    0,
-    "Extra edges that aren't part of the tree, like shared ingredients.",
-  ),
+  {
+    ...range(
+      "crossLinks",
+      "Cross-links",
+      0,
+      20_000,
+      1,
+      0,
+      "Extra edges that aren't part of the tree, like shared ingredients.",
+    ),
+    log: true,
+    open: true,
+  },
   range("seed", "Seed", 1, 999, 1, 7),
   bool(
     "labels",
@@ -158,7 +176,7 @@ function makeGraph(g) {
       level = next;
     }
   } else {
-    for (let i = 1; i < g.count; i++)
+    for (let i = 1; i < Math.min(g.count, MAX_NODES); i++)
       add(Math.floor(rand() ** g.bushiness * i));
   }
   for (let i = 0; i < g.crossLinks && nodes.length > 2; i++) {
@@ -264,20 +282,58 @@ function control(spec, value, onChange) {
     input.addEventListener("input", () => onChange(input.value));
     row.append(label, input);
   } else {
+    // A log slider spreads small values out (2 to 100 gets as much travel as 1,000 to 100,000). An open range
+    // takes typed values past the slider's end.
+    const SPAN = 1000;
+    const toSlider = (v) =>
+      spec.log
+        ? (Math.log1p(Math.min(Math.max(v, spec.min), spec.max) - spec.min) /
+            Math.log1p(spec.max - spec.min)) *
+          SPAN
+        : v;
+    const fromSlider = (t) => {
+      if (!spec.log) return t;
+      const v =
+        spec.min + Math.expm1((t / SPAN) * Math.log1p(spec.max - spec.min));
+      return Math.round(v / spec.step) * spec.step;
+    };
     input = document.createElement("input");
     input.type = "range";
     Object.assign(input, {
-      min: spec.min,
-      max: spec.max,
-      step: spec.step,
-      value,
+      min: spec.log ? 0 : spec.min,
+      max: spec.log ? SPAN : spec.max,
+      step: spec.log ? 1 : spec.step,
+      value: toSlider(value),
     });
-    const out = document.createElement("output");
-    const show = (v) => (out.textContent = String(Math.round(v * 100) / 100));
+    const out = document.createElement("input");
+    out.type = "number";
+    out.className = "value";
+    Object.assign(out, { min: spec.min, step: spec.step });
+    if (!spec.open) out.max = spec.max;
+    const show = (v) => (out.value = String(Math.round(v * 100) / 100));
     show(value);
+    let sent = value;
+    const send = (v) => {
+      if (v === sent) return;
+      sent = v;
+      onChange(v);
+    };
     input.addEventListener("input", () => {
-      show(Number(input.value));
-      onChange(Number(input.value));
+      const v = fromSlider(Number(input.value));
+      show(v);
+      if (!spec.heavy?.(v)) send(v);
+    });
+    input.addEventListener("change", () =>
+      send(fromSlider(Number(input.value))),
+    );
+    out.addEventListener("change", () => {
+      let v = Number(out.value);
+      if (!Number.isFinite(v)) return show(sent);
+      v = Math.max(v, spec.min);
+      if (!spec.open) v = Math.min(v, spec.max);
+      show(v);
+      input.value = toSlider(v);
+      send(v);
     });
     row.append(label, out, input);
   }
@@ -355,7 +411,14 @@ function render() {
             ["depth", "branching"].includes(o.key)
           ),
       );
-      controls(body, relevant, settings.graph, (key) => {
+      // A big graph (now, or after this change) rebuilds on release rather than on every slider step.
+      const heavy = (spec) => ({
+        ...spec,
+        heavy: (v) =>
+          Math.max(view.graph.nodes.length, spec.key === "count" ? v : 0) >
+          LIVE_NODES,
+      });
+      controls(body, relevant.map(heavy), settings.graph, (key) => {
         view.setGraph(makeGraph(settings.graph));
         if (key === "kind") render();
       });

@@ -106,9 +106,32 @@ summary {
   color: var(--muted);
 }
 
-.row output {
+.row input.value {
+  justify-self: end;
+  width: 8ch;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
   color: var(--text);
+  font: inherit;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.row input.value:hover,
+.row input.value:focus {
+  border-color: var(--line);
+  background: #1c2030;
+  outline: none;
+}
+
+.row input.value::-webkit-inner-spin-button,
+.row input.value::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
 }
 
 .row input[type="range"],
