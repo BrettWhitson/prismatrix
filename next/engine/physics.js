@@ -167,12 +167,20 @@ const QUIET_STEPS = 30; // steps in a row with nothing moving before the simulat
 export class Simulation {
   constructor(graph) {
     this.graph = graph;
-    this.ax = new Float64Array(graph.nodes.length);
-    this.ay = new Float64Array(graph.nodes.length);
+    /** The working graph's matrix: physics moves x, y, vx, vy and reads homes and footprints. */
+    this.matrix = graph.matrix;
+    const count = graph.nodes.length;
+    this.ax = new Float64Array(count);
+    this.ay = new Float64Array(count);
     this.phase = Float64Array.from(
-      graph.nodes,
+      { length: count },
       (_, i) => (i * 2.399963) % (Math.PI * 2),
     );
+    // Edge ends as flat arrays, for the spring loop, and each edge's laid-out length.
+    this.from = Int32Array.from(graph.edges, (e) => e.source);
+    this.to = Int32Array.from(graph.edges, (e) => e.target);
+    this.rest = new Float64Array(graph.edges.length);
+    this.pinned = new Uint8Array(count); // `held`, as flags for the hot loops
     this.time = 0;
     this.carry = 0;
     this.energy = 0;
@@ -184,7 +192,7 @@ export class Simulation {
     this.held = new Set();
     this.mode = "static";
     this.opts = {};
-    /** @type {((n: any) => void) | null} */
+    /** @type {((m: import("./matrix.js").Matrix, i: number) => void) | null} keeps row i on its level or ring */
     this.constrain = null;
     /** @type {Collision | null} */
     this.collision = null;
@@ -193,7 +201,7 @@ export class Simulation {
   /**
    * @param {string} mode
    * @param {object} opts
-   * @param {((n: any) => void) | null} [constrain]
+   * @param {((m: import("./matrix.js").Matrix, i: number) => void) | null} [constrain]
    * @param {Collision | null} [collision] how nodes collide, when the mode's `collide` option is on
    */
   configure(mode, opts, constrain = null, collision = null) {
@@ -201,18 +209,18 @@ export class Simulation {
     this.opts = opts;
     this.constrain = constrain;
     this.collision = opts.collide ? collision : null;
-    // Repulsion reaches a few typical edge lengths: far enough to spread a neighbourhood, near enough to stay
-    // cheap. The median, not the mean, so a radial's long outer spokes can't stretch it, and capped, so the
-    // grid's cells stay small enough to hold a handful of nodes each.
-    const { nodes, edges } = this.graph;
-    const lengths = edges
-      .map((e) => {
-        const s = nodes[e.source],
-          t = nodes[e.target];
-        return Math.hypot(t.homeX - s.homeX, t.homeY - s.homeY);
-      })
-      .sort((x, y) => x - y);
-    const typical = lengths.length ? lengths[lengths.length >> 1] : 0;
+    // Each edge rests at its laid-out length. Repulsion reaches a few typical edge lengths: far enough to spread a
+    // neighbourhood, near enough to stay cheap. The median, not the mean, so a radial's long outer spokes can't
+    // stretch it, and capped, so the grid's cells stay small enough to hold a handful of nodes each.
+    const { homeX, homeY } = this.matrix;
+    const { from, to, rest } = this;
+    for (let e = 0; e < rest.length; e++)
+      rest[e] = Math.hypot(
+        homeX[to[e]] - homeX[from[e]],
+        homeY[to[e]] - homeY[from[e]],
+      );
+    const sorted = rest.slice().sort();
+    const typical = sorted.length ? sorted[sorted.length >> 1] : 0;
     this.reach = Math.min(Math.max(150, 3 * typical), REACH_MAX);
     this.wake();
   }
@@ -252,8 +260,11 @@ export class Simulation {
   }
 
   step(h) {
-    const { nodes } = this.graph;
-    const { ax, ay, opts } = this;
+    const m = this.matrix;
+    const { x, y, vx, vy, count } = m;
+    const { ax, ay, opts, pinned, constrain } = this;
+    pinned.fill(0);
+    for (const i of this.held) pinned[i] = 1;
     ax.fill(0);
     ay.fill(0);
     this.time += h;
@@ -262,49 +273,48 @@ export class Simulation {
     if (this.mode !== "static") this.#forces();
     if (this.mode === "floating") {
       const heat = this.heat;
-      if (heat < 1) {
-        for (let i = 0; i < ax.length; i++) {
+      if (heat < 1)
+        for (let i = 0; i < count; i++) {
           ax[i] *= heat;
           ay[i] *= heat;
         }
-      }
       if (opts.drift > 0) this.#drift();
     }
 
     const keep = Math.exp(-opts.friction * h);
     const stop = opts.friction * STOP * h;
-    let energy = 0;
-    for (const n of nodes) {
-      if (this.held.has(n.index)) continue;
-      let vx = (n.vx + ax[n.index] * h) * keep;
-      let vy = (n.vy + ay[n.index] * h) * keep;
-      const speed = Math.hypot(vx, vy);
-      const slowed = Math.min(Math.max(speed - stop, 0), MAX_SPEED);
+    for (let i = 0; i < count; i++) {
+      if (pinned[i]) continue;
+      let u = (vx[i] + ax[i] * h) * keep;
+      let w = (vy[i] + ay[i] * h) * keep;
+      const speed = Math.hypot(u, w);
       if (speed > 0) {
-        vx *= slowed / speed;
-        vy *= slowed / speed;
+        const slowed = Math.min(Math.max(speed - stop, 0), MAX_SPEED);
+        u *= slowed / speed;
+        w *= slowed / speed;
       }
-      n.vx = vx;
-      n.vy = vy;
-      n.x += vx * h;
-      n.y += vy * h;
-      if (this.constrain) this.constrain(n);
+      vx[i] = u;
+      vy[i] = w;
+      x[i] += u * h;
+      y[i] += w * h;
+      if (constrain) constrain(m, i);
     }
     if (this.collision) {
       this.#collide();
       // A push can shove a node off its level or ring: put it back, so locks hold against collisions too.
-      if (this.constrain)
-        for (const n of nodes) if (!this.held.has(n.index)) this.constrain(n);
+      if (constrain)
+        for (let i = 0; i < count; i++) if (!pinned[i]) constrain(m, i);
     }
-    let fastest = 0;
+    let energy = 0,
+      fastest = 0;
     if (this.pushed) this.moved = true;
     this.pushed = false;
-    for (const n of nodes) {
-      const v2 = n.vx * n.vx + n.vy * n.vy;
+    for (let i = 0; i < count; i++) {
+      const v2 = vx[i] * vx[i] + vy[i] * vy[i];
       energy += v2;
       if (v2 > fastest) fastest = v2;
     }
-    energy = nodes.length ? energy / nodes.length : 0;
+    energy = count ? energy / count : 0;
     if (fastest > 0) this.moved = true;
     // At rest means every node, not the average: one node still moving among thousands barely shifts the mean.
     this.quiet = fastest < SLEEP ? this.quiet + 1 : 0;
@@ -312,32 +322,29 @@ export class Simulation {
   }
 
   #forces() {
-    const { nodes, edges } = this.graph;
-    const { ax, ay, opts } = this;
+    const { x, y, homeX, homeY, count } = this.matrix;
+    const { ax, ay, opts, from, to, rest } = this;
     const anchor = this.mode === "elastic" ? opts.anchor : opts.memory;
-    if (anchor > 0) {
-      for (const n of nodes) {
-        ax[n.index] += anchor * (n.homeX - n.x);
-        ay[n.index] += anchor * (n.homeY - n.y);
+    if (anchor > 0)
+      for (let i = 0; i < count; i++) {
+        ax[i] += anchor * (homeX[i] - x[i]);
+        ay[i] += anchor * (homeY[i] - y[i]);
       }
-    }
 
     const stretch = this.mode === "floating" ? opts.linkLength : 1;
-    if (opts.links > 0) {
-      for (const e of edges) {
-        const s = nodes[e.source],
-          t = nodes[e.target];
-        const rest = Math.hypot(t.homeX - s.homeX, t.homeY - s.homeY) * stretch;
-        const dx = t.x - s.x,
-          dy = t.y - s.y;
+    if (opts.links > 0)
+      for (let e = 0; e < from.length; e++) {
+        const s = from[e],
+          t = to[e];
+        const dx = x[t] - x[s],
+          dy = y[t] - y[s];
         const d = Math.hypot(dx, dy) || 1e-6;
-        const f = (opts.links * (d - rest)) / d;
-        ax[s.index] += f * dx;
-        ay[s.index] += f * dy;
-        ax[t.index] -= f * dx;
-        ay[t.index] -= f * dy;
+        const f = (opts.links * (d - rest[e] * stretch)) / d;
+        ax[s] += f * dx;
+        ay[s] += f * dy;
+        ax[t] -= f * dx;
+        ay[t] -= f * dy;
       }
-    }
 
     if (this.mode !== "floating") return;
     // Only nearby nodes push: within `reach`, found through a grid, and fading to nothing at its edge so nothing
@@ -345,21 +352,18 @@ export class Simulation {
     const k = opts.repulsion * 1000;
     if (k > 0) {
       const reach = this.reach;
-      const pos = (n) => n.x;
-      const posY = (n) => n.y;
-      const grid = bucket(nodes, reach, pos, posY);
-      eachNearPair(nodes, grid, reach, pos, posY, (a, b) => {
-        const dx = b.x - a.x,
-          dy = b.y - a.y;
+      eachNearPair(x, y, count, reach, (a, b) => {
+        const dx = x[b] - x[a],
+          dy = y[b] - y[a];
         const raw = Math.hypot(dx, dy);
         if (raw >= reach) return;
         const d = Math.max(raw, REPEL_MIN);
         const fade = 1 - (raw / reach) ** 2;
         const f = (k / (d * d * d)) * fade * fade;
-        ax[a.index] -= f * dx;
-        ay[a.index] -= f * dy;
-        ax[b.index] += f * dx;
-        ay[b.index] += f * dy;
+        ax[a] -= f * dx;
+        ay[a] -= f * dy;
+        ax[b] += f * dx;
+        ay[b] += f * dy;
       });
     }
   }
@@ -372,11 +376,11 @@ export class Simulation {
 
   /** Gentle wandering, never faded: drift is asked for. */
   #drift() {
-    const { ax, ay, opts } = this;
-    for (const n of this.graph.nodes) {
-      const p = this.phase[n.index];
-      ax[n.index] += opts.drift * Math.sin(this.time * 0.6 + p);
-      ay[n.index] += opts.drift * Math.cos(this.time * 0.47 + p * 1.7);
+    const { ax, ay, opts, phase } = this;
+    for (let i = 0; i < ax.length; i++) {
+      const p = phase[i];
+      ax[i] += opts.drift * Math.sin(this.time * 0.6 + p);
+      ay[i] += opts.drift * Math.cos(this.time * 0.47 + p * 1.7);
     }
   }
 
@@ -386,41 +390,49 @@ export class Simulation {
    * the speed they had towards each other, so they don't bounce.
    */
   #collide() {
-    const { nodes } = this.graph;
+    const m = this.matrix;
     const { boxes, padding } = this.collision;
     const half = padding / 2;
+    const { x, y, boxX0, boxY0, boxX1, boxY1, count } = m;
     // Bucket by footprint centre into cells at least as big as the biggest footprint: only neighbouring cells
     // can hold overlapping pairs.
     let cell = 1;
-    for (const n of nodes) {
-      const b = n.box;
-      cell = Math.max(cell, b.x1 - b.x0 + padding, b.y1 - b.y0 + padding);
+    const cx = new Float64Array(count),
+      cy = new Float64Array(count);
+    for (let i = 0; i < count; i++) {
+      cell = Math.max(
+        cell,
+        boxX1[i] - boxX0[i] + padding,
+        boxY1[i] - boxY0[i] + padding,
+      );
+      cx[i] = x[i] + (boxX0[i] + boxX1[i]) / 2;
+      cy[i] = y[i] + (boxY0[i] + boxY1[i]) / 2;
     }
-    const cx = (n) => n.x + (n.box.x0 + n.box.x1) / 2;
-    const cy = (n) => n.y + (n.box.y0 + n.box.y1) / 2;
-    const grid = bucket(nodes, cell, cx, cy);
-    eachNearPair(nodes, grid, cell, cx, cy, (a, b) => {
+    eachNearPair(cx, cy, count, cell, (a, b) => {
       if (boxes) this.#separateBoxes(a, b, half);
       else this.#separateCircles(a, b, half);
     });
   }
 
+  /** How a push between a and b is shared: a held node doesn't move. Null when both are held. */
   #shares(a, b) {
-    const aHeld = this.held.has(a.index),
-      bHeld = this.held.has(b.index);
+    const aHeld = this.pinned[a],
+      bHeld = this.pinned[b];
     if (aHeld && bHeld) return null;
-    return aHeld ? [0, 1] : bHeld ? [1, 0] : [0.5, 0.5];
+    return aHeld ? ALL_TO_B : bHeld ? ALL_TO_A : HALVES;
   }
 
   #separateBoxes(a, b, half) {
+    const m = this.matrix;
+    const { x, y, boxX0, boxY0, boxX1, boxY1 } = m;
     const ox =
-      Math.min(a.x + a.box.x1, b.x + b.box.x1) -
-      Math.max(a.x + a.box.x0, b.x + b.box.x0) +
+      Math.min(x[a] + boxX1[a], x[b] + boxX1[b]) -
+      Math.max(x[a] + boxX0[a], x[b] + boxX0[b]) +
       half * 2;
     if (ox <= 0) return;
     const oy =
-      Math.min(a.y + a.box.y1, b.y + b.box.y1) -
-      Math.max(a.y + a.box.y0, b.y + b.box.y0) +
+      Math.min(y[a] + boxY1[a], y[b] + boxY1[b]) -
+      Math.max(y[a] + boxY0[a], y[b] + boxY0[b]) +
       half * 2;
     if (oy <= 0) return;
     const shares = this.#shares(a, b);
@@ -428,27 +440,29 @@ export class Simulation {
     this.pushed = true;
     if (ox < oy) {
       const dir =
-        a.x + (a.box.x0 + a.box.x1) / 2 <= b.x + (b.box.x0 + b.box.x1) / 2
+        x[a] + (boxX0[a] + boxX1[a]) / 2 <= x[b] + (boxX0[b] + boxX1[b]) / 2
           ? -1
           : 1;
-      a.x += dir * ox * shares[0];
-      b.x -= dir * ox * shares[1];
-      settle(a, b, 1, 0, shares);
+      x[a] += dir * ox * shares[0];
+      x[b] -= dir * ox * shares[1];
+      settle(m, a, b, 1, 0, shares);
     } else {
       const dir =
-        a.y + (a.box.y0 + a.box.y1) / 2 <= b.y + (b.box.y0 + b.box.y1) / 2
+        y[a] + (boxY0[a] + boxY1[a]) / 2 <= y[b] + (boxY0[b] + boxY1[b]) / 2
           ? -1
           : 1;
-      a.y += dir * oy * shares[0];
-      b.y -= dir * oy * shares[1];
-      settle(a, b, 0, 1, shares);
+      y[a] += dir * oy * shares[0];
+      y[b] -= dir * oy * shares[1];
+      settle(m, a, b, 0, 1, shares);
     }
   }
 
   #separateCircles(a, b, half) {
-    const min = a.radius + b.radius + half * 2;
-    let dx = b.x - a.x,
-      dy = b.y - a.y;
+    const m = this.matrix;
+    const { x, y, radius } = m;
+    const min = radius[a] + radius[b] + half * 2;
+    let dx = x[b] - x[a],
+      dy = y[b] - y[a];
     const d2 = dx * dx + dy * dy;
     if (d2 >= min * min) return;
     const shares = this.#shares(a, b);
@@ -456,66 +470,68 @@ export class Simulation {
     let d = Math.sqrt(d2);
     if (d < 1e-6) {
       // Exactly on top of each other: pick a direction that differs per pair.
-      const angle = (a.index * 7 + b.index * 13) % 6.283;
+      const angle = (a * 7 + b * 13) % 6.283;
       dx = Math.cos(angle);
       dy = Math.sin(angle);
-      d = 1;
+      d = 0;
     } else {
       dx /= d;
       dy /= d;
     }
-    const push = min - (d < 1e-6 ? 0 : d);
+    const push = min - d;
     this.pushed = true;
-    a.x -= dx * push * shares[0];
-    a.y -= dy * push * shares[0];
-    b.x += dx * push * shares[1];
-    b.y += dy * push * shares[1];
-    settle(a, b, dx, dy, shares);
+    x[a] -= dx * push * shares[0];
+    y[a] -= dy * push * shares[0];
+    x[b] += dx * push * shares[1];
+    y[b] += dy * push * shares[1];
+    settle(m, a, b, dx, dy, shares);
   }
 }
+
+// How a collision push is shared between a pair: [a's part, b's part].
+const HALVES = [0.5, 0.5],
+  ALL_TO_A = [1, 0],
+  ALL_TO_B = [0, 1];
 
 /** A grid cell's key: exact for cells within ±32k of the origin, which at any useful cell size is plenty. */
 const cellKey = (gx, gy) => (gx + 0x8000) * 0x10000 + (gy + 0x8000);
 
-/** Nodes in square cells of side `cell`, by the point (px, py) of each. */
-function bucket(nodes, cell, px, py) {
+/**
+ * Every pair of points closer than `cell` (and some a little further), once each: points go into square cells of
+ * that side, and each is paired with the points in its own cell and the neighbouring ones.
+ */
+function eachNearPair(px, py, count, cell, visit) {
   const grid = new Map();
-  for (const n of nodes) {
-    const key = cellKey(Math.floor(px(n) / cell), Math.floor(py(n) / cell));
+  const gx = new Int32Array(count),
+    gy = new Int32Array(count);
+  for (let i = 0; i < count; i++) {
+    gx[i] = Math.floor(px[i] / cell);
+    gy[i] = Math.floor(py[i] / cell);
+    const key = cellKey(gx[i], gy[i]);
     const list = grid.get(key);
-    if (list) list.push(n);
-    else grid.set(key, [n]);
+    if (list) list.push(i);
+    else grid.set(key, [i]);
   }
-  return grid;
-}
-
-/** Every pair of nodes in the same or neighbouring cells, once each: all pairs closer than a cell's side. */
-function eachNearPair(nodes, grid, cell, px, py, visit) {
-  for (const n of nodes) {
-    const gx = Math.floor(px(n) / cell),
-      gy = Math.floor(py(n) / cell);
-    for (let ox = -1; ox <= 1; ox++) {
+  for (let i = 0; i < count; i++)
+    for (let ox = -1; ox <= 1; ox++)
       for (let oy = -1; oy <= 1; oy++) {
-        const list = grid.get(cellKey(gx + ox, gy + oy));
+        const list = grid.get(cellKey(gx[i] + ox, gy[i] + oy));
         if (!list) continue;
-        for (const m of list) if (m.index > n.index) visit(n, m);
+        for (const j of list) if (j > i) visit(i, j);
       }
-    }
-  }
 }
 
 const now = () => performance.now();
 
 /** Remove the part of two nodes' velocities that closes the gap between them along (nx, ny). */
-function settle(a, b, nx, ny, shares) {
-  const closing = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+function settle(m, a, b, nx, ny, shares) {
+  const { x, y, vx, vy } = m;
+  const closing = (vx[a] - vx[b]) * nx + (vy[a] - vy[b]) * ny;
   // For boxes the axis isn't oriented from a to b, so take whichever sign is closing.
-  const ax = a.x - b.x,
-    ay = a.y - b.y;
-  const toward = Math.sign(ax * nx + ay * ny) || 1;
+  const toward = Math.sign((x[a] - x[b]) * nx + (y[a] - y[b]) * ny) || 1;
   if (closing * toward >= 0) return;
-  a.vx -= closing * nx * shares[0];
-  a.vy -= closing * ny * shares[0];
-  b.vx += closing * nx * shares[1];
-  b.vy += closing * ny * shares[1];
+  vx[a] -= closing * nx * shares[0];
+  vy[a] -= closing * ny * shares[0];
+  vx[b] += closing * nx * shares[1];
+  vy[b] += closing * ny * shares[1];
 }

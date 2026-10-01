@@ -21,10 +21,12 @@ draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the packa
 - **Edges:** straight, step (right angles in a tree, ring arcs in a radial) and fan; corner radius, taper, colour,
   opacity and ends, drawn as one layer so overlaps don't brighten.
 - **Nodes:** six shapes, sizing by subtree or depth, colouring by depth or branch, labels below, right or outward.
-- **Model and controller:** graphs are an immutable `GraphModel` (prismatrix-graph JSON, with per-node and
-  per-edge style); a whole view is a prismatrix-snapshot (`next/MODEL.md`). `GraphController` runs everything
-  without a DOM (tested headless); `GraphView` puts one on a canvas. An update that only changes data or colours
-  restyles in place without laying out again.
+- **Model, controller, renderer:** `new GraphController(new GraphModel(json, { node, edge }), glRenderer(canvas))`.
+  The model is the graph and how it looks, built once and changed in place by deltas (`update`) or whole versions
+  (`replace`), which reuse every unchanged node; it stores label widths (each label measured once) and reports
+  exactly what changed. The controller listens and does only what a change needs (a restyle, a layout, a morph);
+  node positions and velocities live in its matrix of typed-array columns. The renderer owns the screen (canvas,
+  input, frames, text measurement). `GraphView` is gone. A 30k → 40k node update freezes for 0.46 s instead of 0.91.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
   writes a rolling 30-second engine log to `logs/engine-stats.log`.
 

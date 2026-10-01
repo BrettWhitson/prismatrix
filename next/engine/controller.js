@@ -1,17 +1,19 @@
-// GraphController: the engine without a screen. It holds the graph (a GraphModel and the working graph built from
-// it), the view's settings and every bit of state that changes over time (positions, the camera, hover, fades,
-// morphs, ghosts), and it orchestrates them: graph changes, layouts, physics, animation, interaction, events and
-// snapshots. Each tick it advances time and builds the scene a renderer draws.
+// GraphController: the middle of the engine. It's handed a GraphModel (what the graph is and how it looks) and a
+// renderer (the screen), and works between them:
 //
-// It has no DOM. A GraphView (view.js) connects one to a canvas: it measures text, turns pointer and wheel events
-// into the calls below, and runs the frame loop. Tests drive a controller directly: set a graph, press, drag,
-// release, tick time forward, and look at the result.
+//   - it listens to the model and keeps up with every change: a new colour is redrawn, a new label or size is laid
+//     out again, new or removed nodes are laid out again and morphed into place;
+//   - it owns everything that moves and must be fast: the matrix of node positions and velocities (graph.js,
+//     matrix.js), the layout, physics, animation, camera, hover and drags;
+//   - every frame, the renderer asks it to `tick` and draws the `scene` it builds.
 //
-// Input coordinates are CSS pixels relative to the canvas's top-left corner; times are milliseconds on one clock
-// (the view's frame timestamps, or a test's own).
+// It has no DOM: a renderer (renderer.js) turns pointer and wheel events into the calls below and runs the frame
+// loop. Without one it runs headless: tests set a viewport, press, drag, release, tick time forward and look at the
+// result. Input coordinates are CSS pixels from the canvas's top-left corner; times are milliseconds on one clock
+// (the renderer's frame timestamps, or a test's own).
 
 import { ANIMATION_OPTIONS, EASINGS, approach } from "./animation.js";
-import { LINE, footprint, labelAngle, reach } from "./boxes.js";
+import { footprint, labelAngle, reach } from "./boxes.js";
 import { departures, withGhosts } from "./ghosts.js";
 import { REFERENCE_SCALE, withReferences } from "./references.js";
 import { Graph } from "./graph.js";
@@ -21,23 +23,9 @@ import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
 import { lineage, looksOf } from "./render.js";
 import { resolve } from "./schema.js";
-import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
 
 export const BACKGROUND = "#0e1016";
 const MAX_THROW = 1800; // fastest throw or pan glide, in screen px/s
-/** Node options that change how much room nodes take, so changing them lays the graph out again. */
-const SIZE_KEYS = [
-  "shape",
-  "size",
-  "sizeBy",
-  "labels",
-  "labelSize",
-  "collisionRadius",
-  "labelCollide",
-];
-
-/** Text width without a canvas: about right for a sans-serif face. Views measure for real. */
-export const roughMeasure = (text, size) => text.length * size * 0.56;
 
 /**
  * A point `f` of the way from (x0, y0) to (x1, y1) around a radial layout's centre: angle and radius each change
@@ -58,14 +46,6 @@ export function alongRings({ cx, cy }, x0, y0, x1, y1, f) {
   return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
 }
 
-/** The keys whose values differ, with their new values. */
-function changes(before, after) {
-  const out = {};
-  for (const k of Object.keys(after))
-    if (before[k] !== after[k]) out[k] = after[k];
-  return out;
-}
-
 /**
  * @typedef {object} TickResult
  * @property {boolean} busy   something is still moving or fading: keep ticking
@@ -73,37 +53,50 @@ function changes(before, after) {
  * @property {number} simMs   time spent moving nodes this tick
  * @property {number} energy  mean squared node speed
  * @property {string} state   "moving to layout", "dragging", "moving" or "at rest"
+ *
+ * @typedef {object} ControllerOptions
+ * @property {string} [layout]           "tree", "radial" or "merged" (see LAYOUTS)
+ * @property {object} [layoutOptions]
+ * @property {string} [physics]          "static", "elastic" or "floating" (each layout offers some)
+ * @property {object} [physicsOptions]
+ * @property {object} [animation]        ANIMATION_OPTIONS
+ * @property {(type: string, detail?: object) => void} [onEvent] settings changes, graph changes, interactions
+ * @property {(stats: object) => void} [onFrame] after every drawn frame (the renderer calls it)
+ * @property {() => void} [onChange]     something changed that needs a tick (renderers wake their frame loop)
+ * @property {() => number} [clock]      the time now, ms (for changes made between ticks)
  */
 
 export class GraphController {
   /**
-   * @param {object} [options]
-   * @param {(text: string, size: number) => number} [options.measureText] a label's width at a font size (world px)
-   * @param {(type: string, detail?: object) => void} [options.onEvent] settings changes and interactions
-   * @param {() => void} [options.onChange] something changed that needs a tick (a view wakes its frame loop)
-   * @param {() => number} [options.clock] the time now, ms (for changes made between ticks)
+   * @param {GraphModel | object} model  the graph to show (JSON is made into a model)
+   * @param {import("./renderer.js").Renderer | null} [renderer] the screen; none runs headless
+   * @param {ControllerOptions} [options]
    */
-  constructor({
-    measureText = roughMeasure,
-    onEvent,
-    onChange,
-    clock = () => performance.now(),
-  } = {}) {
-    this.measureText = measureText;
+  constructor(
+    model,
+    renderer = null,
+    {
+      layout = "tree",
+      layoutOptions,
+      physics = "static",
+      physicsOptions: physicsOpts,
+      animation,
+      onEvent,
+      onFrame,
+      onChange,
+      clock = () => performance.now(),
+    } = {},
+  ) {
     this.onEvent = onEvent;
+    this.onFrame = onFrame;
     this.onChange = onChange;
     this.clock = clock;
-    this.graph = new Graph();
-    this.sim = new Simulation(this.graph);
-    this.layout = "tree";
-    this.layoutOpts = resolve(LAYOUTS.tree.options);
-    this.routing = { kind: "tree", direction: "TB" };
-    this.mode = "static";
-    this.modeOpts = physicsOptions("tree", "static");
-    this.node = resolve(NODE_OPTIONS);
-    this.edge = resolve(EDGE_OPTIONS);
-    this.anim = resolve(ANIMATION_OPTIONS);
-    this.looks = looksOf(this.graph, this.node, this.edge);
+    if (!LAYOUTS[layout]) throw new Error(`Unknown layout "${layout}"`);
+    this.layout = layout;
+    this.layoutOpts = resolve(LAYOUTS[layout].options, layoutOptions);
+    this.mode = LAYOUTS[layout].physics[physics] ? physics : "static";
+    this.modeOpts = physicsOptions(layout, this.mode, physicsOpts);
+    this.anim = resolve(ANIMATION_OPTIONS, animation);
     this.camera = { x: 0, y: 0, k: 1 };
     this.glide = null; // the camera's coasting speed after a pan, world px/s
     // True while the camera shows a framing the controller chose (not one the user panned or zoomed to): a resize
@@ -112,8 +105,6 @@ export class GraphController {
     this.width = 1;
     this.height = 1;
     this.dpr = 1;
-    this.hover = -1;
-    this.hoverReference = false;
     this.pointer = null;
     this.tween = null;
     this.cameraTween = null;
@@ -125,27 +116,84 @@ export class GraphController {
     this.focusCache = { key: -1, set: null };
     /** @type {import("./ghosts.js").Ghost[]} nodes that left the graph, folding away */
     this.ghosts = [];
-    // Per node, 0–1: how lit it is by the hover (eased toward its target), and how far it has faded in.
-    this.shade = new Float32Array(0);
-    this.appear = new Float32Array(0);
     this.scene = null;
+    this.renderer = null;
+
+    this.model = GraphModel.from(model);
+    this.unlisten = this.model.onChange((change) => this.#onModel(change));
+    this.graph = new Graph(); // empty until the first build below
+    this.#fresh();
+    this.looks = looksOf(this.graph, this.node, this.edge);
+    this.routing = { kind: "tree", direction: "TB" };
+    // The renderer first: it brings the viewport size and real text measurement, which the first layout uses.
+    if (renderer) this.setRenderer(renderer);
+    this.#rebuild();
+    this.#emit("graph", this.model.stats());
+    for (const issue of this.model.issues) this.#emit("graphIssue", issue);
   }
 
-  // ---- the graph -----------------------------------------------------------------------------------------------
+  /** How nodes look: the model's node options. */
+  get node() {
+    return this.model.opts.node;
+  }
+
+  /** How edges look: the model's edge options. */
+  get edge() {
+    return this.model.opts.edge;
+  }
+
+  // ---- the model -----------------------------------------------------------------------------------------------
 
   /**
-   * Replace the graph: a GraphModel, prismatrix-graph JSON, or plain `{ nodes, edges }`. The first graph grows into
-   * its layout; after that the change morphs: nodes that are still there glide from where they are to their new
-   * place, new ones arrive as the animation's `enter` setting says, removed ones fold back into their family, and
-   * the camera eases to the new framing (unless it was moved by hand). Problems in the input (a duplicate id, an
-   * edge to a missing node) are left out and listed in `model.issues`.
+   * The model changed (an update, a replace, new options): do as little as that change needs. Nodes or edges came
+   * or went → lay out again and morph (kept nodes glide from where they are, new ones arrive as the animation's
+   * `enter` setting says, removed ones fold back into their family). A node's room changed → lay out again. Only
+   * looks or data changed → restyle, nothing moves.
    */
-  setGraph(input) {
-    const model = GraphModel.from(input);
+  #onModel(change) {
+    if (this.quiet) return;
+    for (const issue of change.issues) this.#emit("graphIssue", issue);
+    if (change.options) {
+      const { node, edge } = change.options;
+      if (Object.keys(node).length) this.#emit("nodeStyle", node);
+      if (Object.keys(edge).length) this.#emit("edgeStyle", edge);
+      if (change.sizes) this.#relayout({ fit: null });
+      else this.#restyle();
+      return;
+    }
+    if (change.structure) {
+      const previous = this.graph;
+      this.#rebuild();
+      this.#emit("graph", {
+        ...this.model.stats(),
+        ...(previous.nodes.length && {
+          added: change.nodesAdded.length,
+          removed: change.nodesRemoved.length,
+        }),
+      });
+      return;
+    }
+    this.graph.refresh();
+    if (change.sizes) this.#relayout({ fit: null });
+    else this.#restyle();
+    this.#emit("graphRestyle", {
+      nodes: change.nodesChanged.length,
+      edges: change.edgesChanged.length,
+    });
+  }
+
+  /** Looks changed, nothing moved: new colours and sizes for the renderer. */
+  #restyle() {
+    this.looks = looksOf(this.graph, this.node, this.edge);
+    this.version++;
+    this.#changed();
+  }
+
+  /** A new working graph for the model's new structure, laid out, with the old one's nodes carried across by id. */
+  #rebuild() {
     const previous = this.graph.nodes.length ? this.graph : null;
-    if (previous && this.#restyle(model)) return;
     const previousLooks = this.looks;
-    this.graph = new Graph(model);
+    this.graph = new Graph(this.model);
     // Nodes that left fold back into what's left of their family; ghosts still leaving from an earlier change
     // carry on (unless their node came back).
     const now = this.clock();
@@ -163,75 +211,27 @@ export class GraphController {
       fit: !previous ? "instant" : this.framed ? "animate" : null,
       arrive: previous ?? false,
     });
-    const change = previous ? model.diff(previous.model) : null;
-    this.#emit("graph", {
-      ...model.stats(),
-      ...(change && {
-        added: change.nodesAdded.length,
-        removed: change.nodesRemoved.length,
-        kept: change.nodesKept.length,
-      }),
-    });
-    for (const issue of model.issues) this.#emit("graphIssue", issue);
   }
 
-  /**
-   * When `model` has the same nodes and edges as the graph shown (same ids, same order, same ends), and nothing
-   * that changes how much room a node takes (its label while labels are shown, its size or shape), take its data,
-   * labels and styles in place: no layout, no morph, hover and positions untouched. A price or a highlight then
-   * costs next to nothing. Returns false (and changes nothing) when it needs a full update.
-   */
-  #restyle(model) {
-    const { nodes, edges } = this.graph;
-    if (
-      model.nodes.length !== nodes.length ||
-      model.edges.length !== edges.length
-    )
-      return false;
-    const labelled = this.node.labels !== "off";
-    for (let i = 0; i < nodes.length; i++) {
-      const m = model.nodes[i],
-        n = nodes[i];
-      if (m.id !== n.id) return false;
-      if (labelled && m.label !== n.label) return false;
-      if (m.style.size !== n.style.size || m.style.shape !== n.style.shape)
-        return false;
-    }
-    for (let i = 0; i < edges.length; i++) {
-      const m = model.edges[i],
-        e = edges[i];
-      if (
-        m.id !== e.id ||
-        model.ends[i][0] !== e.source ||
-        model.ends[i][1] !== e.target
-      )
-        return false;
-    }
-    const previous = this.graph.model;
-    this.graph.model = model;
-    nodes.forEach((n, i) => {
-      const m = model.nodes[i];
-      n.label = m.label;
-      n.style = m.style;
-      n.data = m.data;
-    });
-    edges.forEach((e, i) => {
-      e.style = model.edges[i].style;
-      e.data = model.edges[i].data;
-    });
-    this.looks = looksOf(this.graph, this.node, this.edge);
-    this.version++;
-    this.#changed();
-    this.#emit("graphRestyle", {
-      changed: model.diff(previous).nodesChanged.length,
-    });
-    for (const issue of model.issues) this.#emit("graphIssue", issue);
-    return true;
+  /** Replace the graph: the model takes `input` (JSON, or another model's graph) and keeps what's unchanged. */
+  setGraph(input) {
+    return this.model.replace(input);
   }
 
-  /** The graph shown, as an immutable GraphModel. */
-  get model() {
-    return this.graph.model;
+  /** Change the graph by a delta (see GraphModel.update). */
+  update(delta) {
+    return this.model.update(delta);
+  }
+
+  /** Show a different model: its nodes glide from where the same ids were in the old one. */
+  setModel(model) {
+    this.unlisten();
+    this.model = GraphModel.from(model);
+    if (this.renderer?.measureText && !this.model.measured)
+      this.model.setMeasure(this.renderer.measureText);
+    this.unlisten = this.model.onChange((change) => this.#onModel(change));
+    this.#rebuild();
+    this.#emit("graph", this.model.stats());
   }
 
   /** New per-node state for a new working graph. */
@@ -240,15 +240,16 @@ export class GraphController {
     this.hover = -1;
     this.hoverReference = false;
     this.pointer = null;
+    // Per node, 0–1: how lit it is by the hover (eased toward its target), and how far it has faded in.
     this.shade = new Float32Array(this.graph.nodes.length).fill(1);
     this.appear = new Float32Array(this.graph.nodes.length).fill(1);
   }
 
   /**
    * Everything needed to show this view again exactly: the graph, settings, camera and every node's layout state
-   * (see snapshot.js and next/MODEL.md). `extra` settings (a view's renderer, say) are recorded with the rest.
+   * (see snapshot.js and next/MODEL.md).
    */
-  snapshot(note = "", extra = {}) {
+  snapshot(note = "") {
     return takeSnapshot(
       {
         graph: this.graph,
@@ -260,7 +261,7 @@ export class GraphController {
           node: this.node,
           edge: this.edge,
           animation: this.anim,
-          ...extra,
+          renderer: this.renderer?.name,
         },
         camera: this.camera,
       },
@@ -270,19 +271,24 @@ export class GraphController {
 
   /** Show a snapshot: its graph, settings, camera and node positions, as they were (no morph). */
   restore(snapshot) {
-    const model = snapshotModel(snapshot);
+    const graph = snapshotModel(snapshot).toJSON();
     const { settings = {} } = snapshot;
-    if (settings.animation) this.setAnimation(settings.animation);
-    if (settings.node) this.setNodeStyle(settings.node);
-    if (settings.edge) this.setEdgeStyle(settings.edge);
+    this.quiet = true; // apply everything, then lay out once
+    try {
+      if (settings.animation) this.setAnimation(settings.animation);
+      this.model.setOptions({ node: settings.node, edge: settings.edge });
+      this.model.replace(graph);
+    } finally {
+      this.quiet = false;
+    }
+    this.ghosts = [];
+    this.graph = new Graph(this.model);
+    this.#fresh();
     if (settings.layout)
       this.setLayout(settings.layout, settings.layoutOptions);
+    else this.#relayout({ fit: null });
     if (settings.physics)
       this.setPhysics(settings.physics, settings.physicsOptions);
-    this.ghosts = [];
-    this.graph = new Graph(model);
-    this.#fresh();
-    this.#relayout({ fit: null });
     applyState(this.graph, snapshot.state ?? {});
     this.tween = null;
     if (snapshot.camera) this.camera = { ...snapshot.camera };
@@ -291,7 +297,33 @@ export class GraphController {
     this.sim.wake();
     this.version++;
     this.#changed();
-    this.#emit("restore", { nodes: model.size, time: snapshot.time });
+    this.#emit("restore", { nodes: this.model.size, time: snapshot.time });
+  }
+
+  // ---- the renderer --------------------------------------------------------------------------------------------
+
+  /**
+   * Draw on `renderer` from now on (the old one lets go of the screen). Its text measurement becomes the model's,
+   * unless the model was given its own.
+   */
+  setRenderer(renderer) {
+    if (renderer === this.renderer) return;
+    this.renderer?.detach(this);
+    this.renderer = renderer;
+    if (!renderer) return;
+    if (renderer.measureText && !this.model.measured) {
+      this.model.setMeasure(renderer.measureText);
+      if (this.graph.nodes.length) this.#relayout({ fit: null });
+    }
+    renderer.attach(this);
+    this.#emit("renderer", { renderer: renderer.name });
+  }
+
+  /** Stop listening to the model and let go of the renderer. */
+  destroy() {
+    this.unlisten();
+    this.renderer?.detach(this);
+    this.renderer = null;
   }
 
   // ---- settings ------------------------------------------------------------------------------------------------
@@ -329,24 +361,14 @@ export class GraphController {
     this.#emit("physics", { mode, ...this.modeOpts });
   }
 
+  /** How nodes look (NODE_OPTIONS, all or some): the model's options, so every view of it changes. */
   setNodeStyle(opts) {
-    this.version++;
-    const before = this.node;
-    this.node = resolve(NODE_OPTIONS, opts);
-    if (SIZE_KEYS.some((k) => before[k] !== this.node[k]))
-      this.#relayout({ fit: null });
-    else this.looks = looksOf(this.graph, this.node, this.edge);
-    this.#changed();
-    this.#emit("nodeStyle", changes(before, this.node));
+    this.model.setOptions({ node: opts });
   }
 
+  /** How edges look (EDGE_OPTIONS, all or some). */
   setEdgeStyle(opts) {
-    this.version++;
-    const before = this.edge;
-    this.edge = resolve(EDGE_OPTIONS, opts);
-    this.looks = looksOf(this.graph, this.node, this.edge);
-    this.#changed();
-    this.#emit("edgeStyle", changes(before, this.edge));
+    this.model.setOptions({ edge: opts });
   }
 
   /** Send everything back to its home. */
@@ -386,25 +408,28 @@ export class GraphController {
     this.onEvent?.(type, detail);
   }
 
+  /** Something changed that needs a frame. */
   #changed() {
+    this.renderer?.invalidate();
     this.onChange?.();
   }
 
   #framing(homes) {
     // Frame footprints, not just centres, so labels at the edge stay on screen.
+    const m = this.graph.matrix;
+    const xs = homes ? m.homeX : m.x,
+      ys = homes ? m.homeY : m.y;
     let minX = Infinity,
       minY = Infinity,
       maxX = -Infinity,
       maxY = -Infinity;
-    for (const n of this.graph.nodes) {
-      const x = homes ? n.homeX : n.x;
-      const y = homes ? n.homeY : n.y;
-      minX = Math.min(minX, x + n.box.x0);
-      minY = Math.min(minY, y + n.box.y0);
-      maxX = Math.max(maxX, x + n.box.x1);
-      maxY = Math.max(maxY, y + n.box.y1);
+    for (let i = 0; i < m.count; i++) {
+      minX = Math.min(minX, xs[i] + m.boxX0[i]);
+      minY = Math.min(minY, ys[i] + m.boxY0[i]);
+      maxX = Math.max(maxX, xs[i] + m.boxX1[i]);
+      maxY = Math.max(maxY, ys[i] + m.boxY1[i]);
     }
-    if (!this.graph.nodes.length) minX = minY = maxX = maxY = 0;
+    if (!m.count) minX = minY = maxX = maxY = 0;
     const pad = 40;
     const k = Math.min(
       (this.width - pad * 2) / Math.max(maxX - minX, 1),
@@ -449,15 +474,14 @@ export class GraphController {
     this.#changed();
   }
 
-  /** Label widths, and the footprint each node takes up for a given label direction. */
+  /** Label widths (the model's, measured once each), and the footprint each node takes for a label direction. */
   #sizing() {
-    const { node, graph, looks } = this;
+    const { node, looks } = this;
     const labelled = node.labels !== "off";
-    const height = node.labelSize * LINE;
-    const widths = new Float64Array(graph.nodes.length);
-    if (labelled)
-      for (const n of graph.nodes)
-        widths[n.index] = this.measureText(n.label, node.labelSize);
+    const widths = labelled
+      ? this.model.labelWidths()
+      : new Float64Array(this.graph.nodes.length);
+    const height = this.model.labelHeight;
     const fixed = node.labels === "right" ? 0 : Math.PI / 2;
     return {
       widths,
@@ -477,20 +501,27 @@ export class GraphController {
   /** Fix each node's label direction from its home, and the footprint that goes with it. */
   #placeLabels(sizing) {
     const labelled = this.node.labels !== "off";
-    for (const n of this.graph.nodes) {
-      n.labelAngle = labelAngle(
+    const m = this.graph.matrix;
+    for (let i = 0; i < m.count; i++) {
+      const angle = labelAngle(
         this.node.labels,
         this.routing,
-        n.homeX,
-        n.homeY,
+        m.homeX[i],
+        m.homeY[i],
       );
-      n.radius = this.looks.radius[n.index] * reach(this.looks.shape[n.index]);
-      n.box = footprint(
-        n.radius,
-        n.labelAngle,
-        labelled ? sizing.widths[n.index] : 0,
+      const radius = this.looks.radius[i] * reach(this.looks.shape[i]);
+      const box = footprint(
+        radius,
+        angle,
+        labelled ? sizing.widths[i] : 0,
         sizing.height,
       );
+      m.labelAngle[i] = angle;
+      m.radius[i] = radius;
+      m.boxX0[i] = box.x0;
+      m.boxY0[i] = box.y0;
+      m.boxX1[i] = box.x1;
+      m.boxY1[i] = box.y1;
     }
   }
 
@@ -500,30 +531,35 @@ export class GraphController {
    * they land, or just appear there.
    */
   #arrive(previous) {
-    const { nodes } = this.graph;
+    const { nodes, matrix: m } = this.graph;
     const root = new Int32Array(nodes.length);
     for (const i of this.graph.order)
       root[i] = nodes[i].parent < 0 ? i : root[nodes[i].parent];
     const enter = this.anim.enter;
-    for (const n of nodes) {
-      const old = previous?.byId.get(n.id);
-      if (old) {
-        n.x = old.x;
-        n.y = old.y;
+    const was = (i) => previous?.byId.get(nodes[i].id)?.index ?? -1;
+    for (let i = 0; i < nodes.length; i++) {
+      const old = was(i);
+      if (old >= 0) {
+        m.x[i] = previous.matrix.x[old];
+        m.y[i] = previous.matrix.y[old];
         continue;
       }
-      this.appear[n.index] = enter === "none" ? 1 : 0;
+      this.appear[i] = enter === "none" ? 1 : 0;
       if (enter !== "grow") {
-        n.x = n.homeX;
-        n.y = n.homeY;
+        m.x[i] = m.homeX[i];
+        m.y[i] = m.homeY[i];
         continue;
       }
-      let from = null;
-      for (let p = n.parent; p >= 0 && !from; p = nodes[p].parent)
-        from = previous?.byId.get(nodes[p].id) ?? null;
-      const r = nodes[root[n.index]];
-      n.x = from ? from.x : r.homeX;
-      n.y = from ? from.y : r.homeY;
+      let from = -1;
+      for (let p = nodes[i].parent; p >= 0 && from < 0; p = nodes[p].parent)
+        from = was(p);
+      if (from >= 0) {
+        m.x[i] = previous.matrix.x[from];
+        m.y[i] = previous.matrix.y[from];
+      } else {
+        m.x[i] = m.homeX[root[i]];
+        m.y[i] = m.homeY[root[i]];
+      }
     }
   }
 
@@ -566,10 +602,12 @@ export class GraphController {
     );
   }
 
+  /** Glide every node from where it is to its home, over the animation's transition time. */
   #startTween() {
-    const from = this.graph.nodes.map((n) => [n.x, n.y]);
-    for (const n of this.graph.nodes) n.vx = n.vy = 0;
-    this.tween = { from, start: this.clock() };
+    const m = this.graph.matrix;
+    m.vx.fill(0);
+    m.vy.fill(0);
+    this.tween = { x: m.x.slice(), y: m.y.slice(), start: this.clock() };
   }
 
   // ---- time ----------------------------------------------------------------------------------------------------
@@ -591,17 +629,7 @@ export class GraphController {
         this.tween.start,
         this.anim.transition,
       );
-      const polar = this.routing.kind === "radial";
-      for (const n of this.graph.nodes) {
-        if (this.sim.held.has(n.index)) continue;
-        const [x0, y0] = this.tween.from[n.index];
-        if (polar)
-          [n.x, n.y] = alongRings(this.routing, x0, y0, n.homeX, n.homeY, f);
-        else {
-          n.x = x0 + (n.homeX - x0) * f;
-          n.y = y0 + (n.homeY - y0) * f;
-        }
-      }
+      this.#morph(f);
       if (t >= 1) {
         this.tween = null;
         this.sim.wake();
@@ -697,6 +725,33 @@ export class GraphController {
     };
   }
 
+  /** One morph frame: every node `f` of the way from where it started to its home (round the rings in a radial). */
+  #morph(f) {
+    const m = this.graph.matrix;
+    const { x, y, homeX, homeY, count } = m;
+    const { x: x0, y: y0 } = this.tween;
+    const held = this.sim.held;
+    if (this.routing.kind === "radial") {
+      for (let i = 0; i < count; i++) {
+        if (held.size && held.has(i)) continue;
+        [x[i], y[i]] = alongRings(
+          this.routing,
+          x0[i],
+          y0[i],
+          homeX[i],
+          homeY[i],
+          f,
+        );
+      }
+      return;
+    }
+    for (let i = 0; i < count; i++) {
+      if (held.size && held.has(i)) continue;
+      x[i] = x0[i] + (homeX[i] - x0[i]) * f;
+      y[i] = y0[i] + (homeY[i] - y0[i]) * f;
+    }
+  }
+
   /** Nothing more to do for now: the next tick starts timing afresh instead of seeing one long gap. */
   rest() {
     this.last = 0;
@@ -749,18 +804,21 @@ export class GraphController {
    */
   hit(p, { references = false } = {}) {
     const slack = 4 / this.camera.k;
-    for (let i = this.graph.nodes.length - 1; i >= 0; i--) {
-      const n = this.graph.nodes[i];
-      if (Math.hypot(n.x - p.x, n.y - p.y) <= n.radius * 1.15 + slack) return i;
-    }
-    if (references)
+    const { x, y, radius, count } = this.graph.matrix;
+    for (let i = count - 1; i >= 0; i--)
+      if (Math.hypot(x[i] - p.x, y[i] - p.y) <= radius[i] * 1.15 + slack)
+        return i;
+    if (references) {
+      const m = this.graph.matrix;
       for (const ref of this.routing.references ?? []) {
-        const s = this.graph.nodes[ref.source];
-        const x = ref.x + s.x - s.homeX,
-          y = ref.y + s.y - s.homeY;
-        const r = this.graph.nodes[ref.target].radius * REFERENCE_SCALE;
-        if (Math.hypot(x - p.x, y - p.y) <= r * 1.15 + slack) return ref.target;
+        const s = ref.source;
+        const rx = ref.x + m.x[s] - m.homeX[s],
+          ry = ref.y + m.y[s] - m.homeY[s];
+        const r = radius[ref.target] * REFERENCE_SCALE;
+        if (Math.hypot(rx - p.x, ry - p.y) <= r * 1.15 + slack)
+          return ref.target;
       }
+    }
     return -1;
   }
 
@@ -791,12 +849,12 @@ export class GraphController {
     this.glide = null;
     this.pointer = { id, node, screen: { x, y }, vx: 0, vy: 0, t: time };
     if (node >= 0) {
-      const n = this.graph.nodes[node];
-      this.pointer.offset = { x: n.x - p.x, y: n.y - p.y };
+      const m = this.graph.matrix;
+      this.pointer.offset = { x: m.x[node] - p.x, y: m.y[node] - p.y };
       this.pointer.carried = this.#carried(node);
       for (const i of this.pointer.carried) {
         this.sim.held.add(i);
-        this.graph.nodes[i].vx = this.graph.nodes[i].vy = 0;
+        m.vx[i] = m.vy[i] = 0;
       }
     }
     this.#emit(node >= 0 ? "dragStart" : "panStart", {
@@ -846,14 +904,14 @@ export class GraphController {
       return;
     }
     const p = this.toWorld(x, y);
-    const n = this.graph.nodes[ptr.node];
-    const dx = p.x + ptr.offset.x - n.x,
-      dy = p.y + ptr.offset.y - n.y;
+    const m = this.graph.matrix;
+    const dx = p.x + ptr.offset.x - m.x[ptr.node],
+      dy = p.y + ptr.offset.y - m.y[ptr.node];
     this.#track(ptr, dx, dy, time);
     this.version++;
     for (const i of ptr.carried) {
-      this.graph.nodes[i].x += dx;
-      this.graph.nodes[i].y += dy;
+      m.x[i] += dx;
+      m.y[i] += dy;
     }
     this.#changed();
   }
@@ -865,12 +923,13 @@ export class GraphController {
     // A pointer that stopped before letting go throws nothing.
     const thrown = time - ptr.t < 80;
     if (ptr.node >= 0) {
+      const m = this.graph.matrix;
       this.sim.wake();
       for (const i of ptr.carried) {
         this.sim.held.delete(i);
         if (this.modeOpts.fling && thrown) {
-          this.graph.nodes[i].vx = ptr.vx;
-          this.graph.nodes[i].vy = ptr.vy;
+          m.vx[i] = ptr.vx;
+          m.vy[i] = ptr.vy;
         }
       }
     } else if (thrown) {

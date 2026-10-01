@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GraphController } from "../../next/engine/controller.js";
+import { GraphModel } from "../../next/engine/model.js";
 
 /** root → a, b; a → a1, a2; b → b1 */
 const SMALL = {
@@ -19,12 +20,11 @@ const SMALL = {
 function setup(graph = SMALL) {
   let time = 1000;
   const events = [];
-  const c = new GraphController({
+  const c = new GraphController(new GraphModel(graph), null, {
     clock: () => time,
     onEvent: (type, detail) => events.push({ type, detail }),
   });
   c.setViewport(800, 600);
-  c.setGraph(graph);
   /** Tick 60 times a second for `ms`; returns the last tick's result. */
   const wait = (ms) => {
     let result;
@@ -348,7 +348,7 @@ test("a data or colour change with the same nodes and edges restyles in place: n
   assert.equal(c.looks.fill[node(c, "a").index], "#ff0000");
   assert.equal(c.model.node("a").data.price, 12);
   assert.equal(events.at(-1).type, "graphRestyle");
-  assert.equal(events.at(-1).detail.changed, 1);
+  assert.equal(events.at(-1).detail.nodes, 1);
 });
 
 test("anything that changes a node's room, or the nodes and edges themselves, still lays out again", () => {

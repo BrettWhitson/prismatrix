@@ -1,32 +1,118 @@
-// The engine's working graph: one GraphModel (model.js) plus the layout state the engine moves around.
+// The working graph: a GraphModel's structure, plus a matrix (matrix.js) of every node's live state.
 //
-// The model says what the graph is (ids, labels, data, edges) and never changes. This working copy gives every
-// node an object the layouts, physics and renderers share: its place in the model's forest (parent, children,
-// depth…) and its live layout state: position (x, y), velocity (vx, vy), where its layout wants it (homeX, homeY),
-// and what the view adds (labelAngle, radius, box). Layouts write homes; physics moves x/y; renderers read x/y.
-// A snapshot (snapshot.js) records that state by id.
+// The model says what the graph is (ids, labels, data, edges). This adds what the engine works with: each node's
+// place in the model's forest (parent, children, depth…), and its row of the matrix: position (x, y), velocity
+// (vx, vy), where its layout wants it (homeX, homeY), and what the controller adds (labelAngle, radius, box).
+//
+// Each node is a view: `node.x` reads and writes `graph.matrix.x[node.index]`, so layouts and tests can work node by
+// node while physics and renderers run down the matrix's columns. A working graph is built for one structure of
+// its model; when nodes or edges come or go, the controller builds a new one and carries rows across by id.
 
 import { GraphModel } from "./model.js";
+import { Matrix } from "./matrix.js";
 
-/**
- * @typedef {object} Node
- * @property {string} id
- * @property {string} label
- * @property {object} style     the model node's style overrides (frozen)
- * @property {object} data      the model node's data (frozen)
- * @property {number} index     position in graph.nodes (the same as in the model)
- * @property {number} x
- * @property {number} y
- * @property {number} vx
- * @property {number} vy
- * @property {number} homeX     where the layout puts it
- * @property {number} homeY
- * @property {number} parent    index of the parent in the forest, or -1 for a root
- * @property {number[]} children indices of the children in the forest
- * @property {number} depth     0 for a root
- * @property {number} leaves    leaves in its subtree (1 for a leaf)
- * @property {number} descendants nodes in its subtree, not counting itself
- */
+/** A node of the working graph: its model record, its place in the forest, and its row of the matrix. */
+export class Node {
+  constructor(record, index, matrix, forest) {
+    /** The model's record (frozen): id, label, style, data. */
+    this.record = record;
+    /** Position in graph.nodes, and the node's row in the matrix. */
+    this.index = index;
+    this.matrix = matrix;
+    /** Index of the parent in the forest, or -1 for a root. */
+    this.parent = forest.parent[index];
+    /** @type {number[]} indices of the children in the forest */
+    this.children = forest.children[index].slice();
+    this.depth = forest.depth[index];
+    /** Leaves in its subtree (1 for a leaf). */
+    this.leaves = forest.leaves[index];
+    /** Nodes in its subtree, not counting itself. */
+    this.descendants = forest.descendants[index];
+  }
+
+  get id() {
+    return this.record.id;
+  }
+  get label() {
+    return this.record.label;
+  }
+  get style() {
+    return this.record.style;
+  }
+  get data() {
+    return this.record.data;
+  }
+
+  get x() {
+    return this.matrix.x[this.index];
+  }
+  set x(v) {
+    this.matrix.x[this.index] = v;
+  }
+  get y() {
+    return this.matrix.y[this.index];
+  }
+  set y(v) {
+    this.matrix.y[this.index] = v;
+  }
+  get vx() {
+    return this.matrix.vx[this.index];
+  }
+  set vx(v) {
+    this.matrix.vx[this.index] = v;
+  }
+  get vy() {
+    return this.matrix.vy[this.index];
+  }
+  set vy(v) {
+    this.matrix.vy[this.index] = v;
+  }
+  get homeX() {
+    return this.matrix.homeX[this.index];
+  }
+  set homeX(v) {
+    this.matrix.homeX[this.index] = v;
+  }
+  get homeY() {
+    return this.matrix.homeY[this.index];
+  }
+  set homeY(v) {
+    this.matrix.homeY[this.index] = v;
+  }
+  get labelAngle() {
+    return this.matrix.labelAngle[this.index];
+  }
+  set labelAngle(v) {
+    this.matrix.labelAngle[this.index] = v;
+  }
+  get radius() {
+    return this.matrix.radius[this.index];
+  }
+  set radius(v) {
+    this.matrix.radius[this.index] = v;
+  }
+  /** Its footprint relative to its centre: { x0, y0, x1, y1 } (a copy; set a new one to change it). */
+  get box() {
+    const m = this.matrix,
+      i = this.index;
+    return { x0: m.boxX0[i], y0: m.boxY0[i], x1: m.boxX1[i], y1: m.boxY1[i] };
+  }
+  set box(b) {
+    const m = this.matrix,
+      i = this.index;
+    m.boxX0[i] = b.x0;
+    m.boxY0[i] = b.y0;
+    m.boxX1[i] = b.x1;
+    m.boxY1[i] = b.y1;
+  }
+
+  /** A plain copy, for the console and logs. */
+  toJSON() {
+    const { id, label, index, x, y, vx, vy, homeX, homeY, depth, parent } =
+      this;
+    return { id, label, index, x, y, vx, vy, homeX, homeY, depth, parent };
+  }
+}
 
 /**
  * @typedef {object} Edge
@@ -49,25 +135,12 @@ export class Graph {
       nodes instanceof GraphModel ? nodes : GraphModel.from({ nodes, edges });
     const model = this.model;
     const forest = model.forest();
+    /** Every node's live state, one column per quantity. */
+    this.matrix = new Matrix(model.nodes.length);
     /** @type {Node[]} */
-    this.nodes = model.nodes.map((m, index) => ({
-      id: m.id,
-      label: m.label,
-      style: m.style,
-      data: m.data,
-      index,
-      x: 0,
-      y: 0,
-      vx: 0,
-      vy: 0,
-      homeX: 0,
-      homeY: 0,
-      parent: forest.parent[index],
-      children: forest.children[index].slice(),
-      depth: forest.depth[index],
-      leaves: forest.leaves[index],
-      descendants: forest.descendants[index],
-    }));
+    this.nodes = model.nodes.map(
+      (record, index) => new Node(record, index, this.matrix, forest),
+    );
     /** @type {Map<string, Node>} */
     this.byId = new Map(this.nodes.map((n) => [n.id, n]));
     /** @type {Edge[]} */
@@ -89,21 +162,37 @@ export class Graph {
     this.maxDepth = forest.maxDepth;
   }
 
+  /**
+   * Take the model's current records (labels, styles, data) after a change that kept the structure: same nodes and
+   * edges in the same order, so rows and indices still line up.
+   */
+  refresh() {
+    const { nodes, edges } = this.model;
+    for (let i = 0; i < this.nodes.length; i++) this.nodes[i].record = nodes[i];
+    for (let i = 0; i < this.edges.length; i++) {
+      this.edges[i].style = edges[i].style;
+      this.edges[i].data = edges[i].data;
+    }
+  }
+
   /** The bounding box of the live positions, or of the homes. */
   bounds(homes = false) {
+    if (!this.nodes.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    const m = this.matrix;
+    const xs = homes ? m.homeX : m.x,
+      ys = homes ? m.homeY : m.y;
     let minX = Infinity,
       minY = Infinity,
       maxX = -Infinity,
       maxY = -Infinity;
-    for (const n of this.nodes) {
-      const x = homes ? n.homeX : n.x;
-      const y = homes ? n.homeY : n.y;
+    for (let i = 0; i < m.count; i++) {
+      const x = xs[i],
+        y = ys[i];
       if (x < minX) minX = x;
       if (y < minY) minY = y;
       if (x > maxX) maxX = x;
       if (y > maxY) maxY = y;
     }
-    if (!this.nodes.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
     return { minX, minY, maxX, maxY };
   }
 }

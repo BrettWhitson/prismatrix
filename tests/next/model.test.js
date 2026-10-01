@@ -49,22 +49,6 @@ test("a model holds nodes and edges by id, with labels and data", () => {
   assert.deepEqual(m.issues, []);
 });
 
-test("a model never changes, and never freezes the caller's objects", () => {
-  const input = recipe();
-  const m = GraphModel.from(input);
-  assert.throws(() => m.nodes.push({ id: "x" }));
-  assert.throws(() => {
-    m.node("mjolnir").data.icon.url = "changed";
-  });
-  input.nodes[0].data.icon.url = "mine to change";
-  assert.equal(
-    m.node("mjolnir").data.icon.url,
-    "m.png",
-    "the model kept its own copy",
-  );
-  assert.ok(!Object.isFrozen(input.nodes[0].data.icon));
-});
-
 test("problems are listed, not silently mangled; strict throws on the first", () => {
   const m = GraphModel.from({
     nodes: [
@@ -264,4 +248,135 @@ test("every fixture graph loads cleanly and round-trips byte for byte", () => {
     );
     assert.equal(new Graph(model).nodes.length, model.size);
   }
+});
+
+test("a model changes only through its own methods, and never freezes the caller's objects", () => {
+  const input = recipe();
+  const m = GraphModel.from(input);
+  assert.throws(() => m.nodes.push({ id: "x" }));
+  assert.throws(() => {
+    m.node("mjolnir").data.icon.url = "changed";
+  });
+  input.nodes[0].data.icon.url = "mine to change";
+  assert.equal(m.node("mjolnir").data.icon.url, "m.png");
+  assert.ok(!Object.isFrozen(input.nodes[0].data.icon));
+});
+
+test("update: removals (with their edges), changes and additions, and exactly what changed", () => {
+  const m = GraphModel.from(recipe());
+  const heard = [];
+  m.onChange((change) => heard.push(change));
+  const ore = m.node("ore");
+
+  // A price: no structure, no size, just looks. Untouched nodes keep their records.
+  let change = m.update({ changeNodes: [{ id: "ingot", data: { price: 3 } }] });
+  assert.deepEqual(change.nodesChanged, ["ingot"]);
+  assert.equal(change.structure, false);
+  assert.equal(change.sizes, false);
+  assert.equal(change.looks, true);
+  assert.equal(m.node("ingot").data.price, 3);
+  assert.equal(m.node("ore"), ore, "unchanged nodes keep their records");
+
+  // A label (labels are shown) changes a node's room.
+  change = m.update({ changeNodes: [{ id: "ore", label: "Mithril Ore" }] });
+  assert.equal(change.sizes, true);
+  assert.equal(change.structure, false);
+
+  // Removing a node takes its edges; adding appends.
+  change = m.update({
+    removeNodes: ["ingot"],
+    addNodes: [{ id: "coin", label: "Mystic Coin" }],
+    addEdges: [{ source: "gift", target: "coin" }],
+  });
+  assert.equal(change.structure, true);
+  assert.deepEqual(change.nodesRemoved, ["ingot"]);
+  assert.deepEqual(change.nodesAdded, ["coin"]);
+  assert.deepEqual(change.edgesAdded, ["gift>coin"]);
+  assert.deepEqual(change.edgesRemoved.sort(), [
+    "gift>ingot",
+    "ingot>ore",
+    "mjolnir>ingot",
+  ]);
+  assert.deepEqual(
+    m.nodes.map((n) => n.id),
+    ["mjolnir", "gift", "ore", "coin"],
+  );
+  assert.deepEqual(m.ends, [
+    [0, 1],
+    [1, 3],
+  ]);
+  assert.equal(m.forest().depth[3], 2, "cached views follow the new structure");
+  assert.equal(heard.length, 3);
+  assert.deepEqual(
+    heard.map((c) => c.version),
+    [2, 3, 4],
+  );
+
+  // Nothing to do: no change, nobody told.
+  assert.equal(
+    m.update({ changeNodes: [{ id: "coin", label: "Mystic Coin" }] }),
+    null,
+  );
+  assert.equal(heard.length, 3);
+
+  // Problems are listed and skipped.
+  change = m.update({
+    changeNodes: [{ id: "nope", label: "x" }],
+    addEdges: [{ source: "coin", target: "ghost" }],
+    addNodes: [{ id: "coin" }],
+  });
+  assert.equal(change, null);
+  assert.deepEqual(
+    m.issues.map((i) => i.kind),
+    ["missing-node", "duplicate-node", "missing-endpoint"],
+  );
+});
+
+test("replace: the whole graph in, records reused where nothing changed, order taken from the input", () => {
+  const m = GraphModel.from(recipe());
+  const kept = m.node("gift");
+  const json = recipe();
+  json.nodes[2].data = { rarity: "rare" };
+  json.nodes.reverse();
+  const change = m.replace(json);
+  assert.equal(m.node("gift"), kept);
+  assert.deepEqual(change.nodesChanged, ["ingot"]);
+  assert.equal(change.structure, true, "a new order is a new structure");
+  assert.equal(m.replace(json), null, "the same again changes nothing");
+  // Replacing gives the same model as building from scratch.
+  assert.deepEqual(m.toJSON(), GraphModel.from(json).toJSON());
+});
+
+test("options: how nodes and edges look, and which changes need a new layout", () => {
+  const m = GraphModel.from(recipe(), { node: { size: 20 } });
+  assert.equal(m.opts.node.size, 20);
+  let change = m.setOptions({ node: { color: "#ff0000" }, edge: { width: 3 } });
+  assert.equal(change.sizes, false);
+  assert.deepEqual(change.options.node, { color: "#ff0000" });
+  assert.deepEqual(change.options.edge, { width: 3 });
+  change = m.setOptions({ node: { labelSize: 20 } });
+  assert.equal(change.sizes, true);
+  assert.equal(m.setOptions({ node: { labelSize: 20 } }), null);
+});
+
+test("label widths are measured once per distinct label, and again only when the label size or measure changes", () => {
+  const measured = [];
+  const measure = (text, size) => {
+    measured.push(text);
+    return text.length * size;
+  };
+  const m = GraphModel.from(recipe(), { measure, node: { labelSize: 10 } });
+  assert.deepEqual([...m.labelWidths()], [70, 150, 130, 30]);
+  assert.equal(measured.length, 4);
+  m.update({ addNodes: [{ id: "ore2", label: "ore" }] });
+  m.labelWidths();
+  assert.equal(
+    measured.length,
+    4,
+    "a label already measured isn't measured again",
+  );
+  m.setOptions({ node: { labelSize: 20 } });
+  assert.equal(m.labelWidths()[0], 140);
+  assert.equal(measured.length, 8);
+  assert.equal(m.labelHeight, 25);
 });

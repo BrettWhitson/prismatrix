@@ -1,13 +1,17 @@
-// The sandbox: a sample graph, the engine's view, and a panel built straight from the engine's option schemas.
+// The sandbox: a sample graph on the engine (a renderer, a model and a controller between them), and a panel built
+// straight from the engine's option schemas.
 
 import {
   ANIMATION_OPTIONS,
   EDGE_OPTIONS,
-  GraphView,
+  GraphController,
+  GraphModel,
   LAYOUTS,
   NODE_OPTIONS,
   PHYSICS,
   physicsSchema,
+  canvasRenderer,
+  glRenderer,
   resolve,
 } from "../engine/index.js";
 import { bool, range, select } from "../engine/schema.js";
@@ -195,32 +199,50 @@ function makeGraph(g) {
 // ---- the view ----------------------------------------------------------------------------------------------
 
 const stats = document.getElementById("stats");
-const log = startTelemetry(() => view);
-const view = new GraphView(
-  document.getElementById("graph"),
-  {
+const canvas = document.getElementById("graph");
+const makeRenderer = (name) =>
+  (name === "canvas" ? canvasRenderer : glRenderer)(canvas, {
+    frameRate: settings.frameRate,
+  });
+
+// The engine: a renderer for the screen, a model of the graph, and a controller between them.
+let controller = null;
+const log = startTelemetry(() => controller);
+const renderer = makeRenderer(settings.renderer);
+const model = new GraphModel(makeGraph(settings.graph), {
+  node: settings.node,
+  edge: settings.edge,
+});
+{
+  const s = layoutState();
+  controller = new GraphController(model, renderer, {
+    layout: settings.layout,
+    layoutOptions: s.options,
+    physics: s.mode,
+    physicsOptions: s.physics[s.mode],
+    animation: settings.animation,
     onEvent: log.event,
     onFrame: (frame) => {
       log.frame(frame);
       const { fps, energy, state } = frame;
       stats.textContent =
-        `${view.renderer.name === "webgl" ? "WebGL" : "Canvas 2D"} · ` +
-        `${view.graph.nodes.length} nodes · ${view.graph.edges.length} edges · ` +
+        `${controller.renderer.name === "webgl" ? "WebGL" : "Canvas 2D"} · ` +
+        `${controller.graph.nodes.length} nodes · ${controller.graph.edges.length} edges · ` +
         `${Math.round(fps)} fps · ${state}` +
         (state === "moving" ? ` · energy ${energy.toFixed(1)}` : "");
     },
-  },
-  { renderer: settings.renderer, frameRate: settings.frameRate },
-);
+  });
+}
 
+/** Put the panel's settings back on the engine (after a scenario has played with them). */
 function applyAll() {
   const s = layoutState();
-  view.setAnimation(settings.animation);
-  view.setNodeStyle(settings.node);
-  view.setEdgeStyle(settings.edge);
-  view.setLayout(settings.layout, s.options);
-  view.setPhysics(s.mode, s.physics[s.mode]);
-  view.setGraph(makeGraph(settings.graph));
+  controller.setAnimation(settings.animation);
+  controller.setNodeStyle(settings.node);
+  controller.setEdgeStyle(settings.edge);
+  controller.setLayout(settings.layout, s.options);
+  controller.setPhysics(s.mode, s.physics[s.mode]);
+  controller.setGraph(makeGraph(settings.graph));
 }
 
 // ---- the panel ---------------------------------------------------------------------------------------------
@@ -380,7 +402,7 @@ async function play(name) {
   const stop = new AbortController();
   playing = { name, stop };
   render();
-  const result = await playScenario(view, SCENARIOS[name], {
+  const result = await playScenario(controller, SCENARIOS[name], {
     caption,
     log: log.event,
     signal: stop.signal,
@@ -426,9 +448,12 @@ function render() {
             "webgl",
             "WebGL draws everything on the GPU. Canvas 2D is the fallback, and the reference the GPU is checked against.",
           ),
-          view.renderer.name,
+          controller.renderer.name,
           (v) => {
-            settings.renderer = view.setRenderer(v);
+            const old = controller.renderer;
+            controller.setRenderer(makeRenderer(v));
+            old.dispose();
+            settings.renderer = controller.renderer.name;
             save();
           },
         ),
@@ -443,9 +468,9 @@ function render() {
             "display",
             "Uncapped draws as fast as it can to show the engine's headroom. The screen still shows one frame per refresh, so it only costs power.",
           ),
-          view.frameRate,
+          controller.renderer.frameRate,
           (v) => {
-            settings.frameRate = view.setFrameRate(v);
+            settings.frameRate = controller.renderer.setFrameRate(v);
             save();
           },
         ),
@@ -467,11 +492,13 @@ function render() {
       const heavy = (spec) => ({
         ...spec,
         heavy: (v) =>
-          Math.max(view.graph.nodes.length, spec.key === "count" ? v : 0) >
-          LIVE_NODES,
+          Math.max(
+            controller.graph.nodes.length,
+            spec.key === "count" ? v : 0,
+          ) > LIVE_NODES,
       });
       controls(body, relevant.map(heavy), settings.graph, (key) => {
-        view.setGraph(makeGraph(settings.graph));
+        controller.setGraph(makeGraph(settings.graph));
         if (key === "kind") render();
       });
     }),
@@ -492,15 +519,15 @@ function render() {
             settings.layout = v;
             save();
             const s = layoutState();
-            view.setLayout(v, s.options);
-            view.setPhysics(s.mode, s.physics[s.mode]);
+            controller.setLayout(v, s.options);
+            controller.setPhysics(s.mode, s.physics[s.mode]);
             render();
           },
         ),
       );
       const s = layoutState();
       controls(body, LAYOUTS[settings.layout].options, s.options, () =>
-        view.setLayout(settings.layout, s.options),
+        controller.setLayout(settings.layout, s.options),
       );
     }),
     section("Physics", (body) => {
@@ -519,7 +546,7 @@ function render() {
             s.mode = v;
             save();
             const next = layoutState();
-            view.setPhysics(v, next.physics[v]);
+            controller.setPhysics(v, next.physics[v]);
             render();
           },
         ),
@@ -530,28 +557,30 @@ function render() {
       );
       const opts = s.physics[s.mode];
       controls(body, physicsSchema(settings.layout, s.mode), opts, () =>
-        view.setPhysics(s.mode, opts),
+        controller.setPhysics(s.mode, opts),
       );
     }),
     section("Nodes", (body) =>
       controls(body, NODE_OPTIONS, settings.node, () =>
-        view.setNodeStyle(settings.node),
+        controller.setNodeStyle(settings.node),
       ),
     ),
     section("Edges", (body) =>
       controls(body, EDGE_OPTIONS, settings.edge, () =>
-        view.setEdgeStyle(settings.edge),
+        controller.setEdgeStyle(settings.edge),
       ),
     ),
     section("Animation", (body) =>
       controls(body, ANIMATION_OPTIONS, settings.animation, () =>
-        view.setAnimation(settings.animation),
+        controller.setAnimation(settings.animation),
       ),
     ),
   );
 }
 
-document.getElementById("reset").addEventListener("click", () => view.reset());
+document
+  .getElementById("reset")
+  .addEventListener("click", () => controller.reset());
 document.getElementById("snapshot").addEventListener("click", async (e) => {
   const button = e.currentTarget;
   const saved = await log.snapshot("button");
@@ -569,13 +598,15 @@ document.getElementById("load-file").addEventListener("change", async (e) => {
   e.target.value = "";
   if (!file) return;
   try {
-    view.restore(JSON.parse(await file.text()));
+    controller.restore(JSON.parse(await file.text()));
   } catch (error) {
     log.event("error", { message: `load: ${error.message}` });
     alert(`Couldn't load that snapshot: ${error.message}`);
   }
 });
-document.getElementById("fit").addEventListener("click", () => view.fit());
+document
+  .getElementById("fit")
+  .addEventListener("click", () => controller.fit());
 document.getElementById("defaults").addEventListener("click", () => {
   try {
     localStorage.removeItem(STORAGE_KEY);
@@ -585,9 +616,8 @@ document.getElementById("defaults").addEventListener("click", () => {
   location.reload();
 });
 
-// Handy from the console.
-window.view = view;
+// Handy from the console (`view` is the old name).
+Object.assign(window, { controller, model, renderer, view: controller });
 window.playScenario = play;
 
 render();
-applyAll();

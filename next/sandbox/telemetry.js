@@ -4,14 +4,14 @@
 //
 // Four samples a second summarise the frames since the last one; events (settings changes, drags, errors, slow
 // frames) are logged as they happen. `window.engineLog.text()` gives the same text in the console, and
-// `window.engineLog.snapshot()` saves a full snapshot of the view to logs/snapshots (it also happens on errors).
+// `window.engineLog.snapshot()` saves a full snapshot of what is shown to logs/snapshots (it also happens on errors).
 
 const WINDOW_MS = 30_000;
 const SAMPLE_MS = 250;
 const FLUSH_MS = 1000;
 const SLOW_FRAME_MS = 50;
 
-export function startTelemetry(getView) {
+export function startTelemetry(getController) {
   const started = performance.now();
   /** @type {{ t: number, line: string }[]} */
   const entries = [];
@@ -63,14 +63,14 @@ export function startTelemetry(getView) {
   }
 
   /** Health of the graph right now: anything non-finite, how fast the fastest node is, how big it all is. */
-  function health(view) {
+  function health(controller) {
     let nan = 0,
       fastest = 0,
       minX = Infinity,
       minY = Infinity,
       maxX = -Infinity,
       maxY = -Infinity;
-    for (const n of view.graph.nodes) {
+    for (const n of controller.graph.nodes) {
       if (!Number.isFinite(n.x + n.y + n.vx + n.vy)) {
         nan++;
         continue;
@@ -84,24 +84,24 @@ export function startTelemetry(getView) {
     const size = Number.isFinite(minX)
       ? `${Math.round(maxX - minX)}x${Math.round(maxY - minY)}`
       : "-";
-    return `nan=${nan} fastest=${Math.round(fastest)} held=${view.sim.held.size} size=${size} zoom=${round(view.camera.k)}`;
+    return `nan=${nan} fastest=${Math.round(fastest)} held=${controller.sim.held.size} size=${size} zoom=${round(controller.camera.k)}`;
   }
 
   function sample() {
-    const view = getView();
-    if (!view) return;
+    const controller = getController();
+    if (!controller) return;
     const a = acc;
     acc = fresh();
-    const where = `${view.renderer?.name}:${view.layout}/${view.mode} n=${view.graph.nodes.length}`;
+    const where = `${controller.renderer?.name}:${controller.layout}/${controller.mode} n=${controller.graph.nodes.length}`;
     if (!a.frames) {
-      push(`idle   ${where} ${health(view)}`);
+      push(`idle   ${where} ${health(controller)}`);
       return;
     }
     const fps = Math.round((a.frames * 1000) / SAMPLE_MS);
     push(
       `sample ${where} frames=${a.frames} (~${fps}fps) worstGap=${Math.round(a.worst)}ms ` +
         `sim=${round(a.simSum / a.frames)}/${round(a.simMax)}ms draw=${round(a.drawSum / a.frames)}/${round(a.drawMax)}ms ` +
-        `state="${a.state}" energy=${round(a.energy)} ${health(view)}`,
+        `state="${a.state}" energy=${round(a.energy)} ${health(controller)}`,
     );
   }
 
@@ -122,26 +122,26 @@ export function startTelemetry(getView) {
   }
 
   /**
-   * Save a snapshot of the view (graph, settings, camera, positions: see next/MODEL.md) to logs/snapshots via the
+   * Save a snapshot of what is shown (graph, settings, camera, positions: see next/MODEL.md) to logs/snapshots via the
    * dev server. Returns where it was saved, or null.
    */
   async function snapshot(note = "manual") {
-    const view = getView();
-    if (!view) return null;
+    const controller = getController();
+    if (!controller) return null;
     try {
       const response = await fetch("/__snapshot", {
         method: "POST",
-        body: JSON.stringify(view.snapshot(note)),
+        body: JSON.stringify(controller.snapshot(note)),
       });
       const { saved } = await response.json();
       event("snapshot", { saved, note });
       return saved;
     } catch {
-      return null; // no dev server: view.snapshot() still works from the console
+      return null; // no dev server: controller.snapshot() still works from the console
     }
   }
 
-  // An error snapshots the view automatically (at most every 10 s), so what led to it can be replayed.
+  // An error snapshots what is shown automatically (at most every 10 s), so what led to it can be replayed.
   let lastAuto = -Infinity;
   const errorSnapshot = (message) => {
     if (performance.now() - lastAuto < 10_000) return;

@@ -341,30 +341,31 @@ export function constrainer(routing, opts) {
   ) {
     const across = routing.direction === "LR" || routing.direction === "RL";
     return across
-      ? (n) => {
-          n.x = n.homeX;
-          n.vx = 0;
+      ? (m, i) => {
+          m.x[i] = m.homeX[i];
+          m.vx[i] = 0;
         }
-      : (n) => {
-          n.y = n.homeY;
-          n.vy = 0;
+      : (m, i) => {
+          m.y[i] = m.homeY[i];
+          m.vy[i] = 0;
         };
   }
   if (routing.kind === "radial" && opts.ringLock) {
-    return (n) => {
-      const r = Math.hypot(n.homeX - routing.cx, n.homeY - routing.cy);
+    const { cx, cy } = routing;
+    return (m, i) => {
+      const r = Math.hypot(m.homeX[i] - cx, m.homeY[i] - cy);
       if (r < 1e-6) return;
-      const dx = n.x - routing.cx;
-      const dy = n.y - routing.cy;
+      const dx = m.x[i] - cx;
+      const dy = m.y[i] - cy;
       const d = Math.hypot(dx, dy) || 1;
-      n.x = routing.cx + (dx / d) * r;
-      n.y = routing.cy + (dy / d) * r;
+      m.x[i] = cx + (dx / d) * r;
+      m.y[i] = cy + (dy / d) * r;
       // Keep only the velocity along the ring.
       const tx = -dy / d,
         ty = dx / d;
-      const along = n.vx * tx + n.vy * ty;
-      n.vx = tx * along;
-      n.vy = ty * along;
+      const along = m.vx[i] * tx + m.vy[i] * ty;
+      m.vx[i] = tx * along;
+      m.vy[i] = ty * along;
     };
   }
   return null;

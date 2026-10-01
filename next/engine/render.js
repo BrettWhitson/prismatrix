@@ -417,8 +417,8 @@ function drawLabel(ctx, n, r) {
   ctx.fillText(n.label, n.x + a.x, n.y + a.y);
 }
 
-/** The plain renderer: everything on the view's own canvas with Canvas 2D. Also the reference for the GPU one. */
-export class CanvasRenderer {
+/** The Canvas 2D painter: everything on the renderer's canvas. Also the reference the WebGL painter is checked against. */
+export class CanvasPainter {
   constructor(canvas) {
     this.name = "canvas";
     this.ctx = canvas.getContext("2d");

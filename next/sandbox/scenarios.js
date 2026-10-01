@@ -120,8 +120,8 @@ const uses = (name) =>
 /** Thrown to end a scenario early (Stop). */
 class Stopped extends Error {}
 
-function context(view, { caption, log, signal }) {
-  const c = view.controller;
+function context(controller, { caption, log, signal }) {
+  const c = controller;
   const frame = () =>
     new Promise((resolve) => requestAnimationFrame(() => resolve()));
   const check = () => {
@@ -136,7 +136,7 @@ function context(view, { caption, log, signal }) {
   const POINTER = 77;
 
   const ctx = {
-    view,
+    controller,
     c,
     recipeGraph,
     id,
@@ -204,7 +204,7 @@ function context(view, { caption, log, signal }) {
         start: performance.now(),
       };
       c.framed = false;
-      c.onChange?.();
+      c.renderer?.invalidate();
     },
   };
   return ctx;
@@ -223,12 +223,12 @@ export const SCENARIOS = {
       "A legendary recipe grows, gets dragged, thrown, hovered, pruned and restyled, through every layout.",
     steps: [
       async (s) => {
-        s.view.setAnimation({});
-        s.view.setLayout("tree", { direction: "TB" });
-        s.view.setPhysics("static");
+        s.controller.setAnimation({});
+        s.controller.setLayout("tree", { direction: "TB" });
+        s.controller.setPhysics("static");
         s.say("A legendary recipe, grown one crafting step at a time");
         for (let depth = 0; depth <= DEEPEST; depth++) {
-          s.view.setGraph(s.recipeGraph({ depth }));
+          s.controller.setGraph(s.recipeGraph({ depth }));
           await s.wait(depth === 0 ? 900 : 1100);
         }
         await s.wait(800);
@@ -251,55 +251,55 @@ export const SCENARIOS = {
         await s.drag(s.id("Gift of Magic"), 160, 60, 900);
         await s.wait(900);
         s.say("Reset sends everything home");
-        s.view.reset();
+        s.controller.reset();
         await s.wait(1200);
       },
       async (s) => {
         s.say(
           "Elastic: pull a node and its neighbours follow, then spring back",
         );
-        s.view.setPhysics("elastic");
+        s.controller.setPhysics("elastic");
         await s.drag(s.id("Gift of Coeus"), -180, 120, 800, { hold: 0 });
         await s.wait(2500);
       },
       async (s) => {
         s.say("Same tree, left to right");
-        s.view.setLayout("tree", { direction: "LR" });
+        s.controller.setLayout("tree", { direction: "LR" });
         await s.wait(2200);
-        s.view.setLayout("tree", { direction: "TB" });
+        s.controller.setLayout("tree", { direction: "TB" });
         await s.wait(1600);
       },
       async (s) => {
         s.say("Radial: the recipe in rings, one ring per crafting step");
-        s.view.setLayout("radial", {});
-        s.view.setPhysics("static");
+        s.controller.setLayout("radial", {});
+        s.controller.setPhysics("static");
         await s.wait(2200);
         s.say("Floating: throw a node and the graph rearranges around it");
-        s.view.setPhysics("floating");
+        s.controller.setPhysics("floating");
         await s.wait(1200);
         await s.drag(s.id("Gift of Might"), 220, -140, 350, { hold: 0 });
         await s.wait(3500);
-        s.view.setPhysics("static");
+        s.controller.setPhysics("static");
         await s.wait(1200);
       },
       async (s) => {
         s.say("Removing a recipe folds its ingredients back into it");
-        s.view.setGraph(s.recipeGraph({ without: ["Gift of Fortune"] }));
+        s.controller.setGraph(s.recipeGraph({ without: ["Gift of Fortune"] }));
         await s.wait(2000);
         s.say("…and adding it back grows them out again");
-        s.view.setGraph(s.recipeGraph());
+        s.controller.setGraph(s.recipeGraph());
         await s.wait(2000);
       },
       async (s) => {
         s.say(
           "Merged tree: layered, so a shared ingredient sits below every recipe that uses it",
         );
-        s.view.setLayout("merged", { references: "off" });
+        s.controller.setLayout("merged", { references: "off" });
         await s.wait(3000);
         s.say(
           "Busy shared ingredients get a reference under each far-away recipe instead",
         );
-        s.view.setLayout("merged", { references: "hubs", shareMin: 3 });
+        s.controller.setLayout("merged", { references: "hubs", shareMin: 3 });
         await s.wait(2500);
         s.say(
           "Pointing at a reference lights up the real ingredient and every recipe that uses it",
@@ -310,7 +310,7 @@ export const SCENARIOS = {
       },
       async (s) => {
         s.say("Each node and edge can carry its own style in the graph data");
-        s.view.setGraph(
+        s.controller.setGraph(
           s.recipeGraph({
             styleOf: (name) =>
               name === "Aurora"
@@ -329,12 +329,12 @@ export const SCENARIOS = {
         const big = await (
           await fetch("/tests/fixtures/graphs/crafting-large.json")
         ).json();
-        s.view.setGraph(big);
+        s.controller.setGraph(big);
         await s.wait(3000);
         s.say("Zooming in");
         s.focus(s.c.graph.nodes[0].id, 1.2);
         await s.wait(2500);
-        s.view.fit();
+        s.controller.fit();
         await s.wait(2000);
       },
     ],
@@ -342,12 +342,16 @@ export const SCENARIOS = {
 };
 
 /**
- * Play a scenario on a view. `caption(text)` shows a caption (empty to hide); `log(type, detail)` records events.
+ * Play a scenario on a controller. `caption(text)` shows a caption (empty to hide); `log(type, detail)` records events.
  * Resolves when it ends or is stopped through `signal`.
  * @returns {Promise<"done" | "stopped" | Error>}
  */
-export async function playScenario(view, scenario, { caption, log, signal }) {
-  const ctx = context(view, { caption, log, signal });
+export async function playScenario(
+  controller,
+  scenario,
+  { caption, log, signal },
+) {
+  const ctx = context(controller, { caption, log, signal });
   const started = performance.now();
   log("scenarioStart", { scenario: scenario.label });
   try {
@@ -365,8 +369,8 @@ export async function playScenario(view, scenario, { caption, log, signal }) {
     log("error", { message: `scenario: ${error.message}` });
     return error;
   } finally {
-    view.controller.pointerUp({ id: 77, time: performance.now() });
-    view.controller.pointerLeave();
+    controller.pointerUp({ id: 77, time: performance.now() });
+    controller.pointerLeave();
     caption("");
   }
 }

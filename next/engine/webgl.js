@@ -426,10 +426,10 @@ class GLLayer {
 }
 
 /**
- * The WebGL renderer for a view's canvas. It adds a GL canvas beneath the view's own, and draws labels on the
- * view's canvas, which stays on top to take the pointer.
+ * The WebGL painter for a renderer's canvas. It adds a GL canvas beneath the renderer's own, which stays on top to
+ * take the pointer.
  */
-export class WebGLRenderer {
+export class WebGLPainter {
   constructor(canvas) {
     this.name = "webgl";
     this.top = canvas;
