@@ -586,3 +586,135 @@ test("one node still moving among many keeps the simulation awake", () => {
   for (let i = 0; i < 60; i++) sim.step(1 / 120);
   assert.ok(!sim.asleep);
 });
+
+// ---- radial wedges sized by need ----------------------------------------------------------------------------
+
+import { footprint as footprintOf } from "../../next/engine/boxes.js";
+
+function randomGraph(seed, count, bushiness) {
+  let s = seed >>> 0;
+  const r = () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const nodes = [{ id: "0", label: "root" }],
+    edges = [];
+  for (let i = 1; i < count; i++) {
+    nodes.push({ id: String(i), label: String(i) });
+    edges.push({
+      source: String(Math.floor(r() ** bushiness * i)),
+      target: String(i),
+    });
+  }
+  return new Graph(nodes, edges);
+}
+
+/** Footprints like the view's: a node of radius 8 with its label below, 6 px per character. */
+const labelSizing = (g) => ({
+  gap: 4,
+  box: () => footprintOf(8, Math.PI / 2, 0, 14),
+  boxOf: (i) => footprintOf(8, Math.PI / 2, 6 * g.nodes[i].label.length, 14),
+});
+const sized = (g) => {
+  const s = labelSizing(g);
+  return { gap: s.gap, box: (i) => s.boxOf(i) };
+};
+
+function overlapsAtHome(g, sizing) {
+  let count = 0;
+  const boxes = g.nodes.map((n) => sizing.box(n.index, Math.PI / 2));
+  for (let i = 0; i < g.nodes.length; i++)
+    for (let j = i + 1; j < g.nodes.length; j++) {
+      const a = g.nodes[i],
+        b = g.nodes[j];
+      const ox =
+        Math.min(a.homeX + boxes[i].x1, b.homeX + boxes[j].x1) -
+        Math.max(a.homeX + boxes[i].x0, b.homeX + boxes[j].x0);
+      const oy =
+        Math.min(a.homeY + boxes[i].y1, b.homeY + boxes[j].y1) -
+        Math.max(a.homeY + boxes[i].y0, b.homeY + boxes[j].y0);
+      if (ox > 0.5 && oy > 0.5) count++;
+    }
+  return count;
+}
+
+const meanDistance = (g) =>
+  g.nodes.reduce((sum, n) => sum + Math.hypot(n.homeX, n.homeY), 0) /
+  g.nodes.length;
+
+test("radial wedges by need: no overlaps, and never less compact than sharing by leaf count", () => {
+  for (const [seed, count, bushiness] of [
+    [7, 80, 1.4],
+    [3, 300, 1],
+    [11, 200, 3],
+    [5, 200, 0.4],
+    [9, 150, 2],
+  ]) {
+    const byNeed = randomGraph(seed, count, bushiness);
+    const byLeaves = randomGraph(seed, count, bushiness);
+    radialLayout(byNeed, {}, sized(byNeed));
+    radialLayout(byLeaves, { wedges: "leaves" }, sized(byLeaves));
+    assert.equal(overlapsAtHome(byNeed, sized(byNeed)), 0, `seed ${seed}`);
+    assert.ok(
+      meanDistance(byNeed) <= meanDistance(byLeaves) + 1e-6,
+      `seed ${seed}`,
+    );
+  }
+});
+
+test("radial wedges by need pull a crowded first ring well in", () => {
+  // A root with 60 leaf children and a few deep, narrow subtrees: by leaves, the deep ones hog the angle.
+  const nodes = [{ id: "r", label: "root" }],
+    edges = [];
+  for (let i = 0; i < 60; i++) {
+    nodes.push({ id: `l${i}`, label: `${i}` });
+    edges.push({ source: "r", target: `l${i}` });
+  }
+  for (let t = 0; t < 4; t++)
+    for (let d = 0; d < 5; d++)
+      for (let k = 0; k < 3; k++) {
+        const id = `t${t}-${d}-${k}`;
+        nodes.push({ id, label: id.slice(0, 4) });
+        edges.push({
+          source: k ? `t${t}-${d}-0` : d ? `t${t}-${d - 1}-0` : "r",
+          target: id,
+        });
+      }
+  const ring1 = (g) =>
+    Math.hypot(g.byId.get("l0").homeX, g.byId.get("l0").homeY);
+  const a = new Graph(nodes, edges),
+    b = new Graph(nodes, edges);
+  radialLayout(a, {}, sized(a));
+  radialLayout(b, { wedges: "leaves" }, sized(b));
+  assert.ok(ring1(a) < ring1(b) * 0.9, `ring 1 at ${ring1(a)} vs ${ring1(b)}`);
+  assert.equal(overlapsAtHome(a, sized(a)), 0);
+});
+
+test("radial: a balanced tree still fans out evenly, and children stay inside their parent's angle", () => {
+  const nodes = [{ id: "r" }],
+    edges = [];
+  let level = ["r"];
+  for (let d = 0; d < 3; d++) {
+    const next = [];
+    for (const p of level)
+      for (let k = 0; k < 3; k++) {
+        nodes.push({ id: p + k });
+        edges.push({ source: p, target: p + k });
+        next.push(p + k);
+      }
+    level = next;
+  }
+  const g = new Graph(nodes, edges);
+  radialLayout(g, {});
+  const angle = (id) => {
+    const n = g.byId.get(id);
+    return (Math.atan2(n.homeY, n.homeX) + Math.PI * 2.5) % (Math.PI * 2);
+  };
+  const first = ["r0", "r1", "r2"].map(angle).sort((x, y) => x - y);
+  const gaps = [first[1] - first[0], first[2] - first[1]];
+  assert.ok(Math.abs(gaps[0] - gaps[1]) < 1e-9, "equal subtrees, equal angles");
+  // r1's grandchildren sit between r0's and r2's.
+  const inner = ["r10", "r11", "r12"].map(angle);
+  for (const a of inner)
+    assert.ok(
+      a > Math.min(angle("r00"), angle("r20")) &&
+        a < Math.max(angle("r02"), angle("r22")),
+    );
+});
