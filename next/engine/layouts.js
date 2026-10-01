@@ -2,6 +2,7 @@
 // and defaults for each, and how its edges are routed (the shape of a "step" edge depends on the layout).
 
 import { bool, range, select } from "./schema.js";
+import { tidy } from "./tidy.js";
 
 /**
  * @typedef {object} Routing How edges bend for this layout.
@@ -33,21 +34,28 @@ export const TREE_LABEL_ANGLE = {
 };
 
 /**
- * Tidy tree (Reingold–Tilford style): each subtree is packed against its left sibling as tightly as their
- * footprints allow, level by level, and every parent sits centred over its first and last child. Levels are at
- * least `levelGap` apart, and further when their footprints need it.
+ * Tidy tree: Walker's algorithm in linear time (Buchheim, Jünger & Leipert; see tidy.js), with every node's real
+ * footprint (node and label). Subtrees pack as tightly as their outlines allow, small ones between big ones are
+ * spread out evenly, and every parent sits centred over its children. Levels are at least `levelGap` apart, and
+ * further when their footprints need it.
  */
 export function treeLayout(
   graph,
-  { direction = "TB", levelGap = 90, siblingGap = 16 } = {},
+  {
+    direction = "TB",
+    levelGap = 90,
+    siblingGap = 16,
+    subtreeGap = 28,
+    parentAlign = "centres",
+  } = {},
   sizing = DEFAULT_SIZING,
 ) {
   const count = graph.nodes.length;
   const flip = direction === "BT" || direction === "RL";
   const across = direction === "LR" || direction === "RL";
   // Footprints in (breadth, depth) terms: breadth runs along a level, depth away from the root.
-  const b0 = new Float64Array(count),
-    b1 = new Float64Array(count),
+  const left = new Float64Array(count),
+    right = new Float64Array(count),
     d0 = new Float64Array(count),
     d1 = new Float64Array(count);
   for (const n of graph.nodes) {
@@ -55,58 +63,27 @@ export function treeLayout(
     const [lo, hi, near, far] = across
       ? [box.y0, box.y1, box.x0, box.x1]
       : [box.x0, box.x1, box.y0, box.y1];
-    b0[n.index] = lo;
-    b1[n.index] = hi;
+    left[n.index] = Math.max(0, -lo);
+    right[n.index] = Math.max(0, hi);
     d0[n.index] = flip ? -far : near;
     d1[n.index] = flip ? -near : far;
   }
-  const gap = siblingGap + sizing.gap;
-  const offset = new Float64Array(count); // breadth relative to the parent
 
-  /** Pack contours left to right as tightly as they allow: each one's offset, and the merged contour. */
-  const pack = (contours, spacing) => {
-    const offsets = [];
-    let acc = null;
-    for (const c of contours) {
-      if (!acc) {
-        offsets.push(0);
-        acc = { lo: [...c.lo], hi: [...c.hi] };
-        continue;
-      }
-      let off = -Infinity;
-      const common = Math.min(acc.lo.length, c.lo.length);
-      for (let d = 0; d < common; d++)
-        off = Math.max(off, acc.hi[d] - c.lo[d] + spacing);
-      offsets.push(off);
-      for (let d = 0; d < c.lo.length; d++) {
-        if (d < acc.lo.length) acc.hi[d] = c.hi[d] + off;
-        else {
-          acc.lo.push(c.lo[d] + off);
-          acc.hi.push(c.hi[d] + off);
-        }
-      }
-    }
-    return { offsets, acc };
-  };
-
-  /** A subtree's contour: for each level from its root down, its leftmost and rightmost extent. */
-  const contour = (i) => {
-    const node = graph.nodes[i];
-    if (!node.children.length) return { lo: [b0[i]], hi: [b1[i]] };
-    const { offsets, acc } = pack(node.children.map(contour), gap);
-    const centre = (offsets[0] + offsets.at(-1)) / 2;
-    node.children.forEach((c, k) => (offset[c] = offsets[k] - centre));
-    return {
-      lo: [b0[i], ...acc.lo.map((v) => v - centre)],
-      hi: [b1[i], ...acc.hi.map((v) => v - centre)],
-    };
-  };
-
-  if (count) {
-    const { offsets, acc } = pack(graph.roots.map(contour), gap * 3);
-    const middle = (Math.min(...acc.lo) + Math.max(...acc.hi)) / 2;
-    graph.roots.forEach((r, k) => (offset[r] = offsets[k] - middle));
-  }
+  const { x: breadth } = tidy(
+    {
+      parent: graph.nodes.map((n) => n.parent),
+      children: graph.nodes.map((n) => n.children),
+      roots: graph.roots,
+      left,
+      right,
+    },
+    {
+      sibling: siblingGap + sizing.gap,
+      cousin: subtreeGap + sizing.gap,
+      root: subtreeGap * 2 + sizing.gap,
+      parent: parentAlign,
+    },
+  );
 
   // Levels: at least levelGap apart, more where one level's footprints would reach the next's.
   const far = new Array(graph.maxDepth + 1).fill(-Infinity);
@@ -117,15 +94,14 @@ export function treeLayout(
   }
   const level = [0];
   for (let k = 1; k <= graph.maxDepth; k++)
-    level[k] = level[k - 1] + Math.max(levelGap, far[k - 1] - near[k] + gap);
+    level[k] =
+      level[k - 1] +
+      Math.max(levelGap, far[k - 1] - near[k] + siblingGap + sizing.gap);
 
-  const breadth = new Float64Array(count);
-  for (const i of graph.order) {
-    const n = graph.nodes[i];
-    breadth[i] = (n.parent >= 0 ? breadth[n.parent] : 0) + offset[i];
+  for (const n of graph.nodes) {
     const depth = level[n.depth] * (flip ? -1 : 1);
-    n.homeX = across ? depth : breadth[i];
-    n.homeY = across ? breadth[i] : depth;
+    n.homeX = across ? depth : breadth[n.index];
+    n.homeY = across ? breadth[n.index] : depth;
   }
   return { kind: "tree", direction };
 }
@@ -296,7 +272,26 @@ export const LAYOUTS = {
         120,
         1,
         16,
-        "Space between neighbouring footprints.",
+        "Space between neighbours with the same parent.",
+      ),
+      range(
+        "subtreeGap",
+        "Subtree gap",
+        0,
+        200,
+        1,
+        28,
+        "Space between neighbours with different parents, so separate branches read as separate. Separate trees get twice this.",
+      ),
+      select(
+        "parentAlign",
+        "Parent over",
+        [
+          { value: "centres", label: "Its children's centres" },
+          { value: "edges", label: "Its children's whole span" },
+        ],
+        "centres",
+        "Centre a parent between its first and last child's centres (the classic tidy tree), or between their outer edges, which counts their labels too.",
       ),
     ],
     physics: {

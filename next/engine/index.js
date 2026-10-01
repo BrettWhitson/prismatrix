@@ -12,4 +12,5 @@ export { edgePoints, fanJunctions, trim } from "./geometry.js";
 export { footprint, labelAnchor, labelAngle } from "./boxes.js";
 export { defaultsOf, resolve } from "./schema.js";
 export { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
+export { tidy } from "./tidy.js";
 export { GraphView } from "./view.js";
