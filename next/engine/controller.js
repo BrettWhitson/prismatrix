@@ -13,6 +13,7 @@
 import { ANIMATION_OPTIONS, EASINGS, approach } from "./animation.js";
 import { LINE, footprint, labelAngle, reach } from "./boxes.js";
 import { departures, withGhosts } from "./ghosts.js";
+import { REFERENCE_SCALE, withReferences } from "./references.js";
 import { Graph } from "./graph.js";
 import { GraphModel } from "./model.js";
 import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
@@ -112,6 +113,7 @@ export class GraphController {
     this.height = 1;
     this.dpr = 1;
     this.hover = -1;
+    this.hoverReference = false;
     this.pointer = null;
     this.tween = null;
     this.cameraTween = null;
@@ -181,6 +183,7 @@ export class GraphController {
   #fresh() {
     this.sim = new Simulation(this.graph);
     this.hover = -1;
+    this.hoverReference = false;
     this.pointer = null;
     this.shade = new Float32Array(this.graph.nodes.length).fill(1);
     this.appear = new Float32Array(this.graph.nodes.length).fill(1);
@@ -587,16 +590,16 @@ export class GraphController {
     }
     // Edge routing knows when a layout morph is running (radial step edges keep their arcs through it).
     this.routing.morphing = !!this.tween;
-    // Ghosts are drawn from a display graph; everything else (physics, hover, hit-testing) uses the real one.
-    let shown = {
-      graph: this.graph,
+    // References and ghosts are drawn from a display graph; everything else (physics, hover, hit-testing) uses the
+    // real one.
+    let shown = withReferences(this.graph, this.routing.references, {
       looks: this.looks,
       shade: this.shade,
       appear: this.appear,
-    };
+    });
     if (this.ghosts.length) {
       shown = withGhosts(
-        this.graph,
+        shown.graph,
         this.ghosts,
         shown,
         now,
@@ -685,20 +688,35 @@ export class GraphController {
     };
   }
 
-  /** The topmost node under a world point, or -1. */
-  hit(p) {
+  /**
+   * The topmost node under a world point, or -1. With `references`, a reference under the point counts as its
+   * ingredient (for hover: pointing at a reference lights up the ingredient and everything that uses it).
+   */
+  hit(p, { references = false } = {}) {
     const slack = 4 / this.camera.k;
     for (let i = this.graph.nodes.length - 1; i >= 0; i--) {
       const n = this.graph.nodes[i];
       if (Math.hypot(n.x - p.x, n.y - p.y) <= n.radius * 1.15 + slack) return i;
     }
+    if (references)
+      for (const ref of this.routing.references ?? []) {
+        const s = this.graph.nodes[ref.source];
+        const x = ref.x + s.x - s.homeX,
+          y = ref.y + s.y - s.homeY;
+        const r = this.graph.nodes[ref.target].radius * REFERENCE_SCALE;
+        if (Math.hypot(x - p.x, y - p.y) <= r * 1.15 + slack) return ref.target;
+      }
     return -1;
   }
 
-  /** What the pointer should look like: "grab" over a node, "grabbing" while dragging one, "" otherwise. */
+  /**
+   * What the pointer should look like: "grab" over a node, "grabbing" while dragging one, "default" over a
+   * reference (it lights up its ingredient but can't be dragged), "" otherwise.
+   */
   get cursor() {
     if (this.pointer?.node >= 0) return "grabbing";
-    return this.hover >= 0 ? "grab" : "";
+    if (this.hover < 0) return "";
+    return this.hoverReference ? "default" : "grab";
   }
 
   /** The node and, when static drags carry subtrees, everything below it. */
@@ -751,7 +769,10 @@ export class GraphController {
   pointerMove({ id = 1, x, y, time = this.clock() }) {
     const ptr = this.pointer;
     if (!ptr || ptr.id !== id) {
-      const h = this.hit(this.toWorld(x, y));
+      const p = this.toWorld(x, y);
+      const direct = this.hit(p);
+      const h = direct >= 0 ? direct : this.hit(p, { references: true });
+      this.hoverReference = direct < 0 && h >= 0;
       if (h !== this.hover) {
         this.hover = h;
         this.#changed();
@@ -814,6 +835,7 @@ export class GraphController {
   pointerLeave() {
     if (this.pointer || this.hover < 0) return;
     this.hover = -1;
+    this.hoverReference = false;
     this.#changed();
   }
 

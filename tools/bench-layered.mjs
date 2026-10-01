@@ -49,9 +49,13 @@ export function measure(model, layout = layeredLayout, options = {}) {
     ink = 0,
     drift = 0,
     longEdges = 0;
+  // A referenced edge is drawn to its reference, not all the way to the ingredient.
+  const referenced = new Map(
+    (routing.references ?? []).map((r) => [r.edge, { homeX: r.x, homeY: r.y }]),
+  );
   for (const e of g.edges) {
     const s = g.nodes[e.source],
-      t = g.nodes[e.target];
+      t = referenced.get(e) ?? g.nodes[e.target];
     const bends = routing.bends.get(e) ?? [];
     span += bends.length;
     const points = [[s.homeX, s.homeY], ...bends, [t.homeX, t.homeY]];
@@ -81,6 +85,7 @@ export function measure(model, layout = layeredLayout, options = {}) {
   return {
     nodes: g.nodes.length,
     edges: g.edges.length,
+    refs: routing.references?.length ?? 0,
     crossings: routing.crossings,
     span,
     ink: Math.round(ink),

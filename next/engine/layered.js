@@ -16,6 +16,11 @@
 //      Placement "median" is the older unweighted version.
 //   6. Edges follow their dummy nodes ("bends"), recorded per edge for the edge geometry.
 //
+// References (step 2b, on by default): a cross-link into an ingredient used by `shareMin` or more recipes, which
+// would cross two or more layers, ends at a reference instead: a chip one layer below its source, laid out like a
+// node (references.js draws it). Busy ingredients are what make dense recipe graphs a tangle; on the crafting
+// fixtures this removes 75–95% of crossings and over half the ink, for a wider drawing.
+//
 // Pure: no DOM. Measured with `npm run bench:merged`.
 
 import { TREE_LABEL_ANGLE, DEFAULT_SIZING } from "./layouts.js";
@@ -47,6 +52,8 @@ export function layeredLayout(
     ranking = "longest",
     ordering = "sifting",
     placement = "balanced",
+    references = "hubs",
+    shareMin = 3,
   } = {},
   sizing = DEFAULT_SIZING,
 ) {
@@ -119,14 +126,33 @@ export function layeredLayout(
   }
   const layerCount = n ? Math.max(...layerOf) + 1 : 0;
 
-  // ---- 3. dummies: every layer a long edge crosses gets one; layout nodes are the real ones then dummies
+  // ---- 2b. references: a cross-link into a busy shared ingredient (used by shareMin or more) that would cross
+  // layers ends instead at a reference to it, one layer below its source. Layout nodes: real nodes, then
+  // references (laid out like nodes, with their ingredient's footprint), then dummies.
   const lay = Array.from(layerOf); // layer per layout node
-  const upper = Array.from({ length: n }, () => []); // neighbours one layer up
-  const lower = Array.from({ length: n }, () => []);
+  const endOf = edges.map((_, ei) => to(ei)); // where each edge ends in the layout: its target or a reference
+  const refs = [];
+  if (references === "hubs") {
+    const uses = new Int32Array(n);
+    edges.forEach((e) => uses[e.target]++);
+    edges.forEach((e, ei) => {
+      if (e.tree || reversed[ei] || e.source === e.target) return;
+      if (uses[e.target] < shareMin) return;
+      if (layerOf[e.target] - layerOf[e.source] < 2) return;
+      endOf[ei] = n + refs.length;
+      lay.push(layerOf[e.source] + 1);
+      refs.push({ edge: ei, source: e.source, target: e.target });
+    });
+  }
+  const real = n + refs.length; // layout nodes that aren't dummies
+
+  // ---- 3. dummies: every layer a long edge crosses gets one
+  const upper = Array.from({ length: real }, () => []); // neighbours one layer up
+  const lower = Array.from({ length: real }, () => []);
   // How much each segment wants to be straight, parallel to upper and lower: long edges' inner segments most,
   // then their ends, then short edges; a tree edge (an ingredient's first recipe) four times its kind.
-  const upperWeight = Array.from({ length: n }, () => []);
-  const lowerWeight = Array.from({ length: n }, () => []);
+  const upperWeight = Array.from({ length: real }, () => []);
+  const lowerWeight = Array.from({ length: real }, () => []);
   const link = (a, b, w) => {
     lower[a].push(b);
     upper[b].push(a);
@@ -135,18 +161,18 @@ export function layeredLayout(
   };
   const chains = edges.map(() => []); // layout nodes along each edge, top to bottom
   // For sifting: each node is a block of its own, and each long edge's dummies are one block.
-  const blockOf = Array.from({ length: n }, (_, v) => v);
+  const blockOf = Array.from({ length: real }, (_, v) => v);
   edges.forEach((_, ei) => {
     const a = from(ei),
-      b = to(ei);
+      b = endOf[ei];
     if (a === b) return;
     const chain = [a];
     const boost = edges[ei].tree ? 4 : 1;
     let prev = a;
-    for (let k = layerOf[a] + 1; k < layerOf[b]; k++) {
+    for (let k = lay[a] + 1; k < lay[b]; k++) {
       const d = lay.length;
       lay.push(k);
-      blockOf.push(n + ei);
+      blockOf.push(real + ei);
       upper.push([]);
       lower.push([]);
       upperWeight.push([]);
@@ -160,7 +186,7 @@ export function layeredLayout(
     chains[ei] = chain;
   });
   const total = lay.length;
-  const isDummy = (v) => v >= n;
+  const isDummy = (v) => v >= real;
 
   // ---- 4. order: depth-first from the sources for a tree-like start, then barycenter sweeps
   let layers = Array.from({ length: layerCount }, () => []);
@@ -226,7 +252,7 @@ export function layeredLayout(
         upper,
         lower,
         block: blockOf,
-        blocks: n + edges.length,
+        blocks: real + edges.length,
       },
       { rounds: SIFT_ROUNDS, budget: SIFT_BUDGET },
     ).layers;
@@ -254,9 +280,13 @@ export function layeredLayout(
     near[node.index] = flip ? -b : a;
     far[node.index] = flip ? -a : b;
   }
+  refs.forEach(({ target }, k) => {
+    // A reference is drawn smaller than its ingredient, with the same label: the same footprint is close enough.
+    for (const side of [left, right, near, far]) side[n + k] = side[target];
+  });
   const gap = nodeGap + sizing.gap;
   const dummyHalf = 2;
-  for (let v = n; v < total; v++) left[v] = right[v] = dummyHalf;
+  for (let v = real; v < total; v++) left[v] = right[v] = dummyHalf;
   const separation = (a, b) =>
     right[a] + left[b] + (isDummy(a) && isDummy(b) ? gap / 2 : gap);
   const weight = (v) => (isDummy(v) ? 4 : 1); // long edges like to stay straight
@@ -359,7 +389,7 @@ export function layeredLayout(
   // Layer positions along depth: at least levelGap apart, further where footprints need it.
   const farOf = new Array(layerCount).fill(0),
     nearOf = new Array(layerCount).fill(0);
-  for (let v = 0; v < n; v++) {
+  for (let v = 0; v < real; v++) {
     farOf[lay[v]] = Math.max(farOf[lay[v]], far[v]);
     nearOf[lay[v]] = Math.min(nearOf[lay[v]], near[v]);
   }
@@ -386,6 +416,11 @@ export function layeredLayout(
     kind: "layered",
     direction,
     bends,
+    // Each reference: the edge it stands in for, and where it sits.
+    references: refs.map(({ edge, source, target }, k) => {
+      const [x, y] = place(n + k);
+      return { edge: edges[edge], source, target, x, y };
+    }),
     crossings: bestCrossings,
     initialCrossings,
     layerOf,

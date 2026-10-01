@@ -6,17 +6,24 @@ until the first stable release, continuing Prism's numbering.
 ## Unreleased (branch `ground-up`)
 
 A ground-up rebuild of the engine, in `next/`, beside the current one (`src/`, untouched). Work in progress: it
-draws with Canvas 2D for now, and isn't exported from the package yet.
+draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the package yet.
 
 - **Layouts**, each placing nodes by their real footprint (node plus label), and each with its own physics modes:
   - tree: contour-packed (Reingold–Tilford style) in any of four directions; static or elastic.
   - radial: leaf-weighted wedges, rings that grow until their nodes fit; static, elastic or floating.
+  - merged tree: a layered (Sugiyama) drawing for shared ingredients. Global sifting orders nodes and whole long
+    edges together; a weighted placement keeps long edges straight; busy shared ingredients get a reference chip
+    under each far-away recipe instead of a long edge (pointing at one lights up the ingredient). On the 642-node
+    crafting fixture: 15,601 crossings down to 1,190. Network simplex layering is an option.
 - **Physics:** friction in every mode, so anything moving eases to a full stop; throws; elastic springs to home with
   optional level or ring locks; floating with local repulsion, shape memory, drift and a settle time; node and
   label collision; a per-frame time budget so big graphs slow down rather than lock up.
 - **Edges:** straight, step (right angles in a tree, ring arcs in a radial) and fan; corner radius, taper, colour,
   opacity and ends, drawn as one layer so overlaps don't brighten.
 - **Nodes:** six shapes, sizing by subtree or depth, colouring by depth or branch, labels below, right or outward.
+- **Model and controller:** graphs are an immutable `GraphModel` (prismatrix-graph JSON, with per-node and
+  per-edge style); a whole view is a prismatrix-snapshot (`next/MODEL.md`). `GraphController` runs everything
+  without a DOM (tested headless); `GraphView` puts one on a canvas.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
   writes a rolling 30-second engine log to `logs/engine-stats.log`.
 
@@ -208,10 +215,10 @@ Floating graphs respond to small drags again, and radial ones don't spin.
   they're visited, with a pointer past each subtree, instead of a stack over scattered cells. The quadtree is also
   built with less overhead. Layouts are bit-identical to before and 1.6–2.7× faster.
 
-  | Nodes | Tree layout, before | After |
-  | --- | --- | --- |
-  | 3,000 | 0.8 s | 0.48 s |
-  | 10,000 | 4.6 s | 1.8 s |
+  | Nodes  | Tree layout, before | After  |
+  | ------ | ------------------- | ------ |
+  | 3,000  | 0.8 s               | 0.48 s |
+  | 10,000 | 4.6 s               | 1.8 s  |
 
 - **Floating graphs stay put.**
   - Grabbing a node and letting go without moving it no longer makes the graph drift. On big graphs, far-off parts
@@ -224,13 +231,13 @@ Floating graphs respond to small drags again, and radial ones don't spin.
 - **Floating layouts are 8–11× faster.** The rest correction now does the job of the long settle before showing a
   floating graph, so `settleWork` drops from 1,350,000 to 100,000.
 
-  | Nodes | Floating layout, before | After |
-  | --- | --- | --- |
-  | 1,000 | 1.9 s | 0.24 s |
-  | 3,000 | 6.4 s | 0.57 s |
+  | Nodes | Floating layout, before | After  |
+  | ----- | ----------------------- | ------ |
+  | 1,000 | 1.9 s                   | 0.24 s |
+  | 3,000 | 6.4 s                   | 0.57 s |
 
 - **`flowOf(settings)`**: how the laid-out graph flows, for whoever draws it. It returns `{ directional, axis,
-  rootSide, growth }`: whether levels run along an axis, which axis, a unit vector toward the root, and the tree's
+rootSide, growth }`: whether levels run along an axis, which axis, a unit vector toward the root, and the tree's
   growth direction. Renderers no longer interpret the layout settings themselves.
 
 ### 0.2.0 (2026-09-30)

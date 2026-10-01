@@ -505,6 +505,25 @@ export const LAYOUTS = {
         ],
         "balanced",
       ),
+      select(
+        "references",
+        "Busy shared ingredients",
+        [
+          { value: "hubs", label: "References under each user" },
+          { value: "off", label: "Long edges" },
+        ],
+        "hubs",
+        "An ingredient used by many recipes gets a small reference under each far-away recipe instead of a long edge.",
+      ),
+      range(
+        "shareMin",
+        "Busy from",
+        2,
+        20,
+        1,
+        3,
+        "How many recipes must use an ingredient before far-away ones get references.",
+      ),
     ],
     physics: {
       static: {},

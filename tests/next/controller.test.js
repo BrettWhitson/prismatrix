@@ -272,3 +272,47 @@ test("a snapshot restores the same graph, settings, camera and positions", () =>
   for (const n of c.graph.nodes)
     assert.ok(near(node(other.c, n.id), n, 0.01), n.id);
 });
+
+test("references are drawn as chips that follow their source, and pointing at one lights its ingredient", () => {
+  // root, a and d all use hub. root → hub is its tree edge (found first) and d → hub is short, so only a → hub,
+  // four layers long, gets a reference.
+  const nodes = ["root", "a", "b", "c", "d", "hub"].map((id) => ({ id }));
+  const edges = [
+    ["root", "a"],
+    ["a", "b"],
+    ["b", "c"],
+    ["c", "d"],
+    ["d", "hub"],
+    ["root", "hub"],
+    ["a", "hub"],
+  ].map(([source, target]) => ({ source, target }));
+  const { c, wait, now } = setup({ nodes, edges });
+  c.setLayout("merged", { references: "hubs", shareMin: 3 });
+  wait(1500);
+  const refs = c.routing.references;
+  assert.equal(refs.length, 1);
+  assert.equal(c.scene.graph.nodes.length, 6 + 1);
+  const chip = c.scene.graph.nodes[6];
+  assert.equal(c.scene.looks.shape[6], "ring");
+  assert.equal(c.scene.graph.nodes[chip.parent].id, "a");
+  // The referenced edge ends at the chip, at the same index.
+  const ei = c.graph.edges.indexOf(refs[0].edge);
+  assert.equal(c.scene.graph.edges[ei].target, 6);
+
+  // Drag the chip's source: the chip moves with it.
+  const source = c.graph.nodes[refs[0].source];
+  const before = { x: chip.x, y: chip.y };
+  const at = c.toScreen(source.x, source.y);
+  c.pointerDown({ ...at, time: now() });
+  c.pointerMove({ x: at.x + 40, y: at.y, time: now() });
+  wait(300);
+  c.pointerUp({ time: now() });
+  wait(50);
+  const moved = c.scene.graph.nodes[6];
+  assert.ok(Math.abs(moved.x - before.x - (source.x - source.homeX)) < 1);
+
+  // Pointing at a chip lights up its ingredient.
+  c.pointerMove(c.toScreen(moved.x, moved.y));
+  assert.equal(c.graph.nodes[c.hover].id, "hub");
+  assert.equal(c.cursor, "default");
+});

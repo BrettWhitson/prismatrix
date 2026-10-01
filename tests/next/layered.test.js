@@ -1,7 +1,9 @@
 // The merged tree: a layered drawing (Sugiyama) of a graph where nodes can have several parents.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { Graph } from "../../next/engine/graph.js";
+import { GraphModel } from "../../next/engine/model.js";
 import {
   countCrossings,
   layeredLayout,
@@ -313,5 +315,54 @@ test("sifting on its own: finds the uncrossed order of a swapped pair", () => {
   assert.equal(
     Math.sign(pos.get(0) - pos.get(1)),
     Math.sign(pos.get(3) - pos.get(2)),
+  );
+});
+
+test("references: far cross-links into busy ingredients end at a chip one layer below their source", () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const g = recipes(seed, 150, 60);
+    const routing = layeredLayout(g, { references: "hubs", shareMin: 3 });
+    const uses = new Int32Array(g.nodes.length);
+    for (const e of g.edges) uses[e.target]++;
+    const layerGap = (a, b) => b - a;
+    for (const ref of routing.references) {
+      const e = ref.edge;
+      assert.equal(e.source, ref.source);
+      assert.equal(e.target, ref.target);
+      assert.ok(!e.tree, "tree edges are never referenced");
+      assert.ok(uses[e.target] >= 3);
+      assert.ok(
+        layerGap(routing.layerOf[e.source], routing.layerOf[e.target]) >= 2,
+      );
+      assert.deepEqual(
+        routing.bends.get(e),
+        [],
+        "no bends: it's a one-layer edge now",
+      );
+      const s = g.nodes[e.source];
+      assert.ok(ref.y > s.homeY, "below its source");
+      assert.ok(ref.y < g.nodes[e.target].homeY, "above its ingredient");
+    }
+    const off = layeredLayout(recipes(seed, 150, 60), { references: "off" });
+    assert.equal(off.references.length, 0);
+    assert.ok(routing.crossings <= off.crossings, `seed ${seed}`);
+  }
+});
+
+test("references remove most crossings on the busy crafting fixture", () => {
+  const model = GraphModel.from(
+    JSON.parse(
+      readFileSync(
+        new URL("../fixtures/graphs/crafting-heavy-hubs.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+  );
+  const lines = layeredLayout(new Graph(model), { references: "off" });
+  const refs = layeredLayout(new Graph(model), { references: "hubs" });
+  assert.ok(refs.references.length > 0);
+  assert.ok(
+    refs.crossings < lines.crossings / 4,
+    `${refs.crossings} vs ${lines.crossings}`,
   );
 });
