@@ -12,6 +12,7 @@ import {
 } from "../engine/index.js";
 import { bool, range, select } from "../engine/schema.js";
 import { startTelemetry } from "./telemetry.js";
+import { SCENARIOS, playScenario } from "./scenarios.js";
 
 // Bumped when option meanings change, so old settings don't carry over.
 const STORAGE_KEY = "prismatrix-sandbox-2";
@@ -226,8 +227,13 @@ function applyAll() {
 
 const sections = document.getElementById("sections");
 const openSections = new Set(
-  stored.open ?? ["View", "Graph", "Layout", "Physics"],
+  stored.open ?? ["Scenarios", "View", "Graph", "Layout", "Physics"],
 );
+// Scenarios are new: open them once for anyone whose remembered sections predate them.
+if (stored.open && !stored.open.includes("Scenarios") && !stored.sawScenarios) {
+  openSections.add("Scenarios");
+  settings.sawScenarios = true;
+}
 
 function section(title, build) {
   const details = document.createElement("details");
@@ -359,8 +365,54 @@ function controls(body, schema, values, after) {
   }
 }
 
+// ---- scenarios -----------------------------------------------------------------------------------------------
+
+const captionBox = document.getElementById("caption");
+const caption = (text) => {
+  captionBox.textContent = text;
+  captionBox.hidden = !text;
+};
+let playing = null; // { name, stop: AbortController }
+
+/** Play a scenario; when it ends (or is stopped), put the panel's own settings back. */
+async function play(name) {
+  playing?.stop.abort();
+  const stop = new AbortController();
+  playing = { name, stop };
+  render();
+  const result = await playScenario(view, SCENARIOS[name], {
+    caption,
+    log: log.event,
+    signal: stop.signal,
+  });
+  if (playing?.stop !== stop) return; // another one started
+  playing = null;
+  if (result instanceof Error) console.error(result);
+  applyAll();
+  render();
+}
+
 function render() {
   sections.replaceChildren(
+    section("Scenarios", (body) => {
+      for (const [name, scenario] of Object.entries(SCENARIOS)) {
+        const row = document.createElement("div");
+        row.className = "scenario";
+        const label = document.createElement("label");
+        label.textContent = scenario.label;
+        const button = document.createElement("button");
+        const running = playing?.name === name;
+        button.textContent = running ? "Stop" : "Play";
+        button.addEventListener("click", () =>
+          running ? playing.stop.abort() : play(name),
+        );
+        const hint = document.createElement("div");
+        hint.className = "hint";
+        hint.textContent = `${scenario.description} Your settings come back when it ends.`;
+        row.append(label, button, hint);
+        body.append(row);
+      }
+    }),
     section("View", (body) => {
       body.append(
         control(
@@ -535,6 +587,7 @@ document.getElementById("defaults").addEventListener("click", () => {
 
 // Handy from the console.
 window.view = view;
+window.playScenario = play;
 
 render();
 applyAll();

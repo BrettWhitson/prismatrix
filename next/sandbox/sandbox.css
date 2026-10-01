@@ -217,6 +217,34 @@ canvas {
   bottom: 12px;
 }
 
+#caption {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  max-width: min(640px, calc(100% - 32px));
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(21 24 33 / 90%);
+  color: var(--text);
+  font-size: 15px;
+  text-align: center;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.scenario {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.scenario .hint {
+  grid-column: 1 / -1;
+}
+
 @media (width <= 700px) {
   body {
     flex-direction: column-reverse;
