@@ -2,21 +2,34 @@
 // parents: a crafting tree with its shared ingredients merged, so each appears once.
 //
 //   1. Cycles: a depth-first search reverses any edge that closes a cycle (for layout only).
-//   2. Layers: longest path from the sources, so every node sits below everything that points to it.
+//   2. Layers: longest path from the sources, so every node sits just below the deepest thing that uses it and
+//      depth reads as crafting steps. Or (ranking "simplex") network simplex (Gansner et al. 1993), which moves
+//      nodes down next to what they're made from so long edges are fewer, keeping tree edges short where it can.
 //   3. Long edges: a dummy node on every layer an edge crosses, so edges bend between nodes, not through them.
-//   4. Order within layers: barycenter sweeps down and up, each followed by transposition (swapping neighbours
-//      while that removes crossings), keeping the order with the fewest crossings.
-//   5. Positions along each layer: nodes are pulled towards the median of their neighbours, in alternating
-//      passes, and each layer is put back in order without overlaps by a 1-D projection (isotonic regression).
+//   4. Order within layers: barycenter sweeps down and up; then global sifting (sifting.js) moves each node and
+//      each long edge as a whole to wherever it crosses least. Ordering "barycenter" instead follows each sweep
+//      with transposition (swapping neighbours while that removes crossings).
+//   5. Positions along each layer ("balanced"): every segment pulls its ends into line, weighted so long edges'
+//      inner segments pull hardest and tree edges more than cross-links; each node goes to the weighted median of
+//      its neighbours and a 1-D projection (isotonic regression) keeps each layer in order without overlaps. This
+//      lands within a few percent of the exact optimum (Gansner's auxiliary-graph LP) at a tenth of the cost.
+//      Placement "median" is the older unweighted version.
 //   6. Edges follow their dummy nodes ("bends"), recorded per edge for the edge geometry.
 //
-// Pure: no DOM. Gansner et al. 1993 and Brandes & Köpf 2001 are the refinements to reach for later (network
-// simplex layering, straighter long edges).
+// Pure: no DOM. Measured with `npm run bench:merged`.
 
 import { TREE_LABEL_ANGLE, DEFAULT_SIZING } from "./layouts.js";
+import { networkSimplex } from "./simplex.js";
+import { globalSifting } from "./sifting.js";
 
 const ORDER_SWEEPS = 12;
 const PLACE_PASSES = 8;
+const BALANCE_PASSES = 12;
+const SIFT_ROUNDS = 4;
+// Layering keeps tree edges (an ingredient's first recipe) this much harder to stretch than cross-links, so depth
+// still reads as crafting steps and only shared ingredients' extra edges grow long.
+const TREE_RANK_WEIGHT = 8;
+const SIFT_BUDGET = 60; // ms: a very large graph stops sifting early rather than stalling
 
 /**
  * @param {import("./graph.js").Graph} graph
@@ -27,7 +40,14 @@ const PLACE_PASSES = 8;
  */
 export function layeredLayout(
   graph,
-  { direction = "TB", levelGap = 90, nodeGap = 16 } = {},
+  {
+    direction = "TB",
+    levelGap = 90,
+    nodeGap = 16,
+    ranking = "longest",
+    ordering = "sifting",
+    placement = "balanced",
+  } = {},
   sizing = DEFAULT_SIZING,
 ) {
   const { nodes, edges } = graph;
@@ -68,9 +88,19 @@ export function layeredLayout(
   const from = (ei) => (reversed[ei] ? edges[ei].target : edges[ei].source);
   const to = (ei) => (reversed[ei] ? edges[ei].source : edges[ei].target);
 
-  // ---- 2. layers: longest path from the sources (Kahn's order)
-  const layerOf = new Int32Array(n);
-  {
+  // ---- 2. layers: network simplex (fewest layers crossed in all), or longest path from the sources
+  let layerOf = new Int32Array(n);
+  if (ranking === "simplex") {
+    const kept = edges.flatMap((_, ei) => (from(ei) === to(ei) ? [] : [ei]));
+    layerOf = networkSimplex(
+      n,
+      kept.map(from),
+      kept.map(to),
+      kept.map(() => 1),
+      kept.map((ei) => (edges[ei].tree ? TREE_RANK_WEIGHT : 1)),
+      { maxPivots: 20 * n + 100 },
+    ).rank;
+  } else {
     const indegree = new Int32Array(n);
     const down = Array.from({ length: n }, () => []);
     edges.forEach((_, ei) => {
@@ -93,25 +123,39 @@ export function layeredLayout(
   const lay = Array.from(layerOf); // layer per layout node
   const upper = Array.from({ length: n }, () => []); // neighbours one layer up
   const lower = Array.from({ length: n }, () => []);
+  // How much each segment wants to be straight, parallel to upper and lower: long edges' inner segments most,
+  // then their ends, then short edges; a tree edge (an ingredient's first recipe) four times its kind.
+  const upperWeight = Array.from({ length: n }, () => []);
+  const lowerWeight = Array.from({ length: n }, () => []);
+  const link = (a, b, w) => {
+    lower[a].push(b);
+    upper[b].push(a);
+    lowerWeight[a].push(w);
+    upperWeight[b].push(w);
+  };
   const chains = edges.map(() => []); // layout nodes along each edge, top to bottom
+  // For sifting: each node is a block of its own, and each long edge's dummies are one block.
+  const blockOf = Array.from({ length: n }, (_, v) => v);
   edges.forEach((_, ei) => {
     const a = from(ei),
       b = to(ei);
     if (a === b) return;
     const chain = [a];
+    const boost = edges[ei].tree ? 4 : 1;
     let prev = a;
     for (let k = layerOf[a] + 1; k < layerOf[b]; k++) {
       const d = lay.length;
       lay.push(k);
+      blockOf.push(n + ei);
       upper.push([]);
       lower.push([]);
-      lower[prev].push(d);
-      upper[d].push(prev);
+      upperWeight.push([]);
+      lowerWeight.push([]);
+      link(prev, d, (prev === a ? 2 : 8) * boost);
       chain.push(d);
       prev = d;
     }
-    lower[prev].push(b);
-    upper[b].push(prev);
+    link(prev, b, (prev === a ? 1 : 2) * boost);
     chain.push(b);
     chains[ei] = chain;
   });
@@ -142,7 +186,9 @@ export function layeredLayout(
   const initialCrossings = countCrossings(layers, lower, pos);
   let best = layers.map((l) => l.slice());
   let bestCrossings = initialCrossings;
-  for (let sweep = 0; sweep < ORDER_SWEEPS && bestCrossings > 0; sweep++) {
+  // Sifting does better from the depth-first order alone; barycenter sweeps are the cheaper alternative.
+  const sweeps = ORDER_SWEEPS;
+  for (let sweep = 0; sweep < sweeps && bestCrossings > 0; sweep++) {
     const downward = sweep % 2 === 0;
     const range = downward
       ? [...Array(layerCount).keys()].slice(1)
@@ -163,7 +209,7 @@ export function layeredLayout(
       list.sort((a, b) => key.get(a) - key.get(b) || pos[a] - pos[b]);
       index(list);
     }
-    transpose(layers, upper, lower, pos);
+    if (ordering !== "sifting") transpose(layers, upper, lower, pos);
     const crossings = countCrossings(layers, lower, pos);
     if (crossings < bestCrossings) {
       bestCrossings = crossings;
@@ -172,6 +218,25 @@ export function layeredLayout(
   }
   layers = best;
   layers.forEach(index);
+  if (ordering === "sifting" && bestCrossings > 0) {
+    const sifted = globalSifting(
+      {
+        layers,
+        layer: lay,
+        upper,
+        lower,
+        block: blockOf,
+        blocks: n + edges.length,
+      },
+      { rounds: SIFT_ROUNDS, budget: SIFT_BUDGET },
+    ).layers;
+    sifted.forEach(index);
+    const crossings = countCrossings(sifted, lower, pos);
+    if (crossings <= bestCrossings) {
+      layers = sifted;
+      bestCrossings = crossings;
+    } else layers.forEach(index);
+  }
 
   // ---- 5. positions along each layer
   const left = new Float64Array(total),
@@ -209,7 +274,58 @@ export function layeredLayout(
     const m = values.length >> 1;
     return values.length % 2 ? values[m] : (values[m - 1] + values[m]) / 2;
   };
-  for (let pass = 0; pass < PLACE_PASSES; pass++) {
+  /** The weighted median of neighbours' positions: where the weighted sum of distances to them is least. */
+  const weightedMedian = (list, weights) => {
+    const order = list.map((_, i) => i).sort((i, j) => x[list[i]] - x[list[j]]);
+    let total = 0;
+    for (const w of weights) total += w;
+    let run = 0;
+    for (let k = 0; k < order.length; k++) {
+      run += weights[order[k]];
+      if (run * 2 > total + 1e-9) return x[list[order[k]]];
+      if (Math.abs(run * 2 - total) <= 1e-9)
+        return (x[list[order[k]]] + x[list[order[k + 1]]]) / 2;
+    }
+    return x[list[order[order.length - 1]]];
+  };
+  if (placement === "balanced") {
+    // Minimise the weighted sideways travel of every segment, layer by layer: each node wants the weighted median
+    // of its neighbours; the projection keeps the layer in order with its gaps, giving way where the weight is
+    // least. The first passes pull from one side at a time (a quick start), the rest from both.
+    for (let pass = 0; pass < BALANCE_PASSES; pass++) {
+      const downward = pass % 2 === 0;
+      const both = pass >= 2;
+      const order = downward
+        ? [...Array(layerCount).keys()]
+        : [...Array(layerCount).keys()].reverse();
+      for (const k of order) {
+        const list = layers[k];
+        const pull = new Float64Array(list.length);
+        const desired = list.map((v, i) => {
+          const near = both
+            ? [...upper[v], ...lower[v]]
+            : downward
+              ? upper[v]
+              : lower[v];
+          const weights = both
+            ? [...upperWeight[v], ...lowerWeight[v]]
+            : downward
+              ? upperWeight[v]
+              : lowerWeight[v];
+          for (const w of weights) pull[i] += w;
+          if (!near.length) {
+            pull[i] = 0.01;
+            return x[v];
+          }
+          return weightedMedian(near, weights);
+        });
+        const seps = list.slice(1).map((v, i) => separation(list[i], v));
+        const placed = project(desired, seps, pull);
+        list.forEach((v, i) => (x[v] = placed[i]));
+      }
+    }
+  }
+  for (let pass = 0; placement === "median" && pass < PLACE_PASSES; pass++) {
     const last = pass === PLACE_PASSES - 1;
     const downward = pass % 2 === 0;
     const order = downward

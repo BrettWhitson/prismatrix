@@ -10,6 +10,7 @@
 //   crossings   edge crossings between neighbouring layers (as the layout counts them)
 //   span        total layers crossed by edges beyond the first (dummy nodes): long edges cost this much
 //   drift       long edges' sideways travel beyond the straight line between their ends, per long edge (px)
+//   ink         total length of every edge as drawn (straight segments through its bends), px
 //   centring    mean distance of a parent from the middle of its children (px)
 //   width       drawing width (px); height (px)
 //   ms          layout time
@@ -45,6 +46,7 @@ export function measure(model, layout = layeredLayout, options = {}) {
   const routing = layout(g, options, sizing);
   const ms = performance.now() - start;
   let span = 0,
+    ink = 0,
     drift = 0,
     longEdges = 0;
   for (const e of g.edges) {
@@ -52,10 +54,15 @@ export function measure(model, layout = layeredLayout, options = {}) {
       t = g.nodes[e.target];
     const bends = routing.bends.get(e) ?? [];
     span += bends.length;
+    const points = [[s.homeX, s.homeY], ...bends, [t.homeX, t.homeY]];
+    for (let i = 1; i < points.length; i++)
+      ink += Math.hypot(
+        points[i][0] - points[i - 1][0],
+        points[i][1] - points[i - 1][1],
+      );
     if (!bends.length) continue;
     longEdges++;
     // Sideways travel along the edge beyond what going straight from end to end needs.
-    const points = [[s.homeX, s.homeY], ...bends, [t.homeX, t.homeY]];
     let travel = 0;
     for (let i = 1; i < points.length; i++)
       travel += Math.abs(points[i][0] - points[i - 1][0]);
@@ -76,6 +83,7 @@ export function measure(model, layout = layeredLayout, options = {}) {
     edges: g.edges.length,
     crossings: routing.crossings,
     span,
+    ink: Math.round(ink),
     drift: Math.round(longEdges ? drift / longEdges : 0),
     centring: Math.round(parents ? centring / parents : 0),
     width: Math.round(b.maxX - b.minX),

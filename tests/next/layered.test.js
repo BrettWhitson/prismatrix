@@ -9,6 +9,8 @@ import {
 } from "../../next/engine/layered.js";
 import { edgeRoute } from "../../next/engine/geometry.js";
 import { lineage } from "../../next/engine/render.js";
+import { networkSimplex } from "../../next/engine/simplex.js";
+import { globalSifting } from "../../next/engine/sifting.js";
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -209,4 +211,107 @@ test("2,000 nodes with shared ingredients lay out in well under a second", () =>
   layeredLayout(g, {}, sizing);
   const ms = performance.now() - start;
   assert.ok(ms < 1000, `${Math.round(ms)} ms`);
+});
+
+test("network simplex: feasible, never longer in total than longest path, optimal on a known case", () => {
+  // a → b → c → d, and a → d: longest path is already optimal (total 4).
+  let r = networkSimplex(
+    4,
+    [0, 1, 2, 0],
+    [1, 2, 3, 3],
+    [1, 1, 1, 1],
+    [1, 1, 1, 1],
+  );
+  assert.deepEqual([...r.rank], [0, 1, 2, 3]);
+  assert.ok(r.optimal);
+  // Source s only feeds the bottom node: simplex brings it down next to it (longest path leaves it at the top).
+  // a → b → c, s → c
+  r = networkSimplex(4, [0, 1, 3], [1, 2, 2], [1, 1, 1], [1, 1, 1]);
+  assert.equal(r.rank[3], r.rank[2] - 1);
+  // Random DAGs: every edge at least its minimum, total no worse than longest path.
+  for (let seed = 1; seed <= 20; seed++) {
+    const g = recipes(seed, 80, 30);
+    const tail = g.edges.map((e) => e.source),
+      head = g.edges.map((e) => e.target);
+    const ones = tail.map(() => 1);
+    const { rank, optimal } = networkSimplex(
+      g.nodes.length,
+      tail,
+      head,
+      ones,
+      ones,
+    );
+    assert.ok(optimal);
+    let simplexTotal = 0;
+    tail.forEach((a, i) => {
+      assert.ok(rank[head[i]] - rank[a] >= 1);
+      simplexTotal += rank[head[i]] - rank[a];
+    });
+    const longest = layeredLayout(recipes(seed, 80, 30), {
+      ranking: "longest",
+    }).layerOf;
+    const longestTotal = tail.reduce(
+      (s, a, i) => s + longest[head[i]] - longest[a],
+      0,
+    );
+    assert.ok(simplexTotal <= longestTotal, `seed ${seed}`);
+  }
+});
+
+test("simplex layering leaves fewer long edges than longest path", () => {
+  let simplex = 0,
+    longest = 0;
+  for (let seed = 1; seed <= 10; seed++) {
+    const count = (opts) =>
+      [...layeredLayout(recipes(seed, 120, 25), opts).bends.values()].reduce(
+        (s, b) => s + b.length,
+        0,
+      );
+    simplex += count({ ranking: "simplex" });
+    longest += count({ ranking: "longest" });
+  }
+  assert.ok(simplex < longest * 0.95, `${simplex} vs ${longest}`);
+});
+
+test("global sifting keeps each long edge in one place and doesn't add crossings", () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const bary = layeredLayout(recipes(seed, 120, 25), {
+      ordering: "barycenter",
+    });
+    const g = recipes(seed, 120, 25);
+    const sifted = layeredLayout(g, { ordering: "sifting" });
+    assert.ok(sifted.crossings <= bary.crossings * 1.05, `seed ${seed}`);
+    // A long edge's bends never swap sides with another long edge's between layers: check pairs that share layers.
+    const chains = [...sifted.bends.values()].filter((b) => b.length > 1);
+    for (let i = 0; i < chains.length; i++)
+      for (let j = i + 1; j < chains.length; j++) {
+        const byY = (c) => new Map(c.map(([x, y]) => [Math.round(y), x]));
+        const a = byY(chains[i]),
+          b = byY(chains[j]);
+        const sides = new Set();
+        for (const [y, x] of a)
+          if (b.has(y)) sides.add(Math.sign(x - b.get(y)));
+        assert.ok(sides.size <= 1, `seed ${seed}: chains ${i} and ${j} swap`);
+      }
+  }
+});
+
+test("sifting on its own: finds the uncrossed order of a swapped pair", () => {
+  // Layer 0: a, b. Layer 1: c, d. Edges a → d, b → c cross; sifting fixes it.
+  const result = globalSifting({
+    layers: [
+      [0, 1],
+      [2, 3],
+    ],
+    layer: [0, 0, 1, 1],
+    upper: [[], [], [1], [0]],
+    lower: [[3], [2], [], []],
+    block: [0, 1, 2, 3],
+    blocks: 4,
+  });
+  const pos = new Map(result.layers.flatMap((l) => l.map((v, i) => [v, i])));
+  assert.equal(
+    Math.sign(pos.get(0) - pos.get(1)),
+    Math.sign(pos.get(3) - pos.get(2)),
+  );
 });

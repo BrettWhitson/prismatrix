@@ -476,6 +476,35 @@ export const LAYOUTS = {
         16,
         "Space between neighbours on a layer.",
       ),
+      select(
+        "ranking",
+        "Layers",
+        [
+          { value: "longest", label: "By depth from the top" },
+          { value: "simplex", label: "Fewest long edges" },
+        ],
+        "longest",
+        "Fewest long edges lets a node sit lower, next to what it's made from.",
+      ),
+      select(
+        "ordering",
+        "Ordering",
+        [
+          { value: "sifting", label: "Global sifting" },
+          { value: "barycenter", label: "Barycenter (faster)" },
+        ],
+        "sifting",
+        "How nodes are ordered along each layer to cut crossings.",
+      ),
+      select(
+        "placement",
+        "Placement",
+        [
+          { value: "balanced", label: "Balanced (straight long edges)" },
+          { value: "median", label: "Median" },
+        ],
+        "balanced",
+      ),
     ],
     physics: {
       static: {},
