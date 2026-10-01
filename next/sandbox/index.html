@@ -20,6 +20,26 @@
           </button>
           <button id="defaults" title="Forget every setting">Defaults</button>
         </div>
+        <div class="actions">
+          <button
+            id="snapshot"
+            title="Save the graph, settings and positions to logs/snapshots"
+          >
+            Snapshot
+          </button>
+          <button
+            id="load"
+            title="Show a saved snapshot (prismatrix-snapshot JSON)"
+          >
+            Load…
+          </button>
+          <input
+            id="load-file"
+            type="file"
+            accept=".json,application/json"
+            hidden
+          />
+        </div>
       </header>
       <div id="sections"></div>
     </aside>

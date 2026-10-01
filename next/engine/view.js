@@ -5,6 +5,8 @@ import { ANIMATION_OPTIONS, EASINGS, approach } from "./animation.js";
 import { LINE, footprint, labelAngle, reach } from "./boxes.js";
 import { departures, withGhosts } from "./ghosts.js";
 import { Graph } from "./graph.js";
+import { GraphModel } from "./model.js";
+import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
 import { CanvasRenderer, lineage, nodeLooks } from "./render.js";
@@ -125,14 +127,17 @@ export class GraphView {
   }
 
   /**
-   * Replace the graph. The first graph grows into its layout; after that the change morphs: nodes that are still
-   * there glide from where they are to their new place, new ones arrive as the animation's `enter` setting says,
-   * and the camera eases to the new framing (unless it was moved by hand).
+   * Replace the graph: a GraphModel, prismatrix-graph JSON, or plain `{ nodes, edges }`. The first graph grows into
+   * its layout; after that the change morphs: nodes that are still there glide from where they are to their new
+   * place, new ones arrive as the animation's `enter` setting says, removed ones fold back into their family, and
+   * the camera eases to the new framing (unless it was moved by hand). Problems in the input (a duplicate id, an
+   * edge to a missing node) are left out and listed in `view.model.issues`.
    */
-  setGraph({ nodes, edges }) {
+  setGraph(input) {
+    const model = GraphModel.from(input);
     const previous = this.graph.nodes.length ? this.graph : null;
     const previousLooks = this.looks;
-    this.graph = new Graph(nodes, edges);
+    this.graph = new Graph(model);
     // Nodes that left fold back into what's left of their family; ghosts still leaving from an earlier change
     // carry on (unless their node came back).
     const now = performance.now();
@@ -153,15 +158,74 @@ export class GraphView {
       fit: !previous ? "instant" : this.framed ? "animate" : null,
       arrive: previous ?? false,
     });
+    const change = previous ? model.diff(previous.model) : null;
     this.#emit("graph", {
-      nodes: this.graph.nodes.length,
-      edges: this.graph.edges.length,
-      roots: this.graph.roots.length,
-      depth: this.graph.maxDepth,
-      kept: previous
-        ? this.graph.nodes.filter((n) => previous.byId.has(n.id)).length
-        : 0,
+      ...model.stats(),
+      ...(change && {
+        added: change.nodesAdded.length,
+        removed: change.nodesRemoved.length,
+        kept: change.nodesKept.length,
+      }),
     });
+    for (const issue of model.issues) this.#emit("graphIssue", issue);
+  }
+
+  /** The graph shown, as an immutable GraphModel. */
+  get model() {
+    return this.graph.model;
+  }
+
+  /**
+   * Everything needed to show this view again exactly: the graph, settings, camera and every node's layout state
+   * (see snapshot.js and next/MODEL.md).
+   */
+  snapshot(note = "") {
+    return takeSnapshot(
+      {
+        graph: this.graph,
+        settings: {
+          layout: this.layout,
+          layoutOptions: this.layoutOpts,
+          physics: this.mode,
+          physicsOptions: this.modeOpts,
+          node: this.node,
+          edge: this.edge,
+          animation: this.anim,
+          renderer: this.renderer?.name,
+        },
+        camera: this.camera,
+      },
+      note,
+    );
+  }
+
+  /** Show a snapshot: its graph, settings, camera and node positions, as they were (no morph). */
+  restore(snapshot) {
+    const model = snapshotModel(snapshot);
+    const { settings = {} } = snapshot;
+    if (settings.animation) this.setAnimation(settings.animation);
+    if (settings.node) this.setNodeStyle(settings.node);
+    if (settings.edge) this.setEdgeStyle(settings.edge);
+    if (settings.layout)
+      this.setLayout(settings.layout, settings.layoutOptions);
+    if (settings.physics)
+      this.setPhysics(settings.physics, settings.physicsOptions);
+    this.ghosts = [];
+    this.graph = new Graph(model);
+    this.sim = new Simulation(this.graph);
+    this.hover = -1;
+    this.shade = new Float32Array(this.graph.nodes.length).fill(1);
+    this.appear = new Float32Array(this.graph.nodes.length).fill(1);
+    this.#relayout({ fit: null });
+    applyState(this.graph, snapshot.state ?? {});
+    this.tween = null;
+    if (snapshot.camera) this.camera = { ...snapshot.camera };
+    this.cameraTween = null;
+    this.framed = false;
+    this.sim.wake();
+    this.version++;
+    this.#wake();
+    this.#emit("restore", { nodes: model.size, time: snapshot.time });
   }
 
   /** How things move between states: see ANIMATION_OPTIONS. */

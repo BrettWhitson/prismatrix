@@ -60,6 +60,10 @@ h1 span {
   gap: 6px;
 }
 
+.actions + .actions {
+  margin-top: 6px;
+}
+
 button {
   flex: 1;
   padding: 5px 8px;

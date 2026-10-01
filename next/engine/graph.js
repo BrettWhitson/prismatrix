@@ -1,13 +1,19 @@
-// The graph model: nodes and directed edges, read as a forest so tree-shaped layouts have a parent for every node.
+// The engine's working graph: one GraphModel (model.js) plus the layout state the engine moves around.
 //
-// Every node carries its live position (x, y), velocity (vx, vy) and the position its layout wants (homeX, homeY).
-// Layouts write homes; physics moves x/y; the renderer reads x/y.
+// The model says what the graph is (ids, labels, data, edges) and never changes. This working copy gives every
+// node an object the layouts, physics and renderers share: its place in the model's forest (parent, children,
+// depth…) and its live layout state: position (x, y), velocity (vx, vy), where its layout wants it (homeX, homeY),
+// and what the view adds (labelAngle, radius, box). Layouts write homes; physics moves x/y; renderers read x/y.
+// A snapshot (snapshot.js) records that state by id.
+
+import { GraphModel } from "./model.js";
 
 /**
  * @typedef {object} Node
  * @property {string} id
  * @property {string} label
- * @property {number} index     position in graph.nodes
+ * @property {object} data      the model node's data (frozen)
+ * @property {number} index     position in graph.nodes (the same as in the model)
  * @property {number} x
  * @property {number} y
  * @property {number} vx
@@ -23,21 +29,29 @@
 
 /**
  * @typedef {object} Edge
+ * @property {string} id     the model edge's id
  * @property {number} source index of the source node
  * @property {number} target index of the target node
  * @property {boolean} tree  true when this edge is the target's parent link in the forest
+ * @property {object} data   the model edge's data (frozen)
  */
 
 export class Graph {
   /**
-   * @param {{ id: string | number, label?: string }[]} nodes
-   * @param {{ source: string | number, target: string | number }[]} edges
+   * @param {GraphModel | { id: string | number, label?: string, data?: object }[]} [nodes] a model, or nodes
+   * @param {{ source: string | number, target: string | number, id?: string, data?: object }[]} [edges]
    */
   constructor(nodes = [], edges = []) {
+    /** @type {GraphModel} */
+    this.model =
+      nodes instanceof GraphModel ? nodes : GraphModel.from({ nodes, edges });
+    const model = this.model;
+    const forest = model.forest();
     /** @type {Node[]} */
-    this.nodes = nodes.map((n, index) => ({
-      id: String(n.id),
-      label: n.label ?? String(n.id),
+    this.nodes = model.nodes.map((m, index) => ({
+      id: m.id,
+      label: m.label,
+      data: m.data,
       index,
       x: 0,
       y: 0,
@@ -45,81 +59,30 @@ export class Graph {
       vy: 0,
       homeX: 0,
       homeY: 0,
-      parent: -1,
-      children: [],
-      depth: 0,
-      leaves: 1,
-      descendants: 0,
+      parent: forest.parent[index],
+      children: forest.children[index].slice(),
+      depth: forest.depth[index],
+      leaves: forest.leaves[index],
+      descendants: forest.descendants[index],
     }));
     /** @type {Map<string, Node>} */
     this.byId = new Map(this.nodes.map((n) => [n.id, n]));
     /** @type {Edge[]} */
-    this.edges = [];
-    for (const e of edges) {
-      const s = this.byId.get(String(e.source));
-      const t = this.byId.get(String(e.target));
-      if (!s || !t || s === t) continue;
-      this.edges.push({ source: s.index, target: t.index, tree: false });
-    }
-    /** @type {number[][]} per node, the indices of the edges out of it and into it */
-    this.outgoing = this.nodes.map(() => []);
-    this.incoming = this.nodes.map(() => []);
-    this.edges.forEach((e, i) => {
-      this.outgoing[e.source].push(i);
-      this.incoming[e.target].push(i);
-    });
+    this.edges = model.edges.map((e, i) => ({
+      id: e.id,
+      source: model.ends[i][0],
+      target: model.ends[i][1],
+      tree: !!forest.tree[i],
+      data: e.data,
+    }));
+    /** @type {ReadonlyArray<ReadonlyArray<number>>} per node, the indices of the edges out of it and into it */
+    this.outgoing = model.outgoing;
+    this.incoming = model.incoming;
     /** @type {number[]} roots of the forest, in the order they were found */
-    this.roots = [];
+    this.roots = forest.roots;
     /** @type {number[]} every node, parents before children (breadth first per root) */
-    this.order = [];
-    this.maxDepth = 0;
-    this.#buildForest();
-  }
-
-  /** Breadth-first from each node nothing points at, then from anything left over (cycles), first edge wins. */
-  #buildForest() {
-    const count = this.nodes.length;
-    const out = Array.from({ length: count }, () => []);
-    const indegree = new Array(count).fill(0);
-    this.edges.forEach((e, i) => {
-      out[e.source].push(i);
-      indegree[e.target]++;
-    });
-    const seen = new Uint8Array(count);
-    const grow = (root) => {
-      seen[root] = 1;
-      this.roots.push(root);
-      const queue = [root];
-      for (let head = 0; head < queue.length; head++) {
-        const at = queue[head];
-        this.order.push(at);
-        for (const ei of out[at]) {
-          const edge = this.edges[ei];
-          if (seen[edge.target]) continue;
-          seen[edge.target] = 1;
-          edge.tree = true;
-          const child = this.nodes[edge.target];
-          child.parent = at;
-          child.depth = this.nodes[at].depth + 1;
-          this.nodes[at].children.push(child.index);
-          queue.push(child.index);
-        }
-      }
-    };
-    for (let i = 0; i < count; i++) if (indegree[i] === 0) grow(i);
-    for (let i = 0; i < count; i++) if (!seen[i]) grow(i);
-
-    for (let k = this.order.length - 1; k >= 0; k--) {
-      const node = this.nodes[this.order[k]];
-      if (node.children.length) {
-        node.leaves = 0;
-        for (const c of node.children) {
-          node.leaves += this.nodes[c].leaves;
-          node.descendants += this.nodes[c].descendants + 1;
-        }
-      }
-      if (node.depth > this.maxDepth) this.maxDepth = node.depth;
-    }
+    this.order = forest.order;
+    this.maxDepth = forest.maxDepth;
   }
 
   /** The bounding box of the live positions, or of the homes. */

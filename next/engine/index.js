@@ -14,4 +14,12 @@ export { defaultsOf, resolve } from "./schema.js";
 export { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
 export { tidy } from "./tidy.js";
 export { layeredLayout, countCrossings } from "./layered.js";
+export { GraphModel, GRAPH_FORMAT, GRAPH_VERSION } from "./model.js";
+export {
+  takeSnapshot,
+  snapshotModel,
+  applyState,
+  SNAPSHOT_FORMAT,
+  SNAPSHOT_VERSION,
+} from "./snapshot.js";
 export { GraphView } from "./view.js";

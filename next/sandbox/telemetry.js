@@ -3,7 +3,8 @@
 // "received" stamp goes stale, and its last lines show what led up to it.
 //
 // Four samples a second summarise the frames since the last one; events (settings changes, drags, errors, slow
-// frames) are logged as they happen. `window.engineLog.text()` gives the same text in the console.
+// frames) are logged as they happen. `window.engineLog.text()` gives the same text in the console, and
+// `window.engineLog.snapshot()` saves a full snapshot of the view to logs/snapshots (it also happens on errors).
 
 const WINDOW_MS = 30_000;
 const SAMPLE_MS = 250;
@@ -120,12 +121,42 @@ export function startTelemetry(getView) {
     }
   }
 
-  addEventListener("error", (e) =>
-    event("error", { message: e.message, at: `${e.filename}:${e.lineno}` }),
-  );
-  addEventListener("unhandledrejection", (e) =>
-    event("error", { message: String(e.reason?.message ?? e.reason) }),
-  );
+  /**
+   * Save a snapshot of the view (graph, settings, camera, positions: see next/MODEL.md) to logs/snapshots via the
+   * dev server. Returns where it was saved, or null.
+   */
+  async function snapshot(note = "manual") {
+    const view = getView();
+    if (!view) return null;
+    try {
+      const response = await fetch("/__snapshot", {
+        method: "POST",
+        body: JSON.stringify(view.snapshot(note)),
+      });
+      const { saved } = await response.json();
+      event("snapshot", { saved, note });
+      return saved;
+    } catch {
+      return null; // no dev server: view.snapshot() still works from the console
+    }
+  }
+
+  // An error snapshots the view automatically (at most every 10 s), so what led to it can be replayed.
+  let lastAuto = -Infinity;
+  const errorSnapshot = (message) => {
+    if (performance.now() - lastAuto < 10_000) return;
+    lastAuto = performance.now();
+    snapshot(`error: ${message}`);
+  };
+  addEventListener("error", (e) => {
+    event("error", { message: e.message, at: `${e.filename}:${e.lineno}` });
+    errorSnapshot(e.message);
+  });
+  addEventListener("unhandledrejection", (e) => {
+    const message = String(e.reason?.message ?? e.reason);
+    event("error", { message });
+    errorSnapshot(message);
+  });
   addEventListener("pagehide", flush);
   setInterval(sample, SAMPLE_MS);
   setInterval(flush, FLUSH_MS);
@@ -134,7 +165,7 @@ export function startTelemetry(getView) {
     size: `${innerWidth}x${innerHeight}`,
   });
 
-  const log = { frame, event, text, flush };
+  const log = { frame, event, text, flush, snapshot };
   window.engineLog = log;
   return log;
 }

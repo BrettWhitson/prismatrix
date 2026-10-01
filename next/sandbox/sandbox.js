@@ -437,6 +437,29 @@ function render() {
 }
 
 document.getElementById("reset").addEventListener("click", () => view.reset());
+document.getElementById("snapshot").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  const saved = await log.snapshot("button");
+  button.textContent = saved ? "Saved ✓" : "No server";
+  button.title = saved ?? "Snapshots need the dev server (npm run sandbox)";
+  setTimeout(() => (button.textContent = "Snapshot"), 1500);
+});
+document
+  .getElementById("load")
+  .addEventListener("click", () =>
+    document.getElementById("load-file").click(),
+  );
+document.getElementById("load-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    view.restore(JSON.parse(await file.text()));
+  } catch (error) {
+    log.event("error", { message: `load: ${error.message}` });
+    alert(`Couldn't load that snapshot: ${error.message}`);
+  }
+});
 document.getElementById("fit").addEventListener("click", () => view.fit());
 document.getElementById("defaults").addEventListener("click", () => {
   try {

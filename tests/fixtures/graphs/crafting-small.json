@@ -1,0 +1,492 @@
+{
+ "format": "prismatrix-graph",
+ "version": 1,
+ "meta": {
+  "name": "crafting-small"
+ },
+ "nodes": [
+  {
+   "id": "item"
+  },
+  {
+   "id": "r1"
+  },
+  {
+   "id": "r2"
+  },
+  {
+   "id": "r3"
+  },
+  {
+   "id": "r4"
+  },
+  {
+   "id": "r5"
+  },
+  {
+   "id": "r6"
+  },
+  {
+   "id": "r7"
+  },
+  {
+   "id": "r8"
+  },
+  {
+   "id": "r9"
+  },
+  {
+   "id": "r10"
+  },
+  {
+   "id": "r11"
+  },
+  {
+   "id": "r12"
+  },
+  {
+   "id": "r13"
+  },
+  {
+   "id": "r14"
+  },
+  {
+   "id": "r15"
+  },
+  {
+   "id": "r16"
+  },
+  {
+   "id": "r17"
+  },
+  {
+   "id": "r18"
+  },
+  {
+   "id": "r19"
+  },
+  {
+   "id": "r20"
+  },
+  {
+   "id": "r21"
+  },
+  {
+   "id": "r22"
+  },
+  {
+   "id": "r23"
+  },
+  {
+   "id": "r24"
+  },
+  {
+   "id": "r25"
+  },
+  {
+   "id": "r26"
+  },
+  {
+   "id": "r27"
+  },
+  {
+   "id": "r28"
+  },
+  {
+   "id": "r29"
+  },
+  {
+   "id": "r30"
+  },
+  {
+   "id": "r31"
+  },
+  {
+   "id": "r32"
+  },
+  {
+   "id": "r33"
+  },
+  {
+   "id": "r34"
+  },
+  {
+   "id": "r35"
+  },
+  {
+   "id": "r36"
+  },
+  {
+   "id": "r37"
+  },
+  {
+   "id": "r38"
+  },
+  {
+   "id": "r39"
+  },
+  {
+   "id": "hub0"
+  },
+  {
+   "id": "raw0.0"
+  },
+  {
+   "id": "raw0.1"
+  },
+  {
+   "id": "hub1"
+  },
+  {
+   "id": "raw1.0"
+  },
+  {
+   "id": "raw1.1"
+  },
+  {
+   "id": "hub2"
+  },
+  {
+   "id": "raw2.0"
+  },
+  {
+   "id": "raw2.1"
+  },
+  {
+   "id": "hub3"
+  },
+  {
+   "id": "raw3.0"
+  },
+  {
+   "id": "raw3.1"
+  }
+ ],
+ "edges": [
+  {
+   "id": "item>r1",
+   "source": "item",
+   "target": "r1"
+  },
+  {
+   "id": "item>r2",
+   "source": "item",
+   "target": "r2"
+  },
+  {
+   "id": "r1>r3",
+   "source": "r1",
+   "target": "r3"
+  },
+  {
+   "id": "r2>r4",
+   "source": "r2",
+   "target": "r4"
+  },
+  {
+   "id": "item>r5",
+   "source": "item",
+   "target": "r5"
+  },
+  {
+   "id": "r1>r6",
+   "source": "r1",
+   "target": "r6"
+  },
+  {
+   "id": "r5>r7",
+   "source": "r5",
+   "target": "r7"
+  },
+  {
+   "id": "r4>r8",
+   "source": "r4",
+   "target": "r8"
+  },
+  {
+   "id": "item>r9",
+   "source": "item",
+   "target": "r9"
+  },
+  {
+   "id": "r5>r10",
+   "source": "r5",
+   "target": "r10"
+  },
+  {
+   "id": "r2>r11",
+   "source": "r2",
+   "target": "r11"
+  },
+  {
+   "id": "r4>r12",
+   "source": "r4",
+   "target": "r12"
+  },
+  {
+   "id": "r7>r13",
+   "source": "r7",
+   "target": "r13"
+  },
+  {
+   "id": "r11>r14",
+   "source": "r11",
+   "target": "r14"
+  },
+  {
+   "id": "r2>r15",
+   "source": "r2",
+   "target": "r15"
+  },
+  {
+   "id": "r15>r16",
+   "source": "r15",
+   "target": "r16"
+  },
+  {
+   "id": "r14>r17",
+   "source": "r14",
+   "target": "r17"
+  },
+  {
+   "id": "r4>r18",
+   "source": "r4",
+   "target": "r18"
+  },
+  {
+   "id": "r12>r19",
+   "source": "r12",
+   "target": "r19"
+  },
+  {
+   "id": "r9>r20",
+   "source": "r9",
+   "target": "r20"
+  },
+  {
+   "id": "r3>r21",
+   "source": "r3",
+   "target": "r21"
+  },
+  {
+   "id": "r1>r22",
+   "source": "r1",
+   "target": "r22"
+  },
+  {
+   "id": "r1>r23",
+   "source": "r1",
+   "target": "r23"
+  },
+  {
+   "id": "r6>r24",
+   "source": "r6",
+   "target": "r24"
+  },
+  {
+   "id": "r2>r25",
+   "source": "r2",
+   "target": "r25"
+  },
+  {
+   "id": "r17>r26",
+   "source": "r17",
+   "target": "r26"
+  },
+  {
+   "id": "r14>r27",
+   "source": "r14",
+   "target": "r27"
+  },
+  {
+   "id": "r9>r28",
+   "source": "r9",
+   "target": "r28"
+  },
+  {
+   "id": "r6>r29",
+   "source": "r6",
+   "target": "r29"
+  },
+  {
+   "id": "r21>r30",
+   "source": "r21",
+   "target": "r30"
+  },
+  {
+   "id": "r28>r31",
+   "source": "r28",
+   "target": "r31"
+  },
+  {
+   "id": "r4>r32",
+   "source": "r4",
+   "target": "r32"
+  },
+  {
+   "id": "r9>r33",
+   "source": "r9",
+   "target": "r33"
+  },
+  {
+   "id": "r33>r34",
+   "source": "r33",
+   "target": "r34"
+  },
+  {
+   "id": "r11>r35",
+   "source": "r11",
+   "target": "r35"
+  },
+  {
+   "id": "r18>r36",
+   "source": "r18",
+   "target": "r36"
+  },
+  {
+   "id": "r15>r37",
+   "source": "r15",
+   "target": "r37"
+  },
+  {
+   "id": "r37>r38",
+   "source": "r37",
+   "target": "r38"
+  },
+  {
+   "id": "r33>r39",
+   "source": "r33",
+   "target": "r39"
+  },
+  {
+   "id": "hub0>raw0.0",
+   "source": "hub0",
+   "target": "raw0.0"
+  },
+  {
+   "id": "hub0>raw0.1",
+   "source": "hub0",
+   "target": "raw0.1"
+  },
+  {
+   "id": "hub1>raw1.0",
+   "source": "hub1",
+   "target": "raw1.0"
+  },
+  {
+   "id": "hub1>raw1.1",
+   "source": "hub1",
+   "target": "raw1.1"
+  },
+  {
+   "id": "hub2>raw2.0",
+   "source": "hub2",
+   "target": "raw2.0"
+  },
+  {
+   "id": "hub2>raw2.1",
+   "source": "hub2",
+   "target": "raw2.1"
+  },
+  {
+   "id": "hub3>raw3.0",
+   "source": "hub3",
+   "target": "raw3.0"
+  },
+  {
+   "id": "hub3>raw3.1",
+   "source": "hub3",
+   "target": "raw3.1"
+  },
+  {
+   "id": "r3>hub2",
+   "source": "r3",
+   "target": "hub2"
+  },
+  {
+   "id": "r4>hub0",
+   "source": "r4",
+   "target": "hub0"
+  },
+  {
+   "id": "r7>hub3",
+   "source": "r7",
+   "target": "hub3"
+  },
+  {
+   "id": "r8>hub0",
+   "source": "r8",
+   "target": "hub0"
+  },
+  {
+   "id": "r8>hub1",
+   "source": "r8",
+   "target": "hub1"
+  },
+  {
+   "id": "r9>hub0",
+   "source": "r9",
+   "target": "hub0"
+  },
+  {
+   "id": "r12>hub3",
+   "source": "r12",
+   "target": "hub3"
+  },
+  {
+   "id": "r13>hub3",
+   "source": "r13",
+   "target": "hub3"
+  },
+  {
+   "id": "r22>hub2",
+   "source": "r22",
+   "target": "hub2"
+  },
+  {
+   "id": "r25>hub2",
+   "source": "r25",
+   "target": "hub2"
+  },
+  {
+   "id": "r27>hub1",
+   "source": "r27",
+   "target": "hub1"
+  },
+  {
+   "id": "r27>hub3",
+   "source": "r27",
+   "target": "hub3"
+  },
+  {
+   "id": "r32>hub2",
+   "source": "r32",
+   "target": "hub2"
+  },
+  {
+   "id": "r32>hub1",
+   "source": "r32",
+   "target": "hub1"
+  },
+  {
+   "id": "r35>hub1",
+   "source": "r35",
+   "target": "hub1"
+  },
+  {
+   "id": "r37>hub0",
+   "source": "r37",
+   "target": "hub0"
+  },
+  {
+   "id": "r38>hub2",
+   "source": "r38",
+   "target": "hub2"
+  },
+  {
+   "id": "r33>r38",
+   "source": "r33",
+   "target": "r38"
+  }
+ ]
+}

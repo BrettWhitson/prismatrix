@@ -1,0 +1,140 @@
+{
+ "format": "prismatrix-graph",
+ "version": 1,
+ "meta": {
+  "name": "mjolnir-example",
+  "description": "Part of a legendary recipe, hand-written: labels, data on nodes and edges, one shared ingredient."
+ },
+ "nodes": [
+  {
+   "id": "mjolnir",
+   "label": "Mjölnir",
+   "data": {
+    "rarity": "legendary"
+   }
+  },
+  {
+   "id": "gift-of-mjolnir",
+   "label": "Gift of Mjölnir",
+   "data": {
+    "rarity": "legendary"
+   }
+  },
+  {
+   "id": "gift-of-mastery",
+   "label": "Gift of Mastery",
+   "data": {
+    "rarity": "legendary"
+   }
+  },
+  {
+   "id": "ectoplasm",
+   "label": "Glob of Ectoplasm",
+   "data": {
+    "rarity": "exotic"
+   }
+  },
+  {
+   "id": "mystic-coin",
+   "label": "Mystic Coin",
+   "data": {
+    "rarity": "rare"
+   }
+  },
+  {
+   "id": "mithril-ingot",
+   "label": "Mithril Ingot",
+   "data": {
+    "rarity": "basic"
+   }
+  },
+  {
+   "id": "mithril-ore",
+   "label": "Mithril Ore",
+   "data": {
+    "rarity": "basic"
+   }
+  },
+  {
+   "id": "the-energizer",
+   "label": "The Energizer",
+   "data": {
+    "rarity": "exotic"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "mjolnir>gift-of-mjolnir",
+   "source": "mjolnir",
+   "target": "gift-of-mjolnir",
+   "data": {
+    "count": 1
+   }
+  },
+  {
+   "id": "mjolnir>gift-of-mastery",
+   "source": "mjolnir",
+   "target": "gift-of-mastery",
+   "data": {
+    "count": 1
+   }
+  },
+  {
+   "id": "mjolnir>the-energizer",
+   "source": "mjolnir",
+   "target": "the-energizer",
+   "data": {
+    "count": 1
+   }
+  },
+  {
+   "id": "gift-of-mjolnir>mithril-ingot",
+   "source": "gift-of-mjolnir",
+   "target": "mithril-ingot",
+   "data": {
+    "count": 250
+   }
+  },
+  {
+   "id": "gift-of-mjolnir>ectoplasm",
+   "source": "gift-of-mjolnir",
+   "target": "ectoplasm",
+   "data": {
+    "count": 100
+   }
+  },
+  {
+   "id": "gift-of-mastery>ectoplasm",
+   "source": "gift-of-mastery",
+   "target": "ectoplasm",
+   "data": {
+    "count": 250
+   }
+  },
+  {
+   "id": "gift-of-mastery>mystic-coin",
+   "source": "gift-of-mastery",
+   "target": "mystic-coin",
+   "data": {
+    "count": 250
+   }
+  },
+  {
+   "id": "the-energizer>mithril-ingot",
+   "source": "the-energizer",
+   "target": "mithril-ingot",
+   "data": {
+    "count": 5
+   }
+  },
+  {
+   "id": "mithril-ingot>mithril-ore",
+   "source": "mithril-ingot",
+   "target": "mithril-ore",
+   "data": {
+    "count": 2
+   }
+  }
+ ]
+}

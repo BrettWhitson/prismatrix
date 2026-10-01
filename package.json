@@ -35,7 +35,8 @@
     "types:check": "node tools/check-types.mjs",
     "docs": "node tools/docs.mjs",
     "docs:check": "node tools/docs.mjs --check",
-    "sandbox": "node tools/serve.mjs 8651 /next/sandbox/"
+    "sandbox": "node tools/serve.mjs 8651 /next/sandbox/",
+    "bench:merged": "node tools/bench-layered.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
