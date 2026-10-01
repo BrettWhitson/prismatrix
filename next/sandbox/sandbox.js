@@ -89,6 +89,7 @@ const stored = load();
 const settings = {
   graph: resolve(GRAPH_OPTIONS, stored.graph),
   renderer: stored.renderer === "canvas" ? "canvas" : "webgl",
+  frameRate: stored.frameRate === "uncapped" ? "uncapped" : "display",
   layout: LAYOUTS[stored.layout] ? stored.layout : "radial",
   layouts: stored.layouts ?? {}, // per layout: { options, mode, physics: { [mode]: options } }
   node: resolve(NODE_OPTIONS, stored.node),
@@ -190,7 +191,7 @@ const view = new GraphView(
         (state === "moving" ? ` · energy ${energy.toFixed(1)}` : "");
     },
   },
-  { renderer: settings.renderer },
+  { renderer: settings.renderer, frameRate: settings.frameRate },
 );
 
 function applyAll() {
@@ -315,11 +316,28 @@ function render() {
               { value: "canvas", label: "Canvas 2D" },
             ],
             "webgl",
-            "WebGL draws the nodes on the GPU so far; edges and labels follow in later steps.",
+            "WebGL draws everything on the GPU. Canvas 2D is the fallback, and the reference the GPU is checked against.",
           ),
           view.renderer.name,
           (v) => {
             settings.renderer = view.setRenderer(v);
+            save();
+          },
+        ),
+        control(
+          select(
+            "frameRate",
+            "Frame rate",
+            [
+              { value: "display", label: "Match display" },
+              { value: "uncapped", label: "Uncapped (benchmark)" },
+            ],
+            "display",
+            "Uncapped draws as fast as it can to show the engine's headroom. The screen still shows one frame per refresh, so it only costs power.",
+          ),
+          view.frameRate,
+          (v) => {
+            settings.frameRate = view.setFrameRate(v);
             save();
           },
         ),

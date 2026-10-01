@@ -235,3 +235,34 @@ out vec4 outColour;
 void main() {
   outColour = texture(u_texture, v_uv) * u_alpha;
 }`;
+
+/** A label: a quad cut from the label atlas, tinted. The atlas holds white text, premultiplied. */
+export const LABEL_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_box;    // left, middle, width, height (world)
+layout(location = 2) in vec4 a_uv;     // u0, v0, u1, v1
+layout(location = 3) in float a_alpha;
+${COMMON_VERTEX}
+
+out vec2 v_uv;
+flat out float v_alpha;
+
+void main() {
+  vec2 t = a_corner * 0.5 + 0.5;
+  gl_Position = toClip(vec2(a_box.x + t.x * a_box.z, a_box.y + a_corner.y * 0.5 * a_box.w));
+  v_uv = mix(a_uv.xy, a_uv.zw, t);
+  v_alpha = a_alpha;
+}`;
+
+export const LABEL_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+flat in float v_alpha;
+uniform sampler2D u_atlas;
+uniform vec3 u_colour;
+out vec4 outColour;
+
+void main() {
+  float coverage = texture(u_atlas, v_uv).a * v_alpha;
+  outColour = vec4(u_colour * coverage, coverage);
+}`;

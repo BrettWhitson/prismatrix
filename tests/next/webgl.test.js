@@ -273,3 +273,27 @@ test("packing grows its buffers mid-frame without losing what's already in them"
     assert.ok(Number.isFinite(out.segments[i]));
   assert.notEqual(out.segments[0], 0, "the first segment survived the growth");
 });
+
+import { bucketScale, labelBox } from "../../next/engine/gl-text.js";
+
+test("labels are rasterised at the zoom rounded up to a power of two, between ¼ and 8", () => {
+  assert.equal(bucketScale(1, 1), 1);
+  assert.equal(bucketScale(1.2, 1), 2, "never smaller than shown");
+  assert.equal(bucketScale(0.3, 2), 1, "times the device pixel ratio");
+  assert.equal(bucketScale(0.01, 1), 0.25);
+  assert.equal(bucketScale(100, 1), 8);
+});
+
+test("label boxes sit where the Canvas 2D renderer puts its text", () => {
+  // Below a node of radius 10 at the origin: centred, its em box's top 4 px under the node (radius + gap).
+  const below = labelBox(0, 0, 10, Math.PI / 2, 12, 40);
+  assert.ok(Math.abs(below.left + 20) < 1e-9);
+  assert.ok(Math.abs(below.middle - (14 + 6)) < 1e-9);
+  // To the right: starting just past the node, its middle on the node's centre line.
+  const right = labelBox(100, 50, 10, 0, 12, 40);
+  assert.ok(Math.abs(right.left - 114) < 1e-9);
+  assert.ok(Math.abs(right.middle - 50) < 1e-9);
+  // Pointing left (an outward label on the left of a radial): ending just before the node.
+  const left = labelBox(0, 0, 10, Math.PI, 12, 40);
+  assert.ok(Math.abs(left.left + 14 + 40) < 1e-9);
+});

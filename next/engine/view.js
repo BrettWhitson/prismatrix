@@ -40,6 +40,7 @@ export class GraphView {
    * @param {(type: string, detail?: object) => void} [hooks.onEvent] settings changes and interactions
    * @param {object} [options]
    * @param {"webgl" | "canvas"} [options.renderer] "webgl" (the default) falls back to "canvas" without WebGL2
+   * @param {"display" | "uncapped"} [options.frameRate] "display" (the default) draws once per screen refresh
    *
    * @typedef {object} FrameStats
    * @property {number} fps        smoothed
@@ -49,7 +50,11 @@ export class GraphView {
    * @property {number} energy     mean squared node speed
    * @property {string} state      "moving to layout", "dragging", "moving" or "at rest"
    */
-  constructor(canvas, hooks = {}, { renderer = "webgl" } = {}) {
+  constructor(
+    canvas,
+    hooks = {},
+    { renderer = "webgl", frameRate = "display" } = {},
+  ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d"); // also measures label text
     this.hooks = hooks;
@@ -87,7 +92,9 @@ export class GraphView {
     this.fps = 60;
 
     this.renderer = null;
+    this.frameRate = "display";
     this.setRenderer(renderer);
+    if (frameRate === "uncapped") this.setFrameRate(frameRate);
     this.resizer = new ResizeObserver(() => this.#resize());
     this.resizer.observe(canvas);
     this.#resize();
@@ -254,7 +261,8 @@ export class GraphView {
 
   destroy() {
     this.renderer?.dispose();
-    cancelAnimationFrame(this.frame);
+    if (this.frame > 0) cancelAnimationFrame(this.frame);
+    this.channel?.port1.close();
     this.resizer.disconnect();
     this.unbind?.();
   }
@@ -417,8 +425,29 @@ export class GraphView {
     this.tween = { from, start: performance.now() };
   }
 
+  /**
+   * "display" draws once per screen refresh (requestAnimationFrame). "uncapped" draws again as soon as a frame is
+   * done, for benchmarking: the screen still only shows one frame per refresh, so the extra frames cost power and
+   * show nothing, but the frame rate shows how much headroom the engine has. A hidden page always waits for the
+   * display.
+   */
+  setFrameRate(mode) {
+    this.frameRate = mode === "uncapped" ? "uncapped" : "display";
+    if (this.frameRate === "uncapped" && !this.channel) {
+      this.channel = new MessageChannel();
+      this.channel.port1.onmessage = () => this.#tick(performance.now());
+    }
+    this.#emit("frameRate", { frameRate: this.frameRate });
+    this.#wake();
+    return this.frameRate;
+  }
+
   #wake() {
-    if (!this.frame) this.frame = requestAnimationFrame((t) => this.#tick(t));
+    if (this.frame) return;
+    if (this.frameRate === "uncapped" && !document.hidden) {
+      this.frame = -1;
+      this.channel.port2.postMessage(0);
+    } else this.frame = requestAnimationFrame((t) => this.#tick(t));
   }
 
   #tick(now) {
@@ -513,6 +542,8 @@ export class GraphView {
             ? "moving"
             : "at rest",
     });
+    // Labels still being drawn into the atlas keep the frames coming until they're all in.
+    if (this.renderer.pending) busy = true;
     if (busy || this.pointer) this.#wake();
     else this.last = 0;
   }

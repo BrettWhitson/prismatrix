@@ -1,13 +1,13 @@
-// The WebGL2 renderer, built up a step at a time. The GPU draws the background, edges and nodes on a canvas of its
-// own, beneath the view's canvas; labels are still drawn on the view's canvas with Canvas 2D:
-//
-//   GL layer (background, edges, arrowheads, nodes)  →  the view's own canvas (2D labels; takes the pointer)
+// The WebGL2 renderer. The GPU draws everything (background, edges, arrowheads, nodes, labels) on a canvas of its
+// own, beneath the view's canvas, which stays on top, transparent, to take the pointer.
 //
 // Edges are drawn onto a texture keeping, at each pixel, the brightest edge there (a MAX blend), and the texture
 // onto the scene at the edge opacity: where edges overlap they don't add up to brighter lines, whatever each
 // edge's own brightness (dimmed by hover, fading in). The Canvas 2D renderer gets the same result another way.
 
-import { clearTo, drawLabels } from "./render.js";
+import { clearTo, labelAlpha } from "./render.js";
+import { reach } from "./boxes.js";
+import { LABEL_STRIDE, LabelLayer } from "./gl-text.js";
 import {
   END_STRIDE,
   NODE_STRIDE,
@@ -21,6 +21,8 @@ import {
   COMPOSITE_VERTEX,
   END_FRAGMENT,
   END_VERTEX,
+  LABEL_FRAGMENT,
+  LABEL_VERTEX,
   NODE_FRAGMENT,
   NODE_VERTEX,
   SEGMENT_FRAGMENT,
@@ -34,6 +36,9 @@ export {
   packNodes,
   parseColour,
 } from "./gl-pack.js";
+
+/** Label text colour. */
+const LABEL_COLOUR = "#d5d9e4";
 
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
@@ -188,6 +193,16 @@ class GLLayer {
       [2, 2, 4], // size, kind
       [3, 4, 6], // colour
     ]);
+    this.labelProgram = program(gl, LABEL_VERTEX, LABEL_FRAGMENT);
+    this.labels = new InstancedQuads(gl, corners, LABEL_STRIDE, [
+      [1, 4, 0], // box
+      [2, 4, 4], // uv
+      [3, 1, 8], // alpha
+    ]);
+    this.labelLayer?.dispose?.();
+    this.labelLayer = new LabelLayer(gl);
+    this.labelGroups = [];
+    this.pending = false;
     this.emptyVao = gl.createVertexArray();
     this.target = null; // the offscreen texture edges are drawn onto
     this.built = null; // what the buffers hold; nothing yet (or after a lost context)
@@ -304,9 +319,49 @@ class GLLayer {
     gl.uniform1f(u.u_outline, node.outline);
     gl.uniform3f(u.u_background, ...bg);
     this.nodes.draw(0, count);
+
+    this.#drawLabels(scene, fresh);
+  }
+
+  /**
+   * Labels with room kept for them (label collision) always show; otherwise they drop out when too small to read.
+   * They're rebuilt when anything moved, the zoom crossed a raster step, or some are still waiting for the atlas.
+   */
+  #drawLabels(scene, fresh) {
+    const { gl } = this;
+    const { node, camera } = scene;
+    this.pending = false;
+    if (
+      node.labels === "off" ||
+      (!node.labelCollide && node.labelSize * camera.k < 6)
+    )
+      return;
+    // Labels are built for the view plus half a view around it: rebuild when the zoom crosses a raster step or
+    // the camera has moved about half a view (measured at the step's zoom, so zooming within a step doesn't).
+    const step = Math.ceil(Math.log2(camera.k));
+    const cellW = scene.width / 2 ** step / 2,
+      cellH = scene.height / 2 ** step / 2;
+    const key = `${node.labelSize}|${step}|${Math.floor(camera.x / cellW)}|${Math.floor(camera.y / cellH)}`;
+    if (fresh || this.labelPending || key !== this.labelKey) {
+      const built = this.labelLayer.build(scene, labelAlpha, reach(node.shape));
+      this.labels.upload(built.data, built.count);
+      this.labelGroups = built.groups;
+      this.labelPending = built.pending;
+      this.labelKey = key;
+    }
+    this.pending = this.labelPending;
+    const u = this.#use(this.labelProgram, scene);
+    gl.uniform3f(u.u_colour, ...parseColour(LABEL_COLOUR));
+    gl.uniform1i(u.u_atlas, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    for (const group of this.labelGroups) {
+      gl.bindTexture(gl.TEXTURE_2D, group.page.texture);
+      this.labels.draw(group.first, group.first + group.count);
+    }
   }
 
   dispose() {
+    this.labelLayer?.dispose();
     this.gl.getExtension("WEBGL_lose_context")?.loseContext();
   }
 }
@@ -346,13 +401,22 @@ export class WebGLRenderer {
 
   draw(scene) {
     this.layer.draw(scene);
-    clearTo(this.topCtx, scene, null);
-    drawLabels(this.topCtx, scene);
+    // The view's own canvas only takes the pointer now: clear it once (after a switch from Canvas 2D).
+    if (!this.cleared) {
+      clearTo(this.topCtx, scene, null);
+      this.cleared = true;
+    }
+  }
+
+  /** True while labels are still being drawn into the atlas: the view keeps frames coming until they're done. */
+  get pending() {
+    return this.layer.pending;
   }
 
   dispose() {
     this.layer.dispose();
     this.glCanvas.remove();
     this.top.style.position = this.previousPosition;
+    this.cleared = false;
   }
 }
