@@ -34,7 +34,8 @@
     "typecheck": "tsc -p . --noEmit",
     "types:check": "node tools/check-types.mjs",
     "docs": "node tools/docs.mjs",
-    "docs:check": "node tools/docs.mjs --check"
+    "docs:check": "node tools/docs.mjs --check",
+    "sandbox": "node tools/serve.mjs 8651 /next/sandbox/"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

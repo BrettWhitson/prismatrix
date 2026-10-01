@@ -3,9 +3,12 @@
 // Serves the project root (so the demo reaches src/ and node_modules/tether) with correct MIME types and
 // `Cache-Control: no-store`, so edits show up on reload.
 //
-// Usage:  node tools/serve.mjs [port]      (default port 8650; open http://localhost:8650/demo/)
+// POST /__log takes a page's rolling log (the sandbox's engine stats) and writes it to logs/engine-stats.log, so
+// what the engine is doing can be read live from outside the browser.
+//
+// Usage:  node tools/serve.mjs [port] [start]   (default port 8650; / redirects to start, default /demo/)
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,6 +23,28 @@ const MIME_TYPES = {
   ".png": "image/png",
 };
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8650);
+const start = process.argv[3] ?? "/demo/";
+const LOG_FILE = path.join(ROOT, "logs", "engine-stats.log");
+const LOG_LIMIT = 4 * 1024 * 1024;
+
+/** Replace the log file with a page's buffer, stamped with when it arrived. */
+async function receiveLog(request, response) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > LOG_LIMIT) {
+      response.writeHead(413).end();
+      return;
+    }
+    chunks.push(chunk);
+  }
+  await mkdir(path.dirname(LOG_FILE), { recursive: true });
+  const stamp = `# received ${new Date().toISOString()}
+`;
+  await writeFile(LOG_FILE, stamp + Buffer.concat(chunks).toString("utf8"));
+  response.writeHead(204).end();
+}
 
 /** The request's path, decoded, or null when it can't be read (a malformed URL or escape). */
 function requestPath(requestUrl) {
@@ -49,8 +74,15 @@ createServer(async (request, response) => {
     response.end("Bad request");
     return;
   }
+  if (pathname === "/__log" && request.method === "POST") {
+    await receiveLog(request, response).catch((error) => {
+      console.error("log write failed:", error.message);
+      if (!response.headersSent) response.writeHead(500).end();
+    });
+    return;
+  }
   if (pathname === "/") {
-    response.writeHead(302, { Location: "/demo/" });
+    response.writeHead(302, { Location: start, "Cache-Control": "no-store" });
     response.end();
     return;
   }
@@ -68,5 +100,5 @@ createServer(async (request, response) => {
   });
   response.end(body);
 }).listen(port, () =>
-  console.log(`Prismatrix demo: http://localhost:${port}/demo/`),
+  console.log(`Prismatrix: http://localhost:${port}${start}`),
 );

@@ -1,0 +1,588 @@
+// The ground-up engine's pure parts: the forest, the layouts, the physics modes and the edge geometry.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { Graph } from "../../next/engine/graph.js";
+import {
+  LAYOUTS,
+  constrainer,
+  radialLayout,
+  treeLayout,
+} from "../../next/engine/layouts.js";
+import {
+  PHYSICS,
+  Simulation,
+  physicsOptions,
+  physicsSchema,
+} from "../../next/engine/physics.js";
+import { edgePoints, fanJunctions, trim } from "../../next/engine/geometry.js";
+import { resolve } from "../../next/engine/schema.js";
+
+/** root → a, b; a → a1, a2; b → b1 */
+function small() {
+  const ids = ["root", "a", "b", "a1", "a2", "b1"];
+  return new Graph(
+    ids.map((id) => ({ id })),
+    [
+      ["root", "a"],
+      ["root", "b"],
+      ["a", "a1"],
+      ["a", "a2"],
+      ["b", "b1"],
+    ].map(([source, target]) => ({ source, target })),
+  );
+}
+
+const at = (g, id) => g.byId.get(id);
+
+test("the graph reads its edges as a forest", () => {
+  const g = small();
+  assert.deepEqual(g.roots, [0]);
+  assert.equal(at(g, "a1").depth, 2);
+  assert.equal(at(g, "a1").parent, at(g, "a").index);
+  assert.equal(at(g, "root").leaves, 3);
+  assert.equal(at(g, "root").descendants, 5);
+  assert.equal(g.maxDepth, 2);
+});
+
+test("an edge into a node that already has a parent is a cross-link, and cycles still get a root", () => {
+  const g = new Graph(
+    ["x", "y", "z"].map((id) => ({ id })),
+    [
+      { source: "x", target: "y" },
+      { source: "y", target: "z" },
+      { source: "z", target: "x" },
+    ],
+  );
+  assert.equal(g.roots.length, 1);
+  assert.equal(g.edges.filter((e) => e.tree).length, 2);
+  assert.equal(g.order.length, 3);
+});
+
+test("edges to unknown nodes and self-loops are dropped", () => {
+  const g = new Graph(
+    [{ id: "a" }],
+    [
+      { source: "a", target: "a" },
+      { source: "a", target: "nope" },
+    ],
+  );
+  assert.equal(g.edges.length, 0);
+});
+
+test("tree: levels are evenly spaced and every parent is centred over its children", () => {
+  const g = small();
+  treeLayout(g, { direction: "TB", levelGap: 100, siblingGap: 50 });
+  assert.equal(at(g, "a1").homeY, 200);
+  assert.equal(at(g, "a").homeX, (at(g, "a1").homeX + at(g, "a2").homeX) / 2);
+  assert.equal(
+    at(g, "a2").homeX - at(g, "a1").homeX,
+    16 + 50,
+    "two 16px footprints, 50 apart",
+  );
+  const lr = small();
+  treeLayout(lr, { direction: "LR", levelGap: 100, siblingGap: 50 });
+  assert.equal(at(lr, "a1").homeX, 200);
+});
+
+test("radial: one root sits in the middle, depth is the ring, and siblings never share an angle", () => {
+  const g = small();
+  radialLayout(g, { ringGap: 80, sweep: 360, rotation: 0 });
+  assert.equal(at(g, "root").homeX, 0);
+  assert.equal(at(g, "root").homeY, 0);
+  for (const id of ["a1", "a2", "b1"]) {
+    const n = at(g, id);
+    assert.ok(Math.abs(Math.hypot(n.homeX, n.homeY) - 160) < 1e-9);
+  }
+  const angle = (id) => Math.atan2(at(g, id).homeY, at(g, id).homeX);
+  assert.notEqual(angle("a1"), angle("a2"));
+});
+
+test("radial: separate trees share the first ring around an empty centre", () => {
+  const g = new Graph(
+    ["p", "q"].map((id) => ({ id })),
+    [],
+  );
+  radialLayout(g, { ringGap: 50 });
+  for (const n of g.nodes)
+    assert.ok(Math.abs(Math.hypot(n.homeX, n.homeY) - 50) < 1e-9);
+});
+
+test("each layout lists its own physics: trees are static or elastic, radials can also float", () => {
+  assert.deepEqual(Object.keys(LAYOUTS.tree.physics), ["static", "elastic"]);
+  assert.deepEqual(Object.keys(LAYOUTS.radial.physics), [
+    "static",
+    "elastic",
+    "floating",
+  ]);
+  assert.throws(() => physicsSchema("tree", "floating"));
+  const keys = (l, m) => physicsSchema(l, m).map((o) => o.key);
+  assert.ok(keys("tree", "elastic").includes("levelLock"));
+  assert.ok(keys("radial", "elastic").includes("ringLock"));
+  assert.ok(!keys("tree", "elastic").includes("ringLock"));
+  for (const mode of Object.keys(PHYSICS))
+    assert.ok(PHYSICS[mode].options.length);
+});
+
+test("a layout's defaults override the mode's", () => {
+  assert.equal(
+    physicsOptions("tree", "elastic").anchor,
+    LAYOUTS.tree.physics.elastic.defaults.anchor,
+  );
+  assert.equal(
+    physicsOptions("tree", "elastic", { anchor: 999 }).anchor,
+    LAYOUTS.tree.physics.elastic.defaults.anchor,
+  );
+});
+
+function settle(sim, seconds) {
+  for (let t = 0; t < seconds; t += 1 / 60) sim.advance(1 / 60);
+}
+
+test("elastic: a displaced node springs home and drags its neighbours on the way", () => {
+  const g = small();
+  treeLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const sim = new Simulation(g);
+  sim.configure("elastic", physicsOptions("tree", "elastic"));
+  const a = at(g, "a");
+  a.x += 300;
+  sim.advance(1 / 30);
+  assert.ok(at(g, "a1").vx > 0, "the child is pulled after its parent");
+  settle(sim, 6);
+  assert.ok(Math.hypot(a.x - a.homeX, a.y - a.homeY) < 1);
+  assert.ok(sim.asleep);
+});
+
+test("elastic: a held node stays where the pointer has it", () => {
+  const g = small();
+  treeLayout(g, {});
+  const sim = new Simulation(g);
+  sim.configure("elastic", physicsOptions("tree", "elastic"));
+  const a = at(g, "a");
+  a.x = 500;
+  a.y = 500;
+  sim.held.add(a.index);
+  settle(sim, 1);
+  assert.deepEqual([a.x, a.y], [500, 500]);
+  assert.ok(!sim.asleep);
+});
+
+test("tree elastic with the level lock only moves nodes along their level", () => {
+  const g = small();
+  const routing = treeLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const opts = physicsOptions("tree", "elastic", { levelLock: true });
+  const sim = new Simulation(g);
+  sim.configure("elastic", opts, constrainer(routing, opts));
+  const a = at(g, "a");
+  sim.held.add(a.index);
+  a.x += 200;
+  a.y += 200;
+  settle(sim, 0.5);
+  for (const n of g.nodes) if (n !== a) assert.equal(n.y, n.homeY);
+});
+
+test("radial elastic with the ring lock keeps nodes on their ring", () => {
+  const g = small();
+  const routing = radialLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const opts = physicsOptions("radial", "elastic", { ringLock: true });
+  const sim = new Simulation(g);
+  sim.configure("elastic", opts, constrainer(routing, opts));
+  const a1 = at(g, "a1");
+  a1.vx = 400;
+  settle(sim, 0.5);
+  const ring = Math.hypot(a1.homeX, a1.homeY);
+  assert.ok(Math.abs(Math.hypot(a1.x, a1.y) - ring) < 1e-6);
+});
+
+test("floating: nodes stacked on one spot push apart, and without memory or drift it comes to rest", () => {
+  const g = small();
+  radialLayout(g, {});
+  g.nodes.forEach((n, i) => ([n.x, n.y] = [i * 0.1, 0]));
+  const sim = new Simulation(g);
+  sim.configure(
+    "floating",
+    physicsOptions("radial", "floating", { memory: 0, drift: 0 }),
+  );
+  settle(sim, 10);
+  const b = g.bounds();
+  assert.ok(b.maxX - b.minX > 50);
+  assert.ok(sim.asleep);
+});
+
+test("floating with drift never sleeps", () => {
+  const g = small();
+  const sim = new Simulation(g);
+  sim.configure(
+    "floating",
+    physicsOptions("radial", "floating", { drift: 10 }),
+  );
+  assert.ok(!sim.asleep);
+});
+
+test("static has no forces: a node put somewhere stays there", () => {
+  const g = small();
+  const sim = new Simulation(g);
+  sim.configure("static", physicsOptions("tree", "static"));
+  at(g, "a").x = 999;
+  settle(sim, 1);
+  assert.equal(at(g, "a").x, 999);
+  assert.ok(sim.asleep);
+});
+
+test("rest needs a run of still steps, so a frame that runs no step can't put a thrown node to sleep", () => {
+  const g = small();
+  const sim = new Simulation(g);
+  sim.configure("static", physicsOptions("tree", "static"));
+  settle(sim, 1);
+  assert.ok(sim.asleep);
+  // A release: speed given, the simulation woken, and the next frame too short for a whole step.
+  at(g, "a").vx = 500;
+  sim.wake();
+  sim.advance(0.001);
+  assert.ok(!sim.asleep);
+  settle(sim, 0.1);
+  assert.ok(at(g, "a").x > 10, "it glides");
+});
+
+test("elastic: a node let go at a standstill, away from home, still springs back", () => {
+  const g = small();
+  treeLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const sim = new Simulation(g);
+  sim.configure("elastic", physicsOptions("tree", "elastic"));
+  settle(sim, 1);
+  assert.ok(sim.asleep);
+  const a = at(g, "a");
+  a.x += 200; // put there and released with no speed
+  sim.wake();
+  assert.ok(!sim.asleep);
+  settle(sim, 6);
+  assert.ok(Math.abs(a.x - a.homeX) < 1);
+});
+
+test("step edges: right angles halfway between levels in a tree", () => {
+  const s = { x: 0, y: 0 },
+    t = { x: 40, y: 100 };
+  assert.deepEqual(
+    edgePoints({ kind: "tree", direction: "TB" }, "step", s, t),
+    [0, 0, 0, 50, 40, 50, 40, 100],
+  );
+  assert.deepEqual(
+    edgePoints({ kind: "tree", direction: "LR" }, "step", s, { x: 100, y: 40 }),
+    [0, 0, 50, 0, 50, 40, 100, 40],
+  );
+  assert.deepEqual(
+    edgePoints({ kind: "tree", direction: "TB" }, "straight", s, t),
+    [0, 0, 40, 100],
+  );
+});
+
+test("step edges in a radial run round the ring halfway between", () => {
+  const routing = { kind: "radial", cx: 0, cy: 0 };
+  const pts = edgePoints(routing, "step", { x: 100, y: 0 }, { x: 0, y: 200 });
+  assert.deepEqual(pts.slice(0, 2), [100, 0]);
+  assert.deepEqual(pts.slice(-2), [0, 200]);
+  for (let i = 2; i < pts.length - 2; i += 2) {
+    assert.ok(Math.abs(Math.hypot(pts[i], pts[i + 1]) - 150) < 1e-9);
+  }
+});
+
+test("trim cuts along the polyline and gives up when the ends meet", () => {
+  assert.deepEqual(trim([0, 0, 0, 10, 10, 10], 5, 5), [0, 5, 0, 10, 5, 10]);
+  assert.equal(trim([0, 0, 10, 0], 6, 6), null);
+});
+
+test("resolve replaces anything out of range with the default", () => {
+  const schema = physicsSchema("radial", "floating");
+  const out = resolve(schema, { repulsion: -5, friction: 3, bogus: 1 });
+  assert.equal(
+    out.repulsion,
+    schema.find((o) => o.key === "repulsion").default,
+  );
+  assert.equal(out.friction, 3);
+  assert.ok(!("bogus" in out));
+});
+
+test("friction brings a thrown node in static to a full stop, and it stays where it stopped", () => {
+  const g = small();
+  treeLayout(g, {});
+  const sim = new Simulation(g);
+  sim.configure("static", physicsOptions("tree", "static"));
+  const a = at(g, "a");
+  a.vx = 800;
+  settle(sim, 0.2);
+  const partway = a.x;
+  assert.ok(partway > 0 && a.vx < 800, "it glides and slows");
+  settle(sim, 10);
+  assert.equal(a.vx, 0);
+  assert.ok(sim.asleep);
+  assert.ok(a.x > partway);
+});
+
+test("floating with no drift eases to a stop", () => {
+  const g = small();
+  radialLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y, n.vx] = [n.homeX, n.homeY, 300];
+  const sim = new Simulation(g);
+  sim.configure("floating", physicsOptions("radial", "floating"));
+  settle(sim, 20);
+  assert.ok(sim.asleep);
+});
+
+test("collision pushes overlapping circles apart, and a held node doesn't give way", () => {
+  const g = new Graph([{ id: "a" }, { id: "b" }], []);
+  for (const n of g.nodes) {
+    n.radius = 10;
+    n.box = { x0: -10, y0: -10, x1: 10, y1: 10 };
+    n.homeX = n.x = 0;
+  }
+  g.nodes[1].x = 5;
+  const sim = new Simulation(g);
+  const opts = physicsOptions("radial", "floating", {
+    memory: 0,
+    repulsion: 0,
+  });
+  sim.configure("floating", opts, null, { boxes: false, padding: 4 });
+  sim.held.add(0);
+  sim.step(1 / 120);
+  assert.equal(g.nodes[0].x, 0);
+  assert.ok(Math.abs(g.nodes[1].x - 24) < 1e-9, "radii plus padding apart");
+});
+
+test("label boxes collide on the axis they overlap least", () => {
+  const g = new Graph([{ id: "a" }, { id: "b" }], []);
+  for (const n of g.nodes) n.box = { x0: -5, y0: -5, x1: 60, y1: 5 }; // a long label to the right
+  g.nodes[1].x = 40;
+  g.nodes[1].y = 2;
+  const sim = new Simulation(g);
+  const opts = physicsOptions("radial", "floating", {
+    memory: 0,
+    repulsion: 0,
+    links: 0,
+  });
+  sim.configure("floating", opts, null, { boxes: true, padding: 0 });
+  sim.step(1 / 120);
+  const [a, b] = g.nodes;
+  assert.ok(
+    Math.abs(b.y - a.y) >= 10 - 1e-9,
+    "pushed apart vertically, the short way",
+  );
+});
+
+test("collision is off when the mode's collide option is", () => {
+  const sim = new Simulation(small());
+  sim.configure(
+    "elastic",
+    physicsOptions("tree", "elastic", { collide: false }),
+    null,
+    { boxes: false, padding: 0 },
+  );
+  assert.equal(sim.collision, null);
+});
+
+test("tree: wide labels push siblings apart and deep labels push levels apart", () => {
+  const g = small();
+  const wide = {
+    gap: 0,
+    box: (i) =>
+      i === at(g, "a1").index
+        ? { x0: -40, y0: -8, x1: 40, y1: 120 }
+        : { x0: -8, y0: -8, x1: 8, y1: 8 },
+  };
+  treeLayout(g, { levelGap: 50, siblingGap: 10 }, wide);
+  assert.ok(at(g, "a2").homeX - at(g, "a1").homeX >= 40 + 10 + 8);
+  // a1's level is the deepest, so nothing below it needs to move; but b1 shares a1's level.
+  assert.equal(at(g, "b1").homeY, at(g, "a1").homeY);
+});
+
+test("tree: subtrees nest under each other's overhangs (contours, not slots)", () => {
+  // root → [x → x1..x4], [y]. y sits beside x, and its single child-free node can tuck in close.
+  const ids = ["root", "x", "y", "x1", "x2", "x3", "x4"];
+  const g = new Graph(
+    ids.map((id) => ({ id })),
+    ["x", "y"]
+      .map((t) => ({ source: "root", target: t }))
+      .concat(
+        ["x1", "x2", "x3", "x4"].map((t) => ({ source: "x", target: t })),
+      ),
+  );
+  treeLayout(g, { siblingGap: 10 });
+  // y only has to clear x itself on its level, not x's wide row of children below.
+  assert.ok(
+    at(g, "y").homeX - at(g, "x").homeX <
+      at(g, "x4").homeX - at(g, "x").homeX + 26,
+  );
+  assert.ok(at(g, "y").homeX - at(g, "x").homeX >= 16 + 10);
+});
+
+test("radial: rings grow when the nodes on them wouldn't fit side by side", () => {
+  const ids = ["root", ...Array.from({ length: 40 }, (_, i) => `c${i}`)];
+  const g = new Graph(
+    ids.map((id) => ({ id })),
+    ids.slice(1).map((t) => ({ source: "root", target: t })),
+  );
+  radialLayout(
+    g,
+    { ringGap: 20 },
+    { gap: 0, box: () => ({ x0: -10, y0: -10, x1: 10, y1: 10 }) },
+  );
+  const r = Math.hypot(at(g, "c0").homeX, at(g, "c0").homeY);
+  const neighbour = Math.hypot(
+    at(g, "c1").homeX - at(g, "c0").homeX,
+    at(g, "c1").homeY - at(g, "c0").homeY,
+  );
+  assert.ok(r > 20, "further out than the ring gap asks");
+  assert.ok(neighbour >= 20, "neighbours don't overlap");
+});
+
+test("fan: one shared junction per parent; none when children surround it", () => {
+  const g = small();
+  const routing = treeLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const j = fanJunctions(g, routing);
+  const a = at(g, "a");
+  assert.equal(
+    j[a.index * 2],
+    a.x,
+    "a tree's junction is straight down the axis",
+  );
+  assert.ok(j[a.index * 2 + 1] > a.y);
+  assert.ok(Number.isNaN(j[at(g, "a1").index * 2]), "leaves have none");
+
+  const star = new Graph(
+    ["c", "n", "e", "s", "w"].map((id) => ({ id })),
+    ["n", "e", "s", "w"].map((t) => ({ source: "c", target: t })),
+  );
+  const radial = radialLayout(star, {});
+  for (const n of star.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  assert.ok(
+    Number.isNaN(fanJunctions(star, radial)[0]),
+    "children all round: plain spokes",
+  );
+
+  // Pull a child behind its parent: the parent's fan gives up rather than doubling back.
+  at(g, "a1").y = a.y - 50;
+  assert.ok(Number.isNaN(fanJunctions(g, routing)[a.index * 2]));
+});
+
+test("floating fades its forces over the settle time, so even a stretched graph stops soon after", () => {
+  const ids = Array.from({ length: 30 }, (_, i) => `n${i}`);
+  const g = new Graph(
+    ids.map((id) => ({ id })),
+    ids.slice(1).map((t, i) => ({ source: ids[Math.floor(i / 2)], target: t })),
+  );
+  radialLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const sim = new Simulation(g);
+  // Twice the layout's link length: a slow relaxation that used to creep on for half a minute.
+  sim.configure(
+    "floating",
+    physicsOptions("radial", "floating", { linkLength: 2, settle: 3 }),
+  );
+  let t = 0;
+  for (; t < 30 && !sim.asleep; t += 1 / 60) sim.advance(1 / 60);
+  assert.ok(t < 6, `settled after ${t.toFixed(1)}s`);
+  assert.equal(sim.heat, 0);
+  sim.wake();
+  assert.equal(sim.heat, 1, "a disturbance brings the forces back");
+});
+
+test("level and ring locks hold even when collisions push nodes", () => {
+  const ids = Array.from({ length: 12 }, (_, i) => `n${i}`);
+  for (const [layout, run, lock] of [
+    ["tree", treeLayout, "levelLock"],
+    ["radial", radialLayout, "ringLock"],
+  ]) {
+    const g = new Graph(
+      ids.map((id) => ({ id })),
+      ids.slice(1).map((t) => ({ source: "n0", target: t })),
+    );
+    for (const n of g.nodes) {
+      n.radius = 8;
+      n.box = { x0: -8, y0: -8, x1: 8, y1: 8 };
+    }
+    const routing = run(g, {});
+    for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+    const opts = physicsOptions(layout, "elastic", { [lock]: true });
+    const sim = new Simulation(g);
+    sim.configure("elastic", opts, constrainer(routing, opts), {
+      boxes: false,
+      padding: 4,
+    });
+    const [, a, b] = g.nodes;
+    sim.held.add(a.index);
+    [a.x, a.y] = [b.x, b.y]; // dropped right on its neighbour
+    for (let i = 0; i < 600; i++) {
+      sim.step(1 / 120);
+      for (const n of g.nodes) {
+        if (n === a) continue;
+        const off =
+          layout === "tree"
+            ? Math.abs(n.y - n.homeY)
+            : Math.abs(Math.hypot(n.x, n.y) - Math.hypot(n.homeX, n.homeY));
+        assert.ok(off < 1e-6, `${layout}: ${n.id} pushed ${off} off`);
+      }
+    }
+  }
+});
+
+test("a big floating graph can't lock up a frame: repulsion stays local and physics keeps to a time budget", () => {
+  // Depth 7, branching 4: the graph that froze the sandbox (21,845 nodes) under all-pairs repulsion.
+  const nodes = [{ id: "0" }];
+  const edges = [];
+  let level = [0];
+  for (let d = 0; d < 7; d++) {
+    const next = [];
+    for (const p of level)
+      for (let b = 0; b < 4; b++) {
+        const id = nodes.length;
+        nodes.push({ id: String(id) });
+        edges.push({ source: String(p), target: String(id) });
+        next.push(id);
+      }
+    level = next;
+  }
+  const g = new Graph(nodes, edges);
+  radialLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const sim = new Simulation(g);
+  sim.configure("floating", physicsOptions("radial", "floating"));
+  const start = performance.now();
+  sim.advance(1 / 20); // a frame owed six steps
+  const ms = performance.now() - start;
+  assert.ok(ms < 1000, `one frame took ${Math.round(ms)}ms`);
+  assert.ok(g.nodes.every((n) => Number.isFinite(n.x + n.y)));
+});
+
+test("repulsion pushes close nodes apart and ignores far ones", () => {
+  const g = new Graph(
+    ["a", "b", "far"].map((id) => ({ id })),
+    [],
+  );
+  const [a, b, far] = g.nodes;
+  [a.x, b.x, far.x] = [0, 30, 100000];
+  const sim = new Simulation(g);
+  sim.configure(
+    "floating",
+    physicsOptions("radial", "floating", { memory: 0, collide: false }),
+  );
+  sim.step(1 / 120);
+  assert.ok(a.vx < 0 && b.vx > 0, "the close pair pushes apart");
+  assert.equal(far.vx, 0, "the far node feels nothing");
+});
+
+test("one node still moving among many keeps the simulation awake", () => {
+  const ids = Array.from({ length: 2000 }, (_, i) => `n${i}`);
+  const g = new Graph(
+    ids.map((id) => ({ id })),
+    [],
+  );
+  g.nodes.forEach((n, i) => ([n.x, n.y] = [i * 100, 0]));
+  const sim = new Simulation(g);
+  sim.configure("static", physicsOptions("tree", "static", { friction: 0.5 }));
+  g.nodes[0].vx = 20; // its share of the mean squared speed: 0.2, under the old threshold
+  for (let i = 0; i < 60; i++) sim.step(1 / 120);
+  assert.ok(!sim.asleep);
+});

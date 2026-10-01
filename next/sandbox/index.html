@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prismatrix Sandbox</title>
+    <link rel="stylesheet" href="sandbox.css" />
+  </head>
+  <body>
+    <aside id="panel">
+      <header>
+        <h1>Prismatrix <span>sandbox</span></h1>
+        <div class="actions">
+          <button id="reset" title="Send every node back home">Reset</button>
+          <button
+            id="fit"
+            title="Frame the graph (or double-click empty space)"
+          >
+            Fit
+          </button>
+          <button id="defaults" title="Forget every setting">Defaults</button>
+        </div>
+      </header>
+      <div id="sections"></div>
+    </aside>
+    <main>
+      <canvas id="graph"></canvas>
+      <div id="stats"></div>
+      <div id="help">
+        Drag nodes · drag empty space to pan · scroll to zoom · double-click to
+        fit
+      </div>
+    </main>
+    <script type="module" src="sandbox.js"></script>
+  </body>
+</html>

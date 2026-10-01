@@ -5,7 +5,7 @@ export default [
   { ignores: ["node_modules/**", "types/**"] },
   js.configs.recommended,
   {
-    files: ["src/**/*.js", "demo/**/*.js"],
+    files: ["src/**/*.js", "demo/**/*.js", "next/**/*.js"],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: "module",

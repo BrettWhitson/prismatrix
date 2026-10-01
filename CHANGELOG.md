@@ -3,6 +3,23 @@
 Prismatrix: a lightning fast and lightweight graph rendering and physics engine. Versions follow `0.MINOR.PATCH`
 until the first stable release, continuing Prism's numbering.
 
+## Unreleased (branch `ground-up`)
+
+A ground-up rebuild of the engine, in `next/`, beside the current one (`src/`, untouched). Work in progress: it
+draws with Canvas 2D for now, and isn't exported from the package yet.
+
+- **Layouts**, each placing nodes by their real footprint (node plus label), and each with its own physics modes:
+  - tree: contour-packed (Reingold–Tilford style) in any of four directions; static or elastic.
+  - radial: leaf-weighted wedges, rings that grow until their nodes fit; static, elastic or floating.
+- **Physics:** friction in every mode, so anything moving eases to a full stop; throws; elastic springs to home with
+  optional level or ring locks; floating with local repulsion, shape memory, drift and a settle time; node and
+  label collision; a per-frame time budget so big graphs slow down rather than lock up.
+- **Edges:** straight, step (right angles in a tree, ring arcs in a radial) and fan; corner radius, taper, colour,
+  opacity and ends, drawn as one layer so overlaps don't brighten.
+- **Nodes:** six shapes, sizing by subtree or depth, colouring by depth or branch, labels below, right or outward.
+- **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
+  writes a rolling 30-second engine log to `logs/engine-stats.log`.
+
 ## 0.4.0 (2026-09-30)
 
 Prism and Tether are one engine now: **Prismatrix**.
