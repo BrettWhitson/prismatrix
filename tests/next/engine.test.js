@@ -939,3 +939,29 @@ test("a radial step edge whose ends have left their rings is drawn as a curve", 
   const curved = edgePoints(routing, "step", parent, drifted);
   assert.deepEqual(curved, edgePoints(routing, "curve", parent, drifted));
 });
+
+test("during a layout morph, step edges keep their arcs even off their rings (no curve-to-step blink)", () => {
+  const parent = { x: 100, y: 0, homeX: 100, homeY: 0 };
+  const travelling = { x: 0, y: 140, homeX: 0, homeY: 200 }; // between rings, on its way
+  const settled = edgePoints(
+    { kind: "radial", cx: 0, cy: 0 },
+    "step",
+    parent,
+    travelling,
+  );
+  const morphing = edgePoints(
+    { kind: "radial", cx: 0, cy: 0, morphing: true },
+    "step",
+    parent,
+    travelling,
+  );
+  assert.deepEqual(
+    settled,
+    edgePoints({ kind: "radial", cx: 0, cy: 0 }, "curve", parent, travelling),
+    "settled: off its ring, so a curve",
+  );
+  assert.ok(
+    Math.abs(Math.hypot(morphing[4], morphing[5]) - 120) < 1e-6,
+    "morphing: the arc, at the ring halfway",
+  );
+});

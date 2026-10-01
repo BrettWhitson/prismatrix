@@ -553,6 +553,8 @@ export class GraphView {
       busy = true;
     }
     const drawStart = performance.now();
+    // Edge routing knows when a layout morph is running (radial step edges keep their arcs through it).
+    this.routing.morphing = !!this.tween;
     // Ghosts are drawn from a display graph; everything else (physics, hover, hit-testing) uses the real one.
     let shown = {
       graph: this.graph,

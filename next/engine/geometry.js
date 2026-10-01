@@ -382,8 +382,10 @@ function radialStep(routing, s, t) {
   let delta = at - as;
   if (delta > Math.PI) delta -= Math.PI * 2;
   if (delta < -Math.PI) delta += Math.PI * 2;
+  // While a layout morph runs, nodes travel between rings on purpose: keep the arc (the loop guard still
+  // applies), so edges don't turn into curves and snap back to steps when the morph lands.
   if (
-    offRings(s, t, rs, rt, cx, cy) ||
+    (!routing.morphing && offRings(s, t, rs, rt, cx, cy)) ||
     stepLoops(rs, rt, rm * Math.abs(delta), Math.hypot(t.x - s.x, t.y - s.y))
   )
     return curve(routing, s, t);
