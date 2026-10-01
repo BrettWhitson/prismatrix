@@ -54,29 +54,32 @@ export function lineage(graph, index) {
 }
 
 /**
- * Draw one frame.
+ * Draw one whole frame on one 2D canvas: background, edges, nodes, labels. Renderers that split the scene across
+ * layers (see webgl.js) call the parts below themselves.
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} scene
  */
 export function drawScene(ctx, scene) {
-  const {
-    graph,
-    routing,
-    camera,
-    node,
-    edge,
-    looks,
-    focus,
-    width,
-    height,
-    dpr,
-    background,
-  } = scene;
+  clearTo(ctx, scene, scene.background);
+  drawEdges(ctx, scene);
+  drawNodes(ctx, scene);
+  drawLabels(ctx, scene);
+}
+
+/** Fill the canvas with `colour`, or clear it to transparent when there's none. */
+export function clearTo(ctx, { width, height, dpr }, colour) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = background;
-  ctx.fillRect(0, 0, width * dpr, height * dpr);
+  ctx.globalAlpha = 1;
+  if (colour) {
+    ctx.fillStyle = colour;
+    ctx.fillRect(0, 0, width * dpr, height * dpr);
+  } else ctx.clearRect(0, 0, width * dpr, height * dpr);
+}
+
+/** The canvas transform from world coordinates to device pixels. */
+function worldTransform({ camera, width, height, dpr }) {
   const k = camera.k * dpr;
-  const world = [
+  return [
     k,
     0,
     0,
@@ -84,42 +87,62 @@ export function drawScene(ctx, scene) {
     dpr * (width / 2 - camera.x * camera.k),
     dpr * (height / 2 - camera.y * camera.k),
   ];
+}
 
-  // Edges go onto their own layer at full strength, and the layer onto the scene at the edge opacity, so where
-  // edges overlap (siblings sharing a trunk, the joints of a tapered edge) they don't add up to brighter lines.
-  // Dimmed edges (outside the hovered lineage) get a pass of their own.
-  const layer = edgeLayer(ctx.canvas);
+/**
+ * Edges go onto their own layer at full strength, and the layer onto the scene at the edge opacity, so where edges
+ * overlap (siblings sharing a trunk, the joints of a tapered edge) they don't add up to brighter lines. Dimmed edges
+ * (outside the hovered lineage) get a pass of their own. Fully opaque edges with nothing dimmed skip the layer.
+ */
+export function drawEdges(ctx, scene) {
+  const { graph, routing, edge, looks, focus } = scene;
+  const world = worldTransform(scene);
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
-  const lit = (e) => !focus || (focus.has(e.source) && focus.has(e.target));
+  const draw = (target, e) =>
+    drawEdge(
+      target,
+      routing,
+      edge,
+      looks,
+      graph.nodes[e.source],
+      graph.nodes[e.target],
+      junctions && e.tree ? junctionAt(junctions, e.source) : null,
+    );
+  const style = (target) => {
+    target.setTransform(...world);
+    target.lineCap = "round";
+    target.lineJoin = "round";
+  };
+  if (!focus && edge.opacity >= 1) {
+    style(ctx);
+    for (const e of graph.edges) draw(ctx, e);
+    return;
+  }
+  const lit = [],
+    dim = [];
+  for (const e of graph.edges)
+    (!focus || (focus.has(e.source) && focus.has(e.target)) ? lit : dim).push(
+      e,
+    );
+  const layer = edgeLayer(ctx.canvas);
   const pass = (edges, strength) => {
     if (!edges.length) return;
     layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-    layer.ctx.setTransform(...world);
-    layer.ctx.lineCap = "round";
-    layer.ctx.lineJoin = "round";
-    for (const e of edges)
-      drawEdge(
-        layer.ctx,
-        routing,
-        edge,
-        looks,
-        graph.nodes[e.source],
-        graph.nodes[e.target],
-        junctions && e.tree ? junctionAt(junctions, e.source) : null,
-      );
+    style(layer.ctx);
+    for (const e of edges) draw(layer.ctx, e);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = edge.opacity * strength;
     ctx.drawImage(layer.canvas, 0, 0);
   };
-  pass(
-    graph.edges.filter((e) => !lit(e)),
-    0.15,
-  );
-  pass(graph.edges.filter(lit), 1);
+  pass(dim, 0.15);
+  pass(lit, 1);
   ctx.globalAlpha = 1;
-  ctx.setTransform(...world);
+}
 
+export function drawNodes(ctx, scene) {
+  const { graph, node, looks, focus, background } = scene;
+  ctx.setTransform(...worldTransform(scene));
   for (const n of graph.nodes) {
     ctx.globalAlpha = !focus || focus.has(n.index) ? 1 : 0.25;
     drawNode(
@@ -131,16 +154,20 @@ export function drawScene(ctx, scene) {
       background,
     );
   }
+  ctx.globalAlpha = 1;
+}
 
+/** Labels with room kept for them (label collision) always show; otherwise they drop out when too small to read. */
+export function drawLabels(ctx, scene) {
+  const { graph, node, looks, focus, camera } = scene;
   const labelPx = node.labelSize * camera.k;
-  // Labels with room kept for them (label collision) always show; otherwise they drop out when too small to read.
-  if (node.labels !== "off" && (node.labelCollide || labelPx >= 6)) {
-    ctx.font = `${node.labelSize}px system-ui, sans-serif`;
-    ctx.fillStyle = "#d5d9e4";
-    for (const n of graph.nodes) {
-      ctx.globalAlpha = !focus || focus.has(n.index) ? 1 : 0.2;
-      drawLabel(ctx, n, looks.radius[n.index] * reach(node.shape));
-    }
+  if (node.labels === "off" || (!node.labelCollide && labelPx < 6)) return;
+  ctx.setTransform(...worldTransform(scene));
+  ctx.font = `${node.labelSize}px system-ui, sans-serif`;
+  ctx.fillStyle = "#d5d9e4";
+  for (const n of graph.nodes) {
+    ctx.globalAlpha = !focus || focus.has(n.index) ? 1 : 0.2;
+    drawLabel(ctx, n, looks.radius[n.index] * reach(node.shape));
   }
   ctx.globalAlpha = 1;
 }
@@ -296,4 +323,20 @@ function drawLabel(ctx, n, r) {
   ctx.textAlign = a.align;
   ctx.textBaseline = a.baseline;
   ctx.fillText(n.label, n.x + a.x, n.y + a.y);
+}
+
+/** The plain renderer: everything on the view's own canvas with Canvas 2D. Also the reference for the GPU one. */
+export class CanvasRenderer {
+  constructor(canvas) {
+    this.name = "canvas";
+    this.ctx = canvas.getContext("2d");
+  }
+
+  resize() {}
+
+  draw(scene) {
+    drawScene(this.ctx, scene);
+  }
+
+  dispose() {}
 }

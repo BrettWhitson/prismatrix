@@ -91,7 +91,7 @@ export function startTelemetry(getView) {
     if (!view) return;
     const a = acc;
     acc = fresh();
-    const where = `${view.layout}/${view.mode} n=${view.graph.nodes.length}`;
+    const where = `${view.renderer?.name}:${view.layout}/${view.mode} n=${view.graph.nodes.length}`;
     if (!a.frames) {
       push(`idle   ${where} ${health(view)}`);
       return;

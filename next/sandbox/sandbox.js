@@ -87,6 +87,7 @@ function save() {
 const stored = load();
 const settings = {
   graph: resolve(GRAPH_OPTIONS, stored.graph),
+  renderer: stored.renderer === "canvas" ? "canvas" : "webgl",
   layout: LAYOUTS[stored.layout] ? stored.layout : "radial",
   layouts: stored.layouts ?? {}, // per layout: { options, mode, physics: { [mode]: options } }
   node: resolve(NODE_OPTIONS, stored.node),
@@ -173,17 +174,22 @@ function makeGraph(g) {
 
 const stats = document.getElementById("stats");
 const log = startTelemetry(() => view);
-const view = new GraphView(document.getElementById("graph"), {
-  onEvent: log.event,
-  onFrame: (frame) => {
-    log.frame(frame);
-    const { fps, energy, state } = frame;
-    stats.textContent =
-      `${view.graph.nodes.length} nodes · ${view.graph.edges.length} edges · ` +
-      `${Math.round(fps)} fps · ${state}` +
-      (state === "moving" ? ` · energy ${energy.toFixed(1)}` : "");
+const view = new GraphView(
+  document.getElementById("graph"),
+  {
+    onEvent: log.event,
+    onFrame: (frame) => {
+      log.frame(frame);
+      const { fps, energy, state } = frame;
+      stats.textContent =
+        `${view.renderer.name === "webgl" ? "WebGL" : "Canvas 2D"} · ` +
+        `${view.graph.nodes.length} nodes · ${view.graph.edges.length} edges · ` +
+        `${Math.round(fps)} fps · ${state}` +
+        (state === "moving" ? ` · energy ${energy.toFixed(1)}` : "");
+    },
   },
-});
+  { renderer: settings.renderer },
+);
 
 function applyAll() {
   const s = layoutState();
@@ -197,7 +203,9 @@ function applyAll() {
 // ---- the panel ---------------------------------------------------------------------------------------------
 
 const sections = document.getElementById("sections");
-const openSections = new Set(stored.open ?? ["Graph", "Layout", "Physics"]);
+const openSections = new Set(
+  stored.open ?? ["View", "Graph", "Layout", "Physics"],
+);
 
 function section(title, build) {
   const details = document.createElement("details");
@@ -293,6 +301,27 @@ function controls(body, schema, values, after) {
 
 function render() {
   sections.replaceChildren(
+    section("View", (body) => {
+      body.append(
+        control(
+          select(
+            "renderer",
+            "Renderer",
+            [
+              { value: "webgl", label: "WebGL" },
+              { value: "canvas", label: "Canvas 2D" },
+            ],
+            "webgl",
+            "WebGL draws the nodes on the GPU so far; edges and labels follow in later steps.",
+          ),
+          view.renderer.name,
+          (v) => {
+            settings.renderer = view.setRenderer(v);
+            save();
+          },
+        ),
+      );
+    }),
     section("Graph", (body) => {
       const relevant = GRAPH_OPTIONS.filter(
         (o) =>

@@ -5,7 +5,8 @@ import { LINE, footprint, labelAngle, reach } from "./boxes.js";
 import { Graph } from "./graph.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
-import { drawScene, lineage, nodeLooks } from "./render.js";
+import { CanvasRenderer, lineage, nodeLooks } from "./render.js";
+import { WebGLRenderer, webglAvailable } from "./webgl.js";
 import { resolve } from "./schema.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
 
@@ -39,6 +40,8 @@ export class GraphView {
    * @param {object} [hooks]
    * @param {(stats: FrameStats) => void} [hooks.onFrame] after every drawn frame
    * @param {(type: string, detail?: object) => void} [hooks.onEvent] settings changes and interactions
+   * @param {object} [options]
+   * @param {"webgl" | "canvas"} [options.renderer] "webgl" (the default) falls back to "canvas" without WebGL2
    *
    * @typedef {object} FrameStats
    * @property {number} fps        smoothed
@@ -48,9 +51,9 @@ export class GraphView {
    * @property {number} energy     mean squared node speed
    * @property {string} state      "moving to layout", "dragging", "moving" or "at rest"
    */
-  constructor(canvas, hooks = {}) {
+  constructor(canvas, hooks = {}, { renderer = "webgl" } = {}) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext("2d");
+    this.ctx = canvas.getContext("2d"); // also measures label text
     this.hooks = hooks;
     this.graph = new Graph();
     this.sim = new Simulation(this.graph);
@@ -63,6 +66,9 @@ export class GraphView {
     this.edge = resolve(EDGE_OPTIONS);
     this.camera = { x: 0, y: 0, k: 1 };
     this.glide = null; // the camera's coasting speed after a pan, world px/s
+    // True while the camera shows a framing the view chose (not one the user panned or zoomed to): a resize then
+    // frames again, so a view sized late (a hidden tab, a panel opening) doesn't stay zoomed for the wrong size.
+    this.framed = false;
     this.width = 1;
     this.height = 1;
     this.dpr = 1;
@@ -74,6 +80,8 @@ export class GraphView {
     this.last = 0;
     this.fps = 60;
 
+    this.renderer = null;
+    this.setRenderer(renderer);
     this.resizer = new ResizeObserver(() => this.#resize());
     this.resizer.observe(canvas);
     this.#resize();
@@ -148,6 +156,7 @@ export class GraphView {
   fit(animate = true) {
     const target = this.#framing(!!this.tween);
     this.glide = null;
+    this.framed = true;
     if (animate)
       this.cameraTween = {
         from: { ...this.camera },
@@ -191,7 +200,32 @@ export class GraphView {
     };
   }
 
+  /**
+   * Switch how frames are drawn. Asking for "webgl" where WebGL2 isn't available (or fails to start) gives "canvas".
+   * @returns {"webgl" | "canvas"} the renderer now in use
+   */
+  setRenderer(name) {
+    if (this.renderer?.name === name) return name;
+    this.renderer?.dispose();
+    this.renderer = null;
+    if (name === "webgl" && webglAvailable()) {
+      try {
+        this.renderer = new WebGLRenderer(this.canvas);
+      } catch (error) {
+        console.warn(
+          `Prismatrix: WebGL renderer failed (${error.message}); using Canvas 2D`,
+        );
+      }
+    }
+    this.renderer ??= new CanvasRenderer(this.canvas);
+    this.renderer.resize(this.width, this.height, this.dpr);
+    this.#wake();
+    this.#emit("renderer", { renderer: this.renderer.name });
+    return this.renderer.name;
+  }
+
   destroy() {
+    this.renderer?.dispose();
     cancelAnimationFrame(this.frame);
     this.resizer.disconnect();
     this.unbind?.();
@@ -213,9 +247,11 @@ export class GraphView {
       this.camera = this.#framing(true);
       this.cameraTween = null;
       this.glide = null;
+      this.framed = true;
     }
     this.#startTween();
     if (fit === "animate") {
+      this.framed = true;
       this.cameraTween = {
         from: { ...this.camera },
         to: this.#framing(true),
@@ -340,7 +376,7 @@ export class GraphView {
 
     const focusOn = this.pointer?.node ?? this.hover;
     const drawStart = performance.now();
-    drawScene(this.ctx, {
+    this.renderer.draw({
       graph: this.graph,
       routing: this.routing,
       camera: this.camera,
@@ -394,6 +430,9 @@ export class GraphView {
     this.height = Math.max(rect.height, 1);
     this.canvas.width = Math.round(this.width * this.dpr);
     this.canvas.height = Math.round(this.height * this.dpr);
+    this.renderer?.resize(this.width, this.height, this.dpr);
+    if (this.framed && !this.cameraTween)
+      this.camera = this.#framing(!!this.tween);
     this.#wake();
   }
 
@@ -489,6 +528,7 @@ export class GraphView {
         const dy = -(e.clientY - ptr.screen.y) / this.camera.k;
         this.camera.x += dx;
         this.camera.y += dy;
+        this.framed = false;
         track(ptr, dx, dy, e);
         ptr.screen = { x: e.clientX, y: e.clientY };
         this.#wake();
@@ -541,6 +581,7 @@ export class GraphView {
       e.preventDefault();
       const before = this.toWorld(e.clientX, e.clientY);
       this.cameraTween = null;
+      this.framed = false;
       this.camera.k = Math.min(
         Math.max(this.camera.k * Math.exp(-e.deltaY * 0.0015), 0.05),
         8,
