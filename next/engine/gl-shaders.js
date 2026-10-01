@@ -117,7 +117,8 @@ export const SEGMENT_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec4 a_ends;
 layout(location = 2) in vec2 a_half;
-layout(location = 3) in vec4 a_colour;
+layout(location = 3) in vec3 a_colour;
+layout(location = 4) in float a_alpha;
 ${COMMON_VERTEX}
 
 out vec2 v_world;
@@ -138,7 +139,7 @@ void main() {
   v_world = world;
   v_ends = a_ends;
   v_half = a_half;
-  v_colour = a_colour;
+  v_colour = vec4(a_colour, a_alpha);
 }`;
 
 export const SEGMENT_FRAGMENT = `#version 300 es
@@ -163,7 +164,8 @@ export const END_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec4 a_tip;    // tip x, y, direction x, y
 layout(location = 2) in vec2 a_shape;  // size, kind
-layout(location = 3) in vec4 a_colour;
+layout(location = 3) in vec3 a_colour;
+layout(location = 4) in float a_alpha;
 ${COMMON_VERTEX}
 
 out vec2 v_local;
@@ -179,7 +181,7 @@ void main() {
   gl_Position = toClip(a_tip.xy - dir * local.x + normal * local.y);
   v_local = local;
   v_shape = a_shape;
-  v_colour = a_colour;
+  v_colour = vec4(a_colour, a_alpha);
 }`;
 
 export const END_FRAGMENT = `#version 300 es

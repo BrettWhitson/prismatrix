@@ -15,10 +15,13 @@ export const SHAPE_IDS = {
 
 /** Floats per node: centre x, y; radius; colour r, g, b, a (a: how visible, see nodeAlpha); shape id. */
 export const NODE_STRIDE = 8;
-/** Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b, a (a: see edgeAlpha). */
-export const SEGMENT_STRIDE = 10;
-/** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour r, g, b, a. */
-export const END_STRIDE = 10;
+/**
+ * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b. Its brightness lives in a
+ * separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding every edge.
+ */
+export const SEGMENT_STRIDE = 9;
+/** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour r, g, b. */
+export const END_STRIDE = 9;
 
 /** "#rrggbb" to [r, g, b] in 0–1. */
 export function parseColour(hex) {
@@ -30,6 +33,14 @@ export function parseColour(hex) {
 function room(old, floats) {
   if (old && old.length >= floats) return old;
   const grown = new Float32Array(Math.ceil(Math.max(floats, 1024) * 1.5));
+  if (old) grown.set(old);
+  return grown;
+}
+
+/** An Int32Array of at least `count`, keeping what `old` held. */
+function roomInt(old, count) {
+  if (old && old.length >= count) return old;
+  const grown = new Int32Array(Math.ceil(Math.max(count, 1024) * 1.5));
   if (old) grown.set(old);
   return grown;
 }
@@ -70,11 +81,12 @@ export function packNodes(scene, out) {
 
 /**
  * Every edge as straight segments (curves and rounded corners already broken down) and every arrow or dot at an
- * edge's end, each carrying the edge's brightness. `bright` is true when every edge is at full brightness.
+ * edge's end, with the index of the edge each one belongs to (for edgeBrightness).
  * @param {object} scene
- * @param {{ segments?: Float32Array, ends?: Float32Array }} [reuse] buffers from the last frame
- * @returns {{ segments: Float32Array, ends: Float32Array, segmentCount: number, endCount: number,
- *   bright: boolean }}
+ * @param {{ segments?: Float32Array, ends?: Float32Array, segmentEdge?: Int32Array, endEdge?: Int32Array }} [reuse]
+ *   buffers from the last frame
+ * @returns {{ segments: Float32Array, ends: Float32Array, segmentEdge: Int32Array, endEdge: Int32Array,
+ *   segmentCount: number, endCount: number }}
  */
 export function packEdges(scene, reuse = {}) {
   const { graph, routing, edge, looks } = scene;
@@ -86,14 +98,13 @@ export function packEdges(scene, reuse = {}) {
   const kind = edge.arrow === "dot" ? 1 : 0;
   let segments = reuse.segments ?? null;
   let ends = reuse.ends ?? null;
+  let segmentEdge = reuse.segmentEdge ?? null;
+  let endEdge = reuse.endEdge ?? null;
   let segmentCount = 0,
-    endCount = 0,
-    bright = true;
+    endCount = 0;
 
-  for (const e of graph.edges) {
-    const alpha = edgeAlpha(scene, e);
-    if (alpha <= 0) continue;
-    if (alpha < 1) bright = false;
+  for (let edgeIndex = 0; edgeIndex < graph.edges.length; edgeIndex++) {
+    const e = graph.edges[edgeIndex];
     const s = graph.nodes[e.source],
       t = graph.nodes[e.target];
     let junction = null;
@@ -115,6 +126,7 @@ export function packEdges(scene, reuse = {}) {
 
     const points = pts.length / 2;
     segments = room(segments, (segmentCount + points) * SEGMENT_STRIDE);
+    segmentEdge = roomInt(segmentEdge, segmentCount + points);
     // A taper narrows from twice the width at the parent to a third of it at the child, by distance along the edge.
     let total = 0;
     if (edge.taper)
@@ -125,6 +137,7 @@ export function packEdges(scene, reuse = {}) {
     let walked = 0;
     for (let i = 2; i < pts.length; i += 2) {
       const length = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
+      segmentEdge[segmentCount] = edgeIndex;
       const o = segmentCount++ * SEGMENT_STRIDE;
       segments[o] = pts[i - 2];
       segments[o + 1] = pts[i - 1];
@@ -136,7 +149,6 @@ export function packEdges(scene, reuse = {}) {
       segments[o + 6] = rgb[0];
       segments[o + 7] = rgb[1];
       segments[o + 8] = rgb[2];
-      segments[o + 9] = alpha;
     }
 
     if (end > 0) {
@@ -147,6 +159,8 @@ export function packEdges(scene, reuse = {}) {
       dx /= d;
       dy /= d;
       ends = room(ends, (endCount + 1) * END_STRIDE);
+      endEdge = roomInt(endEdge, endCount + 1);
+      endEdge[endCount] = edgeIndex;
       const o = endCount++ * END_STRIDE;
       ends[o] = pts[n - 2] + dx * end;
       ends[o + 1] = pts[n - 1] + dy * end;
@@ -157,14 +171,43 @@ export function packEdges(scene, reuse = {}) {
       ends[o + 6] = rgb[0];
       ends[o + 7] = rgb[1];
       ends[o + 8] = rgb[2];
-      ends[o + 9] = alpha;
     }
   }
   return {
     segments: segments ?? new Float32Array(0),
     ends: ends ?? new Float32Array(0),
+    segmentEdge: segmentEdge ?? new Int32Array(0),
+    endEdge: endEdge ?? new Int32Array(0),
     segmentCount,
     endCount,
-    bright,
   };
+}
+
+/**
+ * How bright each packed segment and end is: its edge's brightness (edgeAlpha: hover, fading in). Cheap enough to
+ * redo every frame of a fade. `bright` is true when every edge is at full brightness.
+ * @param {object} scene
+ * @param {ReturnType<typeof packEdges>} packed
+ * @param {{ segmentAlpha?: Float32Array, endAlpha?: Float32Array }} [reuse]
+ * @returns {{ segmentAlpha: Float32Array, endAlpha: Float32Array, bright: boolean }}
+ */
+export function edgeBrightness(scene, packed, reuse = {}) {
+  const { edges } = scene.graph;
+  const perEdge = new Float32Array(edges.length);
+  let bright = true;
+  for (let i = 0; i < edges.length; i++) {
+    perEdge[i] = edgeAlpha(scene, edges[i]);
+    if (perEdge[i] < 1) bright = false;
+  }
+  let segmentAlpha = reuse.segmentAlpha;
+  if (!segmentAlpha || segmentAlpha.length < packed.segmentCount)
+    segmentAlpha = new Float32Array(Math.ceil(packed.segmentCount * 1.5) + 16);
+  let endAlpha = reuse.endAlpha;
+  if (!endAlpha || endAlpha.length < packed.endCount)
+    endAlpha = new Float32Array(Math.ceil(packed.endCount * 1.5) + 16);
+  for (let i = 0; i < packed.segmentCount; i++)
+    segmentAlpha[i] = perEdge[packed.segmentEdge[i]];
+  for (let i = 0; i < packed.endCount; i++)
+    endAlpha[i] = perEdge[packed.endEdge[i]];
+  return { segmentAlpha, endAlpha, bright };
 }

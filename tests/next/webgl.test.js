@@ -52,6 +52,7 @@ import { EASINGS, approach } from "../../next/engine/animation.js";
 import {
   END_STRIDE,
   SEGMENT_STRIDE,
+  edgeBrightness,
   packEdges,
 } from "../../next/engine/gl-pack.js";
 
@@ -186,17 +187,17 @@ test("edges carry their brightness, arrows follow their edges, and the ends sit 
     b = g.byId.get("b");
   const shade = new Float32Array(g.nodes.length).fill(1);
   shade[b.index] = 0; // b's edge is dimmed
-  const out = packEdges({
+  const shaded = {
     ...scene(g, routing, { arrow: "arrow", colorBy: "target" }),
     shade,
     dim: 0.75,
-  });
+  };
+  const out = packEdges(shaded);
+  const light = edgeBrightness(shaded, out);
   assert.equal(out.segmentCount, 3);
   assert.equal(out.endCount, 3);
-  assert.equal(out.bright, false, "not every edge is at full brightness");
-  const alphas = [0, 1, 2]
-    .map((i) => out.segments[i * SEGMENT_STRIDE + 9])
-    .sort();
+  assert.equal(light.bright, false, "not every edge is at full brightness");
+  const alphas = [...light.segmentAlpha.subarray(0, 3)].sort();
   assert.ok(Math.abs(alphas[0] - 0.15) < 1e-6, "the dimmed edge fades to 15%");
   assert.deepEqual(alphas.slice(1), [1, 1]);
   for (let i = 0; i < out.endCount; i++) {
@@ -216,7 +217,8 @@ test("edges carry their brightness, arrows follow their edges, and the ends sit 
     );
   }
   assert.ok(Math.abs(nearest - 5) < 1e-6);
-  assert.equal(packEdges(scene(g, routing)).bright, true);
+  const plain = scene(g, routing);
+  assert.equal(edgeBrightness(plain, packEdges(plain)).bright, true);
 });
 
 test("visibility: hover dims nodes, labels and edges by different amounts, and fading in scales it all", () => {
@@ -296,4 +298,39 @@ test("label boxes sit where the Canvas 2D renderer puts its text", () => {
   // Pointing left (an outward label on the left of a radial): ending just before the node.
   const left = labelBox(0, 0, 10, Math.PI, 12, 40);
   assert.ok(Math.abs(left.left + 14 + 40) < 1e-9);
+});
+
+test("brightness follows each segment's own edge, and refilling it never touches the geometry", () => {
+  const ids = Array.from({ length: 40 }, (_, i) => `n${i}`);
+  const g = new Graph(
+    ids.map((id) => ({ id })),
+    ids.slice(1).map((t, i) => ({ source: ids[Math.floor(i / 3)], target: t })),
+  );
+  const routing = treeLayout(g, {});
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
+  const base = scene(g, routing, { shape: "curve", arrow: "dot" });
+  const packed = packEdges(base);
+  const geometry = packed.segments.slice(
+    0,
+    packed.segmentCount * SEGMENT_STRIDE,
+  );
+  for (let round = 0; round < 3; round++) {
+    const shade = Float32Array.from(
+      g.nodes,
+      (_, i) => ((i * 7 + round) % 5) / 4,
+    );
+    const s = { ...base, shade, dim: 0.75 };
+    const light = edgeBrightness(s, packed);
+    for (let i = 0; i < packed.segmentCount; i++)
+      assert.equal(
+        light.segmentAlpha[i],
+        Math.fround(edgeAlpha(s, g.edges[packed.segmentEdge[i]])),
+      );
+    for (let i = 0; i < packed.endCount; i++)
+      assert.equal(
+        light.endAlpha[i],
+        Math.fround(edgeAlpha(s, g.edges[packed.endEdge[i]])),
+      );
+  }
+  assert.deepEqual(packed.segments.slice(0, geometry.length), geometry);
 });

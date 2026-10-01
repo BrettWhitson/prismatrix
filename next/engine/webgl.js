@@ -12,6 +12,7 @@ import {
   END_STRIDE,
   NODE_STRIDE,
   SEGMENT_STRIDE,
+  edgeBrightness,
   packEdges,
   packNodes,
   parseColour,
@@ -80,13 +81,17 @@ export function webglAvailable() {
  * @param {[location: number, size: number, offset: number][]} layout attribute location, floats, float offset
  */
 class InstancedQuads {
-  constructor(gl, corners, stride, layout) {
+  /** @param {number | null} [alphaLocation] a per-instance float read from a buffer of its own (uploadAlpha) */
+  constructor(gl, corners, stride, layout, alphaLocation = null) {
     this.gl = gl;
     this.stride = stride;
     this.layout = layout;
+    this.alphaLocation = alphaLocation;
     this.vao = gl.createVertexArray();
     this.buffer = gl.createBuffer();
     this.capacity = 0;
+    this.alphaBuffer = alphaLocation === null ? null : gl.createBuffer();
+    this.alphaCapacity = 0;
     gl.bindVertexArray(this.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, corners);
     gl.enableVertexAttribArray(0);
@@ -96,6 +101,10 @@ class InstancedQuads {
       gl.enableVertexAttribArray(location);
       gl.vertexAttribDivisor(location, 1);
     }
+    if (this.alphaBuffer) {
+      gl.enableVertexAttribArray(alphaLocation);
+      gl.vertexAttribDivisor(alphaLocation, 1);
+    }
     this.#point(0);
     gl.bindVertexArray(null);
   }
@@ -104,6 +113,7 @@ class InstancedQuads {
   #point(first) {
     const { gl } = this;
     const bytes = this.stride * 4;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     for (const [location, size, offset] of this.layout)
       gl.vertexAttribPointer(
         location,
@@ -113,6 +123,28 @@ class InstancedQuads {
         bytes,
         first * bytes + offset * 4,
       );
+    if (this.alphaBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
+      gl.vertexAttribPointer(
+        this.alphaLocation,
+        1,
+        gl.FLOAT,
+        false,
+        4,
+        first * 4,
+      );
+    }
+  }
+
+  /** The per-instance alpha, one float each. */
+  uploadAlpha(data, count) {
+    const { gl } = this;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
+    if (count * 4 > this.alphaCapacity) {
+      this.alphaCapacity = Math.max(count * 4, this.alphaCapacity * 2, 4096);
+      gl.bufferData(gl.ARRAY_BUFFER, this.alphaCapacity, gl.DYNAMIC_DRAW);
+    }
+    if (count) gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, count);
   }
 
   upload(data, count) {
@@ -132,7 +164,6 @@ class InstancedQuads {
     if (end <= first) return;
     const { gl } = this;
     gl.bindVertexArray(this.vao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     this.#point(first);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, end - first);
     gl.bindVertexArray(null);
@@ -183,16 +214,28 @@ class GLLayer {
       [3, 4, 3], // colour
       [4, 1, 7], // shape
     ]);
-    this.segments = new InstancedQuads(gl, corners, SEGMENT_STRIDE, [
-      [1, 4, 0], // ends
-      [2, 2, 4], // half-widths
-      [3, 4, 6], // colour
-    ]);
-    this.ends = new InstancedQuads(gl, corners, END_STRIDE, [
-      [1, 4, 0], // tip, direction
-      [2, 2, 4], // size, kind
-      [3, 4, 6], // colour
-    ]);
+    this.segments = new InstancedQuads(
+      gl,
+      corners,
+      SEGMENT_STRIDE,
+      [
+        [1, 4, 0], // ends
+        [2, 2, 4], // half-widths
+        [3, 3, 6], // colour
+      ],
+      4, // brightness, in a buffer of its own
+    );
+    this.ends = new InstancedQuads(
+      gl,
+      corners,
+      END_STRIDE,
+      [
+        [1, 4, 0], // tip, direction
+        [2, 2, 4], // size, kind
+        [3, 3, 6], // colour
+      ],
+      4, // brightness
+    );
     this.labelProgram = program(gl, LABEL_VERTEX, LABEL_FRAGMENT);
     this.labels = new InstancedQuads(gl, corners, LABEL_STRIDE, [
       [1, 4, 0], // box
@@ -272,20 +315,37 @@ class GLLayer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-    // Rebuild what goes to the GPU only when something changed besides the camera.
+    // Rebuild what goes to the GPU only when something changed besides the camera: the geometry when nodes, styles
+    // or the graph changed (version), just the brightness when only the hover or a fade did (shadeVersion).
     const fresh =
       scene.version === undefined ||
       scene.version !== this.built?.version ||
       scene.graph !== this.built.graph;
+    const shaded =
+      fresh ||
+      scene.shadeVersion === undefined ||
+      scene.shadeVersion !== this.built.shadeVersion;
     if (fresh) {
       this.edgeData = packEdges(scene, this.edgeData);
       this.segments.upload(this.edgeData.segments, this.edgeData.segmentCount);
       this.ends.upload(this.edgeData.ends, this.edgeData.endCount);
+    }
+    if (shaded) {
+      this.brightness = edgeBrightness(scene, this.edgeData, this.brightness);
+      this.segments.uploadAlpha(
+        this.brightness.segmentAlpha,
+        this.edgeData.segmentCount,
+      );
+      this.ends.uploadAlpha(this.brightness.endAlpha, this.edgeData.endCount);
       this.nodeData = packNodes(scene, this.nodeData);
       this.nodes.upload(this.nodeData, graph.nodes.length);
-      this.built = { version: scene.version, graph: scene.graph };
     }
-    const e = this.edgeData;
+    this.built = {
+      version: scene.version,
+      shadeVersion: scene.shadeVersion,
+      graph: scene.graph,
+    };
+    const e = { ...this.edgeData, bright: this.brightness.bright };
     const drawEdges = () => {
       this.#use(this.segmentProgram, scene);
       this.segments.draw(0, e.segmentCount);
@@ -320,7 +380,7 @@ class GLLayer {
     gl.uniform3f(u.u_background, ...bg);
     this.nodes.draw(0, count);
 
-    this.#drawLabels(scene, fresh);
+    this.#drawLabels(scene, shaded);
   }
 
   /**

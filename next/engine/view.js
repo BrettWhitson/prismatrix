@@ -103,6 +103,7 @@ export class GraphView {
     // Bumped whenever node positions, the graph or the styles change: a renderer can keep what it built for a
     // frame until it moves (panning and zooming redraw without rebuilding).
     this.version = 0;
+    this.shadeVersion = 0; // bumped when only brightness changes (hover, fades): no geometry to rebuild
     this.focusCache = { key: -1, set: null };
     this.anim = resolve(ANIMATION_OPTIONS);
     // Per node, 0–1: how lit it is by the hover (eased toward its target), and how far it has faded in.
@@ -532,7 +533,7 @@ export class GraphView {
         set: focusOn >= 0 ? lineage(this.graph, focusOn) : null,
       };
     if (this.#fade(dt, this.focusCache.set)) {
-      this.version++;
+      this.shadeVersion++;
       busy = true;
     }
     const drawStart = performance.now();
@@ -547,6 +548,7 @@ export class GraphView {
       appear: this.appear,
       dim: this.anim.hoverDim,
       version: this.version,
+      shadeVersion: this.shadeVersion,
       width: this.width,
       height: this.height,
       dpr: this.dpr,
