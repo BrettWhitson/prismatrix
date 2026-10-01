@@ -143,6 +143,7 @@ export class GraphController {
   setGraph(input) {
     const model = GraphModel.from(input);
     const previous = this.graph.nodes.length ? this.graph : null;
+    if (previous && this.#restyle(model)) return;
     const previousLooks = this.looks;
     this.graph = new Graph(model);
     // Nodes that left fold back into what's left of their family; ghosts still leaving from an earlier change
@@ -172,6 +173,60 @@ export class GraphController {
       }),
     });
     for (const issue of model.issues) this.#emit("graphIssue", issue);
+  }
+
+  /**
+   * When `model` has the same nodes and edges as the graph shown (same ids, same order, same ends), and nothing
+   * that changes how much room a node takes (its label while labels are shown, its size or shape), take its data,
+   * labels and styles in place: no layout, no morph, hover and positions untouched. A price or a highlight then
+   * costs next to nothing. Returns false (and changes nothing) when it needs a full update.
+   */
+  #restyle(model) {
+    const { nodes, edges } = this.graph;
+    if (
+      model.nodes.length !== nodes.length ||
+      model.edges.length !== edges.length
+    )
+      return false;
+    const labelled = this.node.labels !== "off";
+    for (let i = 0; i < nodes.length; i++) {
+      const m = model.nodes[i],
+        n = nodes[i];
+      if (m.id !== n.id) return false;
+      if (labelled && m.label !== n.label) return false;
+      if (m.style.size !== n.style.size || m.style.shape !== n.style.shape)
+        return false;
+    }
+    for (let i = 0; i < edges.length; i++) {
+      const m = model.edges[i],
+        e = edges[i];
+      if (
+        m.id !== e.id ||
+        model.ends[i][0] !== e.source ||
+        model.ends[i][1] !== e.target
+      )
+        return false;
+    }
+    const previous = this.graph.model;
+    this.graph.model = model;
+    nodes.forEach((n, i) => {
+      const m = model.nodes[i];
+      n.label = m.label;
+      n.style = m.style;
+      n.data = m.data;
+    });
+    edges.forEach((e, i) => {
+      e.style = model.edges[i].style;
+      e.data = model.edges[i].data;
+    });
+    this.looks = looksOf(this.graph, this.node, this.edge);
+    this.version++;
+    this.#changed();
+    this.#emit("graphRestyle", {
+      changed: model.diff(previous).nodesChanged.length,
+    });
+    for (const issue of model.issues) this.#emit("graphIssue", issue);
+    return true;
   }
 
   /** The graph shown, as an immutable GraphModel. */

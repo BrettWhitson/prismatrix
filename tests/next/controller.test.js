@@ -316,3 +316,70 @@ test("references are drawn as chips that follow their source, and pointing at on
   assert.equal(c.graph.nodes[c.hover].id, "hub");
   assert.equal(c.cursor, "default");
 });
+
+test("a data or colour change with the same nodes and edges restyles in place: no relayout, nothing moves", () => {
+  const { c, wait, now, events } = setup();
+  c.setLayout("merged");
+  wait(1500);
+  // Move a node off home, then change data and a colour.
+  const at = onScreen(c, "b1");
+  c.pointerDown({ ...at, time: now() });
+  c.pointerMove({ x: at.x + 50, y: at.y, time: now() });
+  wait(300);
+  c.pointerUp({ time: now() });
+  wait(200);
+  const routing = c.routing;
+  const before = c.graph.nodes.map((n) => [n.x, n.y]);
+  c.pointerMove(onScreen(c, "a1"));
+  const hover = c.hover;
+  c.setGraph({
+    nodes: SMALL.nodes.map((n) =>
+      n.id === "a"
+        ? { ...n, data: { price: 12 }, style: { color: "#ff0000" } }
+        : n,
+    ),
+    edges: SMALL.edges,
+  });
+  assert.equal(c.routing, routing, "no new layout");
+  assert.equal(c.tween, null, "no morph");
+  assert.equal(c.hover, hover, "hover kept");
+  c.graph.nodes.forEach((n, i) => assert.deepEqual([n.x, n.y], before[i]));
+  assert.equal(node(c, "a").data.price, 12);
+  assert.equal(c.looks.fill[node(c, "a").index], "#ff0000");
+  assert.equal(c.model.node("a").data.price, 12);
+  assert.equal(events.at(-1).type, "graphRestyle");
+  assert.equal(events.at(-1).detail.changed, 1);
+});
+
+test("anything that changes a node's room, or the nodes and edges themselves, still lays out again", () => {
+  const { c, wait } = setup();
+  wait(1000);
+  const changes = [
+    // a label (labels are shown), a size, a shape, an edge moved, a node added
+    (n) => (n.id === "a" ? { ...n, label: "a much longer label" } : n),
+    (n) => (n.id === "a" ? { ...n, style: { size: 60 } } : n),
+    (n) => (n.id === "a" ? { ...n, style: { shape: "diamond" } } : n),
+  ];
+  for (const change of changes) {
+    const routing = c.routing;
+    c.setGraph({ nodes: SMALL.nodes.map(change), edges: SMALL.edges });
+    assert.notEqual(c.routing, routing);
+    c.setGraph(SMALL);
+  }
+  let routing = c.routing;
+  c.setGraph({
+    nodes: SMALL.nodes,
+    edges: [...SMALL.edges.slice(1), { source: "b", target: "a" }],
+  });
+  assert.notEqual(c.routing, routing);
+  routing = c.routing;
+  c.setGraph({ nodes: [...SMALL.nodes, { id: "z" }], edges: SMALL.edges });
+  assert.notEqual(c.routing, routing);
+  // With labels off, a new label doesn't change the room a node takes.
+  c.setGraph(SMALL);
+  c.setNodeStyle({ ...c.node, labels: "off" });
+  routing = c.routing;
+  c.setGraph({ nodes: SMALL.nodes.map(changes[0]), edges: SMALL.edges });
+  assert.equal(c.routing, routing);
+  assert.equal(node(c, "a").label, "a much longer label");
+});

@@ -17,6 +17,10 @@ In code: `GraphModel` (`next/engine/model.js`) and `takeSnapshot` / `controller.
   from the model, owns the settings and all changing state (positions, camera, hover, fades, morphs, ghosts), runs
   layouts and physics, takes input as canvas-local points (`pointerDown/Move/Up`, `wheel`, `doubleClick`), and each
   `tick(now)` produces the `scene` a renderer draws. Tests drive one directly (`tests/next/controller.test.js`).
+- **Updates are cheap when the shape stays the same.** `setGraph` with the same nodes and edges (same ids, order
+  and ends) and nothing that changes a node's room (its label while labels show, its size or shape) takes the new
+  data, labels and styles in place: no layout, no morph, positions and hover kept, logged as `graphRestyle`. On
+  the 642-node fixture in the merged tree that's about 3 ms instead of 64. Anything else lays out and morphs.
 - **GraphView** (`view.js`): a controller on a canvas. Measures text, forwards pointer events, runs the frame loop
   and picks a renderer (WebGL2 or Canvas 2D).
 

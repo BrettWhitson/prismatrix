@@ -23,7 +23,8 @@ draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the packa
 - **Nodes:** six shapes, sizing by subtree or depth, colouring by depth or branch, labels below, right or outward.
 - **Model and controller:** graphs are an immutable `GraphModel` (prismatrix-graph JSON, with per-node and
   per-edge style); a whole view is a prismatrix-snapshot (`next/MODEL.md`). `GraphController` runs everything
-  without a DOM (tested headless); `GraphView` puts one on a canvas.
+  without a DOM (tested headless); `GraphView` puts one on a canvas. An update that only changes data or colours
+  restyles in place without laying out again.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
   writes a rolling 30-second engine log to `logs/engine-stats.log`.
 
