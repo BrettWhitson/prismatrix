@@ -24,6 +24,25 @@ const SIZE_KEYS = [
   "labelCollide",
 ];
 
+/**
+ * A point `f` of the way from (x0, y0) to (x1, y1) around a radial layout's centre: angle and radius each change
+ * evenly (the angle the short way round), so nodes swing along their rings instead of cutting across the middle.
+ */
+export function alongRings({ cx, cy }, x0, y0, x1, y1, f) {
+  const r0 = Math.hypot(x0 - cx, y0 - cy),
+    r1 = Math.hypot(x1 - cx, y1 - cy);
+  // At (or very near) the centre a point has no angle of its own: take the other end's.
+  const a1 =
+    r1 > 1e-6 ? Math.atan2(y1 - cy, x1 - cx) : Math.atan2(y0 - cy, x0 - cx);
+  const a0 = r0 > 1e-6 ? Math.atan2(y0 - cy, x0 - cx) : a1;
+  let turn = a1 - a0;
+  if (turn > Math.PI) turn -= Math.PI * 2;
+  if (turn < -Math.PI) turn += Math.PI * 2;
+  const r = r0 + (r1 - r0) * f,
+    a = a0 + turn * f;
+  return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+}
+
 /** The keys whose values differ, with their new values. */
 function changes(before, after) {
   const out = {};
@@ -464,11 +483,16 @@ export class GraphView {
         this.tween.start,
         this.anim.transition,
       );
+      const polar = this.routing.kind === "radial";
       for (const n of this.graph.nodes) {
         if (this.sim.held.has(n.index)) continue;
         const [x0, y0] = this.tween.from[n.index];
-        n.x = x0 + (n.homeX - x0) * f;
-        n.y = y0 + (n.homeY - y0) * f;
+        if (polar)
+          [n.x, n.y] = alongRings(this.routing, x0, y0, n.homeX, n.homeY, f);
+        else {
+          n.x = x0 + (n.homeX - x0) * f;
+          n.y = y0 + (n.homeY - y0) * f;
+        }
       }
       if (t >= 1) {
         this.tween = null;

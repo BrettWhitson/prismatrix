@@ -106,26 +106,26 @@ export function treeLayout(
   return { kind: "tree", direction };
 }
 
-/** At most this many rounds of solving wedges and ring radii together. */
-const RADIAL_ROUNDS = 8;
+/** At most this many rounds of fitting the rings to the tidy angles. */
+const RADIAL_ROUNDS = 6;
 
 /**
- * Radial tree: depth is the ring, and every subtree gets a wedge of its parent's angle. One root sits in the
- * middle; several roots share the first ring around an empty centre.
+ * Radial tree: depth is the ring. One root sits in the middle; several roots share the first ring around an empty
+ * centre. Rings are at least `ringGap` apart, and clear of each other's footprints.
  *
- * Wedges are sized by need, not by leaf count: a subtree needs the larger of what its own root takes up across
- * its spoke and what its children need together, so a lone leaf takes only its own width and a deep, bushy
- * subtree gets room for its outer rings. Spare angle is shared out in proportion to need. Rings are at least
- * `ringGap` apart and far enough out for every node to fit across its wedge.
+ * Spacing "tidy" (the default) lays the tree out as a tidy tree in angle (as d3's radial trees do): every node takes
+ * the angle its footprint spans on its ring (so inner rings, being smaller, give a node more angle), and the tidy
+ * tree (tidy.js) packs subtrees as tightly as those angles allow, spreads small ones evenly and centres every parent
+ * over its children. If that needs more than the sweep, every ring moves out in proportion until it fits; the
+ * angles are then spread across the sweep. No subtree is ever given angle it doesn't use, so one big branch can't
+ * leave the middle empty.
  *
- * Wedges and radii depend on each other (a node's angular need shrinks as its ring moves out), so they're solved
- * in rounds. The first round shares wedges by leaf count, which always fits; each later one shares them by need at
- * the previous round's radii. Every round's result fits (the radii are fitted to its wedges), so the most compact
- * one (nodes nearest the centre on average) is kept: never less compact than sharing by leaves.
+ * Spacing "leaves" is the classic rule: each subtree gets a wedge of its parent's in proportion to its leaf count,
+ * and each ring moves out until every node fits across its wedge.
  */
 export function radialLayout(
   graph,
-  { ringGap = 80, sweep = 360, rotation = 0, wedges = "need" } = {},
+  { ringGap = 80, sweep = 360, rotation = 0, spacing = "tidy" } = {},
   sizing = DEFAULT_SIZING,
 ) {
   const { nodes } = graph;
@@ -134,16 +134,13 @@ export function radialLayout(
   const ringOf = (n) => n.depth + shared;
   const rings = graph.maxDepth + shared + 1;
   const sweepRad = (sweep * Math.PI) / 180;
-  // A full circle leaves no gap between the first and last wedge; a partial one is centred on "up".
+  // A full circle leaves no gap between the first and last node; a partial one is centred on "up".
   const start =
     ((rotation - 90) * Math.PI) / 180 - (sweep < 360 ? sweepRad / 2 : 0);
   const gap = sizing.gap + 6;
 
   const angle = new Float64Array(count);
-  const wedge = new Float64Array(count);
   const across = new Float64Array(count); // footprint width across the spoke
-  const need = new Float64Array(count); // angle a subtree needs
-  let radius = new Float64Array(rings);
 
   /** Footprints at the current angles: per node its width across the spoke, per ring its radial reach. */
   const measure = () => {
@@ -184,113 +181,148 @@ export function radialLayout(
     return { out, inward };
   };
 
-  /** Ring radii: ring gap apart, clear of each other's footprints, and (with `fitted`) wide enough for wedges. */
-  const solveRadii = (out, inward, fitted) => {
-    const fit = new Float64Array(rings);
-    if (fitted)
-      for (const n of nodes) {
-        const ring = ringOf(n);
-        if (!ring) continue;
-        const w = Math.min(wedge[n.index], Math.PI);
-        fit[ring] = Math.max(
-          fit[ring],
-          (across[n.index] + gap) / (2 * Math.sin(w / 2)),
-        );
-      }
-    const next = new Float64Array(rings);
+  /** The smallest ring radii: ring gap apart and clear of each other's footprints. */
+  const baseRadii = ({ out, inward }) => {
+    const radius = new Float64Array(rings);
     for (let k = 1; k < rings; k++)
-      next[k] = Math.max(
-        next[k - 1] + ringGap,
-        next[k - 1] + out[k - 1] + gap + inward[k],
-        fit[k],
+      radius[k] = Math.max(
+        radius[k - 1] + ringGap,
+        radius[k - 1] + out[k - 1] + gap + inward[k],
       );
-    return next;
+    return radius;
   };
 
-  /** Wedges shared out top-down by `weight` per node (leaves, or need). */
-  const shareBy = (weight) => {
+  /** Leaf-count wedges: every subtree a share of its parent's wedge in proportion to its leaves. */
+  const leafWedges = () => {
+    const wedge = new Float64Array(count);
     const share = (list, from, width) => {
       let total = 0;
-      for (const c of list) total += weight[c];
+      for (const c of list) total += nodes[c].leaves;
       let at = from;
       for (const c of list) {
-        // In proportion to weight; with no weights at all (a degenerate graph), evenly.
-        const part =
-          total > 0 ? (width * weight[c]) / total : width / list.length;
+        const part = (width * nodes[c].leaves) / total;
         wedge[c] = part;
         angle[c] = at + part / 2;
         at += part;
       }
     };
     share(graph.roots, start, sweepRad);
-    for (const i of graph.order) {
-      const n = nodes[i];
-      if (n.children.length)
-        share(n.children, angle[i] - wedge[i] / 2, wedge[i]);
-    }
+    for (const i of graph.order)
+      if (nodes[i].children.length)
+        share(nodes[i].children, angle[i] - wedge[i] / 2, wedge[i]);
+    return wedge;
   };
 
-  /** Each subtree's angular need at the current radii, bottom-up. */
-  const needs = () => {
-    for (let k = graph.order.length - 1; k >= 0; k--) {
-      const n = nodes[graph.order[k]];
-      const r = radius[ringOf(n)];
-      // A node in the centre takes no angle of its own; a ring node needs the angle its width spans there.
-      const own = r
-        ? 2 * Math.asin(Math.min(1, (across[n.index] + gap) / (2 * r)))
-        : 0;
-      let children = 0;
-      for (const c of n.children) children += need[c];
-      need[n.index] = Math.max(own, children);
-    }
-    return need;
-  };
-
-  const leaves = Float64Array.from(nodes, (n) => n.leaves);
-  let best = null;
-  /** Fit radii to the current wedges, and keep the result if it's the most compact so far. */
-  const settle = () => {
-    const reach = measure();
-    const next = solveRadii(reach.out, reach.inward, true);
-    let moved = 0;
-    for (let k = 0; k < rings; k++)
-      moved = Math.max(moved, Math.abs(next[k] - radius[k]));
-    radius = next;
-    // Most compact: nodes closest to the centre on average. (The outermost ring alone would keep a big empty
-    // middle to save a few per cent at the rim.)
-    let score = 0;
-    for (const n of nodes) score += radius[ringOf(n)];
-    if (!best || score < best.score)
-      best = { score, radius: radius.slice(), angle: angle.slice() };
-    return moved;
-  };
-
-  // Sharing by leaf count always fits: it's the fallback, and all there is with wedges: "leaves".
-  shareBy(leaves);
-  settle();
-
-  if (wedges !== "leaves") {
-    // Need rounds start from each ring's smallest possible radius: just wide enough for its nodes to fit around
-    // the whole sweep (and the ring gap). Starting from the leaf round instead can trap them: a lone leaf given a
-    // sliver there pushes its ring far out, and measured at that radius it needs almost nothing, so the ring
-    // stays out.
-    const reach = measure();
-    const around = new Float64Array(rings);
-    for (const n of nodes) around[ringOf(n)] += across[n.index] + gap;
-    radius = solveRadii(reach.out, reach.inward, false);
-    for (let k = 1; k < rings; k++)
-      radius[k] = Math.max(
+  /**
+   * With the angles settled, pull each ring in as far as it'll go, from the inside out: until neighbours on it
+   * would touch (at the angles they have), the ring gap, or the ring inside it. Rings only ever move in, and the
+   * angles don't change, so nothing new can overlap: the crowded ring sets its own radius and the others close up
+   * behind it, instead of every ring moving out by the same factor.
+   */
+  const compact = (radius) => {
+    const { out, inward } = measure();
+    const byRing = Array.from({ length: rings }, () => []);
+    for (const n of nodes) byRing[ringOf(n)].push(n.index);
+    const full = sweep >= 360;
+    const next = new Float64Array(rings);
+    for (let k = 1; k < rings; k++) {
+      const list = byRing[k].sort((a, b) => angle[a] - angle[b]);
+      let fit = 0;
+      const pair = (a, b, turn) => {
+        const delta = Math.min(turn, Math.PI);
+        const halfA = across[a] / 2 + gap / 2,
+          halfB = across[b] / 2 + gap / 2;
+        fit = Math.max(fit, (halfA + halfB) / (2 * Math.sin(delta / 2)));
+      };
+      for (let i = 1; i < list.length; i++)
+        pair(list[i - 1], list[i], angle[list[i]] - angle[list[i - 1]]);
+      if (full && list.length > 1)
+        pair(
+          list.at(-1),
+          list[0],
+          angle[list[0]] + Math.PI * 2 - angle[list.at(-1)],
+        );
+      next[k] = Math.min(
         radius[k],
-        radius[k - 1] + ringGap,
-        around[k] / sweepRad,
+        Math.max(
+          next[k - 1] + ringGap,
+          next[k - 1] + out[k - 1] + gap + inward[k],
+          fit,
+        ),
       );
-    for (let round = 0; round < RADIAL_ROUNDS; round++) {
-      shareBy(needs());
-      if (settle() < 0.5) break;
     }
+    return next;
+  };
+
+  let radius;
+  if (spacing === "leaves") {
+    const wedge = leafWedges();
+    const reach = measure();
+    radius = baseRadii(reach);
+    // Out until every node fits across its wedge.
+    const fit = new Float64Array(rings);
+    for (const n of nodes) {
+      const ring = ringOf(n);
+      if (!ring) continue;
+      const w = Math.min(wedge[n.index], Math.PI);
+      fit[ring] = Math.max(
+        fit[ring],
+        (across[n.index] + gap) / (2 * Math.sin(w / 2)),
+      );
+    }
+    for (let k = 1; k < rings; k++)
+      radius[k] = Math.max(radius[k], radius[k - 1] + ringGap, fit[k]);
+  } else {
+    // Measure footprints at leaf-wedge angles to start with; later rounds measure at the tidy angles.
+    leafWedges();
+    const tree = {
+      parent: nodes.map((n) => n.parent),
+      children: nodes.map((n) => n.children),
+      roots: graph.roots,
+    };
+    const half = new Float64Array(count);
+    let scale = 1;
+    for (let round = 0; round < RADIAL_ROUNDS; round++) {
+      // Each ring starts at the least radius its nodes could fit around the sweep at (side by side, no gaps
+      // wasted), so a crowded ring starts big and a sparse one small; then all of them out together as needed.
+      const reach = measure();
+      const around = new Float64Array(rings);
+      for (const n of nodes) around[ringOf(n)] += across[n.index] + gap;
+      const base = baseRadii(reach);
+      for (let k = 1; k < rings; k++)
+        base[k] = Math.max(
+          base[k],
+          base[k - 1] + ringGap,
+          around[k] / sweepRad,
+        );
+      radius = base.map((r) => r * scale);
+      // Half the angle each footprint spans on its ring (exactly: two neighbours that far apart just touch).
+      for (const n of nodes) {
+        const r = radius[ringOf(n)];
+        half[n.index] = r
+          ? Math.asin(Math.min(1, (across[n.index] / 2 + gap / 2) / r))
+          : 0;
+      }
+      const { x } = tidy(
+        { ...tree, left: half, right: half },
+        { sibling: 0, cousin: 0, root: 0 },
+      );
+      let lo = Infinity,
+        hi = -Infinity;
+      for (let i = 0; i < count; i++) {
+        lo = Math.min(lo, x[i] - half[i]);
+        hi = Math.max(hi, x[i] + half[i]);
+      }
+      const span = hi - lo;
+      // Spread across the sweep; a full circle spreads over all of it, the seam between last and first included.
+      const stretch = span > 0 ? sweepRad / span : 0;
+      for (let i = 0; i < count; i++) angle[i] = start + (x[i] - lo) * stretch;
+      // Needs more than the sweep: every ring out in proportion (angles shrink about as much), and again.
+      if (span > sweepRad * 1.0001) scale *= Math.min(span / sweepRad, 4);
+      else if (round > 0) break;
+    }
+    radius = compact(radius);
   }
-  radius = best.radius;
-  angle.set(best.angle);
 
   for (const n of nodes) {
     const r = radius[ringOf(n)];
@@ -431,14 +463,14 @@ export const LAYOUTS = {
       ),
       range("rotation", "Rotation", -180, 180, 5, 0),
       select(
-        "wedges",
-        "Wedges",
+        "spacing",
+        "Spacing",
         [
-          { value: "need", label: "By need" },
-          { value: "leaves", label: "By leaf count" },
+          { value: "tidy", label: "Tidy (compact)" },
+          { value: "leaves", label: "Wedges by leaf count" },
         ],
-        "need",
-        "By need gives each subtree the angle it actually takes up, so rings sit closer in. By leaf count is the classic rule.",
+        "tidy",
+        "Tidy packs the tree in angle like a tidy tree: subtrees take only the angle they use, so the middle fills in. Wedges by leaf count is the classic rule.",
       ),
     ],
     physics: {

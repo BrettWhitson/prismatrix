@@ -639,7 +639,7 @@ const meanDistance = (g) =>
   g.nodes.reduce((sum, n) => sum + Math.hypot(n.homeX, n.homeY), 0) /
   g.nodes.length;
 
-test("radial wedges by need: no overlaps, and never less compact than sharing by leaf count", () => {
+test("radial tidy spacing: no overlaps, and never less compact than leaf-count wedges", () => {
   for (const [seed, count, bushiness] of [
     [7, 80, 1.4],
     [3, 300, 1],
@@ -650,7 +650,7 @@ test("radial wedges by need: no overlaps, and never less compact than sharing by
     const byNeed = randomGraph(seed, count, bushiness);
     const byLeaves = randomGraph(seed, count, bushiness);
     radialLayout(byNeed, {}, sized(byNeed));
-    radialLayout(byLeaves, { wedges: "leaves" }, sized(byLeaves));
+    radialLayout(byLeaves, { spacing: "leaves" }, sized(byLeaves));
     assert.equal(overlapsAtHome(byNeed, sized(byNeed)), 0, `seed ${seed}`);
     assert.ok(
       meanDistance(byNeed) <= meanDistance(byLeaves) + 1e-6,
@@ -659,7 +659,7 @@ test("radial wedges by need: no overlaps, and never less compact than sharing by
   }
 });
 
-test("radial wedges by need pull a crowded first ring well in", () => {
+test("radial tidy spacing pulls a crowded first ring well in", () => {
   // A root with 60 leaf children and a few deep, narrow subtrees: by leaves, the deep ones hog the angle.
   const nodes = [{ id: "r", label: "root" }],
     edges = [];
@@ -682,7 +682,7 @@ test("radial wedges by need pull a crowded first ring well in", () => {
   const a = new Graph(nodes, edges),
     b = new Graph(nodes, edges);
   radialLayout(a, {}, sized(a));
-  radialLayout(b, { wedges: "leaves" }, sized(b));
+  radialLayout(b, { spacing: "leaves" }, sized(b));
   assert.ok(ring1(a) < ring1(b) * 0.9, `ring 1 at ${ring1(a)} vs ${ring1(b)}`);
   assert.equal(overlapsAtHome(a, sized(a)), 0);
 });
@@ -717,4 +717,41 @@ test("radial: a balanced tree still fans out evenly, and children stay inside th
       a > Math.min(angle("r00"), angle("r20")) &&
         a < Math.max(angle("r02"), angle("r22")),
     );
+});
+
+test("radial: a lopsided tree with wide footprints doesn't leave the middle empty", () => {
+  // The sandbox case that showed it: one root child with nearly everything under it, one small, one leaf, and a
+  // collision radius of 60.
+  const g = randomGraph(1, 357, 0.9);
+  const sizing = { gap: 60, box: () => footprintOf(8, Math.PI / 2, 20, 8) };
+  radialLayout(g, { ringGap: 20 }, sizing);
+  const ring = (d) => {
+    const n = g.nodes.find((x) => x.depth === d);
+    return Math.hypot(n.homeX, n.homeY);
+  };
+  const outer = Math.max(...g.nodes.map((n) => Math.hypot(n.homeX, n.homeY)));
+  assert.ok(
+    ring(1) < outer * 0.2,
+    `ring 1 at ${Math.round(ring(1))} of ${Math.round(outer)}`,
+  );
+  assert.equal(overlapsAtHome(g, sizing), 0);
+});
+
+test("radial: partial sweeps and forests lay out without overlaps, inside the sweep", () => {
+  const g = randomGraph(4, 150, 1.2);
+  radialLayout(g, { sweep: 180 }, sized(g));
+  assert.equal(overlapsAtHome(g, sized(g)), 0);
+  for (const n of g.nodes) {
+    if (!n.depth) continue;
+    // A half circle centred on "up": every node at or above the centre line.
+    assert.ok(n.homeY <= 1e-6, `${n.id} below the line`);
+  }
+  const forest = new Graph(
+    Array.from({ length: 30 }, (_, i) => ({ id: `n${i}`, label: `n${i}` })),
+    Array.from({ length: 30 }, (_, i) => i)
+      .filter((i) => i % 10)
+      .map((i) => ({ source: `n${i - 1}`, target: `n${i}` })),
+  );
+  radialLayout(forest, {}, sized(forest));
+  assert.equal(overlapsAtHome(forest, sized(forest)), 0);
 });
