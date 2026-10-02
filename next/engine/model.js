@@ -311,6 +311,8 @@ export class GraphModel {
     this.edges = [];
     /** Bumped by every change. */
     this.version = 0;
+    /** Bumped when nodes or edges come, go or move: what a working graph (graph.js) is built for. */
+    this.structureVersion = 0;
     /** @type {Issue[]} problems found by the latest load or change */
     this.issues = [];
     this.listeners = new Set();
@@ -680,7 +682,10 @@ export class GraphModel {
     change.looks = anything;
     this.nodes = Object.freeze(nodes);
     this.edges = Object.freeze(edges);
-    if (structure) this.#index();
+    if (structure) {
+      this.structureVersion++;
+      this.#index();
+    }
     return this.#emit(change);
   }
 

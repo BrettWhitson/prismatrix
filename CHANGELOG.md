@@ -30,6 +30,9 @@ draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the packa
 - **Speed at 40k nodes:** edges are traced on the GPU from a positions texture (straight, step and curve, in every
   layout), so a morph frame takes 8–12 ms instead of 105–199; the merged tree lays out in about 0.4 s instead of
   0.65, and network-simplex layering has a time budget instead of running for minutes.
+- **Layouts in a worker** for graphs of 2,000 nodes or more: the page keeps drawing and taking input while a big
+  layout is worked out, then the new layout morphs in. A 30k → 40k update now blocks the page for about 0.13 s.
+- **Radial edges ease between step and curve** as a node is dragged off its ring and back, instead of snapping.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
   writes a rolling 30-second engine log to `logs/engine-stats.log`.
 

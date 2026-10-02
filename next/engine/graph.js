@@ -134,6 +134,8 @@ export class Graph {
     this.model =
       nodes instanceof GraphModel ? nodes : GraphModel.from({ nodes, edges });
     const model = this.model;
+    /** The model's structure version this graph was built for. */
+    this.structure = model.structureVersion;
     const forest = model.forest();
     /** Every node's live state, one column per quantity. */
     this.matrix = new Matrix(model.nodes.length);

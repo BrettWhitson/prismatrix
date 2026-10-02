@@ -22,6 +22,8 @@ import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
 import { lineage, looksOf } from "./render.js";
+import { runLayout, unpackRouting } from "./layout-job.js";
+import { Layouter, WORKER_MIN } from "./layouter.js";
 import { resolve } from "./schema.js";
 
 export const BACKGROUND = "#0e1016";
@@ -64,6 +66,8 @@ export function alongRings({ cx, cy }, x0, y0, x1, y1, f) {
  * @property {(stats: object) => void} [onFrame] after every drawn frame (the renderer calls it)
  * @property {() => void} [onChange]     something changed that needs a tick (renderers wake their frame loop)
  * @property {() => number} [clock]      the time now, ms (for changes made between ticks)
+ * @property {boolean | "auto"} [worker] where layouts run: "auto" (the default) in a worker for big graphs, true
+ *   always in a worker, false always on the page's thread (see layouter.js)
  */
 
 export class GraphController {
@@ -85,6 +89,7 @@ export class GraphController {
       onFrame,
       onChange,
       clock = () => performance.now(),
+      worker = "auto",
     } = {},
   ) {
     this.onEvent = onEvent;
@@ -124,13 +129,17 @@ export class GraphController {
 
     this.model = GraphModel.from(model);
     this.unlisten = this.model.onChange((change) => this.#onModel(change));
-    this.graph = new Graph(); // empty until the first build below
+    this.graph = new Graph(); // empty until the first layout below
     this.#fresh();
     this.looks = looksOf(this.graph, this.node, this.edge);
     this.routing = { kind: "tree", direction: "TB" };
+    this.layouter = new Layouter({ worker });
+    this.layoutRequest = 0;
+    /** True while a layout is being worked out in the worker (the graph on screen carries on meanwhile). */
+    this.layoutPending = false;
     // The renderer first: it brings the viewport size and real text measurement, which the first layout uses.
     if (renderer) this.setRenderer(renderer);
-    this.#rebuild();
+    this.#relayout();
     this.#emit("graph", this.model.stats());
     for (const issue of this.model.issues) this.#emit("graphIssue", issue);
   }
@@ -165,18 +174,28 @@ export class GraphController {
       return;
     }
     if (change.structure) {
-      const previous = this.graph;
-      this.#rebuild();
-      this.#emit("graph", {
-        ...this.model.stats(),
-        ...(previous.nodes.length && {
-          added: change.nodesAdded.length,
-          removed: change.nodesRemoved.length,
-        }),
-      });
+      const shown = this.graph.nodes.length;
+      this.#relayout();
+      const report = () =>
+        this.#emit("graph", {
+          ...this.model.stats(),
+          ...(shown && {
+            added: change.nodesAdded.length,
+            removed: change.nodesRemoved.length,
+          }),
+        });
+      // The stats walk the whole graph: for a big one, after this frame rather than in the middle of the update.
+      if (this.onEvent && this.model.size >= WORKER_MIN) setTimeout(report, 0);
+      else report();
       return;
     }
-    this.graph.refresh();
+    // While a new structure is being laid out, the graph on screen is the old one: it keeps its records (the new one
+    // takes the model's when it's put in place).
+    if (
+      this.graph.model === this.model &&
+      this.graph.structure === this.model.structureVersion
+    )
+      this.graph.refresh();
     if (change.sizes) this.#relayout({ fit: null });
     else this.#restyle();
     this.#emit("graphRestyle", {
@@ -191,30 +210,6 @@ export class GraphController {
     this.version++;
     this.geometryVersion++;
     this.#changed();
-  }
-
-  /** A new working graph for the model's new structure, laid out, with the old one's nodes carried across by id. */
-  #rebuild() {
-    const previous = this.graph.nodes.length ? this.graph : null;
-    const previousLooks = this.looks;
-    this.graph = new Graph(this.model);
-    // Nodes that left fold back into what's left of their family; ghosts still leaving from an earlier change
-    // carry on (unless their node came back).
-    const now = this.clock();
-    this.ghosts = [
-      ...this.ghosts.filter(
-        (g) =>
-          !this.graph.byId.has(g.id) && now - g.start < this.anim.transition,
-      ),
-      ...(previous && this.anim.transition > 0
-        ? departures(previous, this.graph, previousLooks, now)
-        : []),
-    ];
-    this.#fresh();
-    this.#relayout({
-      fit: !previous ? "instant" : this.framed ? "animate" : null,
-      arrive: previous ?? false,
-    });
   }
 
   /** Replace the graph: the model takes `input` (JSON, or another model's graph) and keeps what's unchanged. */
@@ -234,7 +229,7 @@ export class GraphController {
     if (this.renderer?.measureText && !this.model.measured)
       this.model.setMeasure(this.renderer.measureText);
     this.unlisten = this.model.onChange((change) => this.#onModel(change));
-    this.#rebuild();
+    this.#relayout();
     this.#emit("graph", this.model.stats());
   }
 
@@ -285,14 +280,23 @@ export class GraphController {
     } finally {
       this.quiet = false;
     }
+    if (settings.layout && LAYOUTS[settings.layout]) {
+      this.layout = settings.layout;
+      this.layoutOpts = resolve(
+        LAYOUTS[this.layout].options,
+        settings.layoutOptions,
+      );
+    }
+    const mode = settings.physics ?? this.mode;
+    this.mode = LAYOUTS[this.layout].physics[mode] ? mode : "static";
+    this.modeOpts = physicsOptions(
+      this.layout,
+      this.mode,
+      settings.physicsOptions,
+    );
+    // Laid out now (it's about to be overwritten by the snapshot's positions), with no morph and no ghosts.
+    this.#relayout({ sync: true });
     this.ghosts = [];
-    this.graph = new Graph(this.model);
-    this.#fresh();
-    if (settings.layout)
-      this.setLayout(settings.layout, settings.layoutOptions);
-    else this.#relayout({ fit: null });
-    if (settings.physics)
-      this.setPhysics(settings.physics, settings.physicsOptions);
     applyState(this.graph, snapshot.state ?? {});
     this.tween = null;
     if (snapshot.camera) this.camera = { ...snapshot.camera };
@@ -323,9 +327,10 @@ export class GraphController {
     this.#emit("renderer", { renderer: renderer.name });
   }
 
-  /** Stop listening to the model and let go of the renderer. */
+  /** Stop listening to the model, let go of the renderer, and stop the layout worker. */
   destroy() {
     this.unlisten();
+    this.layouter.dispose();
     this.renderer?.detach(this);
     this.renderer = null;
   }
@@ -447,19 +452,76 @@ export class GraphController {
     };
   }
 
-  #relayout({ fit, arrive = undefined }) {
+  /**
+   * Lay the graph out again, for the model as it is now (on a new working graph when nodes or edges have come or
+   * gone) and the current layout and sizes. Small graphs are laid out on the spot; big ones in the layouter's worker,
+   * while the graph on screen carries on as it is, and the result is put in place when it arrives, unless a newer
+   * layout has been asked for since (only the newest is used).
+   * @param {{ fit?: "instant" | "animate" | null, sync?: boolean }} [options] fit: frame the result; sync: lay out
+   *   on the spot whatever the graph's size
+   */
+  #relayout({ fit = null, sync = false } = {}) {
+    const rebuilding =
+      this.graph.model !== this.model ||
+      this.graph.structure !== this.model.structureVersion;
+    const target = rebuilding ? new Graph(this.model) : this.graph;
+    const spec = this.#sizingSpec(
+      target,
+      looksOf(target, this.node, this.edge),
+    );
+    const job = { id: ++this.layoutRequest, target, rebuilding, fit, spec };
+    const result = sync
+      ? runLayout(target, this.layout, this.layoutOpts, spec)
+      : this.layouter.run(target, this.layout, this.layoutOpts, spec);
+    if (!(result instanceof Promise)) return this.#settle(job, result);
+    this.layoutPending = true;
+    this.#changed();
+    result.then(
+      (r) => this.#settle(job, r),
+      (error) => {
+        if (job.id === this.layoutRequest) this.layoutPending = false;
+        this.#emit("error", { message: `layout: ${error.message}` });
+      },
+    );
+  }
+
+  /**
+   * Put a layout in place: the homes and routing, and for a new structure the new working graph, with nodes that
+   * were already there gliding from where they were, new ones arriving as the animation's `enter` setting says, and
+   * removed ones folding back into their family.
+   */
+  #settle(job, result) {
+    if (job.id !== this.layoutRequest) return; // a newer layout is on its way
+    this.layoutPending = false;
+    const { target } = job;
+    target.matrix.homeX.set(result.homeX);
+    target.matrix.homeY.set(result.homeY);
+    let previous = null,
+      fit = job.fit;
+    if (job.rebuilding) {
+      previous = this.graph.nodes.length ? this.graph : null;
+      // Ghosts still leaving from an earlier change carry on (unless their node came back).
+      const now = this.clock();
+      this.ghosts = [
+        ...this.ghosts.filter(
+          (g) => !target.byId.has(g.id) && now - g.start < this.anim.transition,
+        ),
+        ...(previous && this.anim.transition > 0
+          ? departures(previous, target, this.looks, now)
+          : []),
+      ];
+      target.refresh(); // labels and styles may have changed while it was laid out
+      this.graph = target;
+      this.#fresh();
+      fit = !previous ? "instant" : this.framed ? "animate" : fit;
+    }
+    this.routing = unpackRouting(result.routing, this.graph);
     this.version++;
     this.geometryVersion++;
     this.looks = looksOf(this.graph, this.node, this.edge);
-    const sizing = this.#sizing();
-    this.routing = LAYOUTS[this.layout].run(
-      this.graph,
-      this.layoutOpts,
-      sizing,
-    );
-    this.#placeLabels(sizing);
+    this.#placeLabels(job.spec);
     this.#configureSim();
-    if (arrive !== undefined) this.#arrive(arrive || null);
+    if (job.rebuilding) this.#arrive(previous);
     if (fit === "instant") {
       // A camera already framing where everything is heading.
       this.camera = this.#framing(true);
@@ -479,33 +541,30 @@ export class GraphController {
     this.#changed();
   }
 
-  /** Label widths (the model's, measured once each), and the footprint each node takes for a label direction. */
-  #sizing() {
-    const { node, looks } = this;
+  /**
+   * What a layout needs to know about sizes (layout-job.js): each node's label width (the model's, measured once
+   * each) and how far its shape reaches, and the label settings that turn those into footprints.
+   */
+  #sizingSpec(graph, looks) {
+    const { node } = this;
     const labelled = node.labels !== "off";
-    const widths = labelled
-      ? this.model.labelWidths()
-      : new Float64Array(this.graph.nodes.length);
-    const height = this.model.labelHeight;
-    const fixed = node.labels === "right" ? 0 : Math.PI / 2;
     return {
-      widths,
-      height,
+      widths: labelled
+        ? this.model.labelWidths()
+        : new Float64Array(graph.nodes.length),
+      reach: Float64Array.from(
+        graph.nodes,
+        (n) => looks.radius[n.index] * reach(looks.shape[n.index]),
+      ),
+      height: this.model.labelHeight,
       gap: node.collisionRadius,
-      /** With label collision off, labels don't count: they may overlap. */
-      box: (i, angle) =>
-        footprint(
-          looks.radius[i] * reach(looks.shape[i]),
-          node.labels === "outward" ? angle : fixed,
-          labelled && node.labelCollide ? widths[i] : 0,
-          height,
-        ),
+      labels: node.labels,
+      collide: labelled && node.labelCollide,
     };
   }
 
   /** Fix each node's label direction from its home, and the footprint that goes with it. */
-  #placeLabels(sizing) {
-    const labelled = this.node.labels !== "off";
+  #placeLabels(spec) {
     const m = this.graph.matrix;
     for (let i = 0; i < m.count; i++) {
       const angle = labelAngle(
@@ -514,15 +573,9 @@ export class GraphController {
         m.homeX[i],
         m.homeY[i],
       );
-      const radius = this.looks.radius[i] * reach(this.looks.shape[i]);
-      const box = footprint(
-        radius,
-        angle,
-        labelled ? sizing.widths[i] : 0,
-        sizing.height,
-      );
+      const box = footprint(spec.reach[i], angle, spec.widths[i], spec.height);
       m.labelAngle[i] = angle;
-      m.radius[i] = radius;
+      m.radius[i] = spec.reach[i];
       m.boxX0[i] = box.x0;
       m.boxY0[i] = box.y0;
       m.boxX1[i] = box.x1;
@@ -723,13 +776,15 @@ export class GraphController {
       gap,
       simMs,
       energy: this.sim.energy,
-      state: this.tween
-        ? "moving to layout"
-        : this.pointer?.node >= 0
-          ? "dragging"
-          : busy
-            ? "moving"
-            : "at rest",
+      state: this.layoutPending
+        ? "laying out"
+        : this.tween
+          ? "moving to layout"
+          : this.pointer?.node >= 0
+            ? "dragging"
+            : busy
+              ? "moving"
+              : "at rest",
     };
   }
 
