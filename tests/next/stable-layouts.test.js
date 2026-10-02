@@ -275,7 +275,7 @@ test("the hint is found by id: homes, reference chips and bends, NaN for what's 
     const [s, t] = model.ends[i];
     if (keep.has(s) && keep.has(t)) edges.push(i);
   });
-  const part = new Graph(model, null, {
+  const part = new Graph(model, {
     nodes: Int32Array.from(shown),
     edges: Int32Array.from(edges),
     key: "every third hidden",

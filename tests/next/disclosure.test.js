@@ -313,8 +313,8 @@ test("ghosts are linear in what left: a 20k chain folds away in a few ms", () =>
     source: `n${i}`,
     target: `n${i + 1}`,
   }));
-  const before = new Graph(nodes, edges);
-  const after = new Graph([{ id: "n0" }], []);
+  const before = new Graph(GraphModel.from({ nodes, edges }));
+  const after = new Graph(GraphModel.from({ nodes: [{ id: "n0" }] }));
   const looks = { radius: new Float64Array(n + 1).fill(5), fill: [] };
   const t0 = performance.now();
   const gone = departures(before, after, looks, 0);

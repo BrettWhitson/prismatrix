@@ -11,6 +11,9 @@ import {
   takeSnapshot,
 } from "../../next/engine/snapshot.js";
 
+const graphOf = (nodes, edges = []) =>
+  new Graph(GraphModel.from({ nodes, edges }));
+
 const recipe = () => ({
   meta: { name: "Mjölnir (part)" },
   nodes: [
@@ -165,7 +168,7 @@ test("the working graph is built from a model, and keeps it", () => {
   assert.equal(g.edges[1].id, "gift>ingot");
   assert.equal(g.edges[1].tree, false);
   // The old way still works, and builds a model on the way.
-  const old = new Graph(
+  const old = graphOf(
     [{ id: "a" }, { id: "b" }],
     [{ source: "a", target: "b" }],
   );

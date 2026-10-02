@@ -1111,7 +1111,7 @@ export class GraphController {
       this.graph.model !== this.model ||
       this.graph.structure !== this.#disclosure().key;
     const target = rebuilding
-      ? new Graph(this.model, null, this.#disclosure().part)
+      ? new Graph(this.model, this.#disclosure().part)
       : this.graph;
     const spec = sizingSpec(
       target,

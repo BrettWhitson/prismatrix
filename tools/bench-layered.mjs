@@ -94,7 +94,7 @@ export function measure(model, layout = layeredLayout, options = {}) {
     centring += Math.abs(n.homeX - (Math.min(...xs) + Math.max(...xs)) / 2);
     parents++;
   }
-  const b = g.bounds(true);
+  const { homeX, homeY } = g.matrix;
   return {
     nodes: g.nodes.length,
     edges: g.edges.length,
@@ -104,8 +104,8 @@ export function measure(model, layout = layeredLayout, options = {}) {
     ink: Math.round(ink),
     drift: Math.round(longEdges ? drift / longEdges : 0),
     centring: Math.round(parents ? centring / parents : 0),
-    width: Math.round(b.maxX - b.minX),
-    height: Math.round(b.maxY - b.minY),
+    width: Math.round(Math.max(...homeX) - Math.min(...homeX)),
+    height: Math.round(Math.max(...homeY) - Math.min(...homeY)),
     ms: Math.round(ms * 10) / 10,
   };
 }
