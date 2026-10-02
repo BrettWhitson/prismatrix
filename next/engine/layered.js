@@ -191,7 +191,7 @@ export function layeredLayout(
   const upper = Array.from({ length: real }, () => []); // neighbours one layer up
   const lower = Array.from({ length: real }, () => []);
   // How much each segment wants to be straight, parallel to upper and lower: long edges' inner segments most,
-  // then their ends, then short edges; a tree edge (an ingredient's first recipe) four times its kind.
+  // then their ends, then short edges; a tree edge (a node's edge in from one layer up, step 2a) four times its kind.
   const upperWeight = Array.from({ length: real }, () => []);
   const lowerWeight = Array.from({ length: real }, () => []);
   const link = (a, b, w) => {

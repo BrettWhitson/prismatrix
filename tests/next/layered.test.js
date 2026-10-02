@@ -328,7 +328,7 @@ test("every layout node keeps its gap: nodes, references and long edges' bends",
       rows.get(key).push([x, half]);
     };
     for (const n of g.nodes) put(n.homeX, n.homeY, 8);
-    for (const ref of routing.references) put(ref.x, ref.y, 8);
+    for (const ref of routing.references) put(ref.x, ref.y, ref.radius);
     for (const bends of routing.bends.values())
       for (const [x, y] of bends) put(x, y, 2);
     for (const row of rows.values()) {
