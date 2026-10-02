@@ -71,6 +71,8 @@ export const BACKGROUND = "#0e1016";
  */
 
 export class GraphController {
+  #shownCache = null; // the display graph with references, and what it was made from
+
   /**
    * @param {GraphModel | object} model  the graph to show (JSON is made into a model)
    * @param {import("./renderer.js").Renderer | null} [renderer] the screen; none runs headless
@@ -798,6 +800,41 @@ export class GraphController {
     );
   }
 
+  /** The real graph with its references (references.js), cached across frames where nothing it shows changed. */
+  #shownWithReferences() {
+    const refs = this.routing.references;
+    const c = this.#shownCache;
+    if (
+      c &&
+      c.graph === this.graph &&
+      c.refs === refs &&
+      c.looks === this.looks &&
+      c.shade === this.shade &&
+      c.appear === this.appear &&
+      c.version === this.version &&
+      c.shadeVersion === this.shadeVersion &&
+      c.geometryVersion === this.geometryVersion
+    )
+      return c.shown;
+    const shown = withReferences(this.graph, refs, {
+      looks: this.looks,
+      shade: this.shade,
+      appear: this.appear,
+    });
+    this.#shownCache = {
+      graph: this.graph,
+      refs,
+      looks: this.looks,
+      shade: this.shade,
+      appear: this.appear,
+      version: this.version,
+      shadeVersion: this.shadeVersion,
+      geometryVersion: this.geometryVersion,
+      shown,
+    };
+    return shown;
+  }
+
   /**
    * Put a layout in place: the homes and routing, and for a new structure the new working graph, with nodes that
    * were already there gliding from where they were, new ones arriving as the animation's `enter` setting says, and
@@ -1024,12 +1061,9 @@ export class GraphController {
     // Edge routing knows when a layout morph is running (radial step edges keep their arcs through it).
     this.routing.morphing = !!this.tween;
     // References and ghosts are drawn from a display graph; everything else (physics, hover, hit-testing) uses the
-    // real one.
-    let shown = withReferences(this.graph, this.routing.references, {
-      looks: this.looks,
-      shade: this.shade,
-      appear: this.appear,
-    });
+    // real one. It's rebuilt only when something it's made from changed (a pan doesn't), so painters can tell
+    // nothing moved.
+    let shown = this.#shownWithReferences();
     if (this.ghosts.length) {
       shown = withGhosts(
         shown.graph,
