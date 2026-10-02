@@ -23,17 +23,9 @@
  * @property {number} x0         where it was when it left
  * @property {number} y0
  * @property {Ancestry | null} up its ancestors in the graph it left, from its parent up to its root
- * @property {string[]} ancestors the same, as a list of ids (made when read)
  * @property {number} depth      how many ancestors it has
  * @property {number} start      when it left (ms, the view's clock)
  */
-
-/** The ids along an ancestry chain, nearest first. */
-export function ancestorIds(up) {
-  const out = [];
-  for (let a = up; a; a = a.up) out.push(a.id);
-  return out;
-}
 
 /**
  * The nodes of `previous` that aren't in `next`, as ghosts starting at `now`. `looks` are previous's radius and
@@ -65,16 +57,13 @@ export function departures(previous, next, looks, now) {
     out.push({
       id: n.id,
       label: n.label,
-      labelAngle: n.labelAngle ?? Math.PI / 2,
+      labelAngle: n.labelAngle,
       radius: looks.radius[n.index],
       fill: looks.fill[n.index],
-      shape: looks.shape?.[n.index] ?? "circle",
+      shape: looks.shape[n.index],
       x0: n.x,
       y0: n.y,
       up,
-      get ancestors() {
-        return ancestorIds(this.up);
-      },
       depth: depths[n.index],
       start: now,
     });
@@ -85,13 +74,11 @@ export function departures(previous, next, looks, now) {
 
 /**
  * Where a ghost folds to: its nearest ancestor that `graph` still has (a node), or that is itself a ghost still
- * leaving (a ghost id), or nothing (it fades where it is). Ghosts carry their ancestors as a chain (`up`); a plain
- * list of ids (`ancestors`) works too.
+ * leaving (a ghost id), or nothing (it fades where it is).
  * @returns {{ node: import("./render.js").DisplayNode, ghost?: undefined } | { ghost: string, node?: undefined } | null}
  */
 export function foldTarget(ghost, graph, ghostIds) {
-  const ids = "up" in ghost ? chainIds(ghost.up) : ghost.ancestors;
-  for (const id of ids) {
+  for (const id of chainIds(ghost.up)) {
     const node = graph.byId.get(id);
     if (node) return { node };
     if (ghostIds.has(id)) return { ghost: id };
@@ -103,9 +90,6 @@ export function foldTarget(ghost, graph, ghostIds) {
 function* chainIds(up) {
   for (let a = up; a; a = a.up) yield a.id;
 }
-
-/** A ghost's parent's id (its nearest ancestor), or undefined for a root. */
-const parentOf = (g) => ("up" in g ? g.up?.id : g.ancestors[0]);
 
 /**
  * The display graph for a frame: `graph`'s nodes and edges with the ghosts appended (nodes at their current
@@ -143,10 +127,10 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
   radius.set(base.looks.radius);
   for (let i = 0; i < count; i++) {
     fill[i] = base.looks.fill[i];
-    shape[i] = base.looks.shape?.[i] ?? "circle";
+    shape[i] = base.looks.shape[i];
   }
-  if (base.shade) shade.set(base.shade.subarray(0, count));
-  if (base.appear) appear.set(base.appear.subarray(0, count));
+  shade.set(base.shade.subarray(0, count));
+  appear.set(base.appear.subarray(0, count));
 
   // Positions. A ghost parent always comes before its ghost children (departures sorts them so), so a ghost
   // following a ghost finds where it is this frame.
@@ -185,7 +169,7 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
   }
   // An edge from each ghost's parent (its first ancestor) if that's still drawn, real or ghost.
   for (const g of live) {
-    const parentId = parentOf(g);
+    const parentId = g.up?.id;
     if (parentId === undefined) continue;
     const real = graph.byId.get(parentId);
     const source = real ? real.index : index.get(parentId);
@@ -193,22 +177,16 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
     edges.push({ source, target: index.get(g.id), tree: true, ghost: true });
   }
   // Colours and widths for the ghost edges, as the view's edge options would give them.
-  const fallback = base.looks.edgeDefault ?? {
-    colour: "#5b6478",
-    width: 1.5,
-    byTarget: false,
-  };
+  const { edgeDefault } = base.looks;
   const edgeColour = edges.map((e, i) =>
     i < graph.edges.length
-      ? (base.looks.edgeColour?.[i] ?? fallback.colour)
-      : fallback.byTarget
+      ? base.looks.edgeColour[i]
+      : edgeDefault.byTarget
         ? fill[e.target]
-        : fallback.colour,
+        : edgeDefault.colour,
   );
   const edgeWidth = Float64Array.from(edges, (_, i) =>
-    i < graph.edges.length
-      ? (base.looks.edgeWidth?.[i] ?? fallback.width)
-      : fallback.width,
+    i < graph.edges.length ? base.looks.edgeWidth[i] : edgeDefault.width,
   );
   return {
     graph: {
