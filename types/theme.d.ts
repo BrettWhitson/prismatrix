@@ -28,6 +28,22 @@ export type Theme = {
    */
   root: string;
   /**
+   * a lit lineage's edges going up (what a node is made from), with lineageColor on
+   */
+  ancestors: string;
+  /**
+   * a lit lineage's edges going down (what it goes into), with lineageColor on
+   */
+  descendants: string;
+  /**
+   * the halo round highlighted nodes (highlight)
+   */
+  highlight: string;
+  /**
+   * the halo a flash lights (flash)
+   */
+  focus: string;
+  /**
    * colours by depth or branch, then wrapping
    */
   palette: readonly string[];
@@ -47,6 +63,10 @@ export type ThemeInput =
  * @property {string} edge        edges, when the edge `color` option is left at its default
  * @property {string} node        nodes coloured by one colour, when the node `color` option is left at its default
  * @property {string} root        a root's colour when colouring by branch
+ * @property {string} ancestors   a lit lineage's edges going up (what a node is made from), with lineageColor on
+ * @property {string} descendants a lit lineage's edges going down (what it goes into), with lineageColor on
+ * @property {string} highlight   the halo round highlighted nodes (highlight)
+ * @property {string} focus       the halo a flash lights (flash)
  * @property {readonly string[]} palette colours by depth or branch, then wrapping
  *
  * @typedef {"dark" | "light" | (Partial<Omit<Theme, "name">> & { base?: "dark" | "light" })} ThemeInput A preset's

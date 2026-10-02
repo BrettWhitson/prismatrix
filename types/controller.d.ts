@@ -92,6 +92,31 @@ export type Scene = {
    * per real node, 1 when selected (null: nothing is)
    */
   selected: Uint8Array | null;
+  /**
+   * per real node, 1 when highlighted (null: nothing is)
+   */
+  highlighted: Uint8Array | null;
+  /**
+   * per real node, how strongly it's flashing, 0–1 (null: none is)
+   */
+  flashes: Float32Array | null;
+  /**
+   * per real node, how far through a pulse it is, 0–1 (null: none is; 0 for none)
+   */
+  pulses: Float32Array | null;
+  /**
+   * the lineage lit by the hover or the selection: a lineageMask per real node
+   * (bit 2: reached going up, bit 4: going down), or null (also while a highlight is what's lit)
+   */
+  lineage: Uint8Array | null;
+  anim: import("./animation.js").AnimationOptions;
+  /**
+   * ms, on the controller's clock (for flow)
+   */
+  time: number;
+  /**
+   * bumped when the selection, highlight, a flash or a pulse changes
+   */
   selectionVersion: number;
   /**
    * per real node, 1 when its children are folded away (null: none are)
@@ -391,6 +416,12 @@ export type ControllerEvents = {
     selected: string[];
   };
   /**
+   * the highlighted nodes changed (highlight)
+   */
+  highlight: {
+    highlighted: string[];
+  };
+  /**
    * nodes were expanded (expand, expandAll, reveal)
    */
   expand: DisclosureDetail;
@@ -476,146 +507,6 @@ export type ControllerEvents = {
     message: string;
   };
 };
-/**
- * @typedef {object} TickResult
- * @property {boolean} busy   something is still moving or fading: keep ticking
- * @property {number} gap     seconds since the last tick, unclamped (0 for the first after a rest)
- * @property {number} simMs   wall time spent moving nodes this tick (morph and physics), ms
- * @property {number} energy  mean squared node speed
- * @property {string} state   "laying out", "moving to layout", "dragging", "zooming", "moving" or "at rest"
- *
- * @typedef {object} Restyle A restyle of a few nodes and edges, for painters to patch their buffers by.
- * @property {number} version            styleVersion after it
- * @property {Int32Array | null} nodes   the nodes restyled (indices into the graph on screen); null: every one
- * @property {Int32Array | null} edges   the edges restyled; null: every one
- *
- * @typedef {object} Scene What to draw (`controller.scene`, made by every `tick`): all a painter reads.
- * @property {import("./render.js").DisplayGraph} graph the graph on screen, with reference chips and ghosts after
- *   its own nodes
- * @property {import("./layouts.js").Routing} routing how edges bend
- * @property {import("./camera.js").Camera} camera
- * @property {Record<string, any>} node  the node options
- * @property {Record<string, any>} edge  the edge options, with the layout's own defaults
- * @property {import("./render.js").Looks} looks per node and edge of `graph`
- * @property {Float32Array} shade        per node, 0–1: how lit it is by the hover or selection
- * @property {Float32Array} appear       per node, 0–1: how far it has faded in (or out, for a ghost)
- * @property {number} dim                how far unlit nodes fade (the animation's hoverDim)
- * @property {import("./matrix.js").Matrix} matrix the real nodes' positions and footprints
- * @property {Float64Array | null} labelWidths each real node's label width, as the layout kept room for it
- * @property {number} hover              the hovered node (an index), or -1
- * @property {Uint8Array | null} selected per real node, 1 when selected (null: nothing is)
- * @property {number} selectionVersion
- * @property {Uint8Array | null} collapsed per real node, 1 when its children are folded away (null: none are)
- * @property {Int32Array | null} hidden  per real node, how many nodes are hidden below it (a "+N" badge)
- * @property {number} foldVersion
- * @property {number} version            bumped when anything moved
- * @property {number} shadeVersion       bumped when only brightness or the selection changed
- * @property {number} geometryVersion    bumped when the layout, the styles or the graph changed
- * @property {number} width              CSS px
- * @property {number} height
- * @property {number} dpr                device pixels per CSS px
- * @property {import("./theme.js").Theme} theme
- * @property {string} background
- * @property {number} styleVersion
- * @property {Restyle[]} restyles        the latest restyles, oldest first
- *
- * @typedef {"tree" | "merged" | "radial"} LayoutName
- * @typedef {"static" | "elastic" | "floating"} PhysicsMode
- *
- * @typedef {object} ControllerOptions
- * @property {LayoutName} [layout]       "tree" (the default), "merged" or "radial" (see LAYOUTS)
- * @property {import("./layouts.js").LayoutOptions} [layoutOptions] the layout's options, all or some
- * @property {PhysicsMode} [physics]     "static" (the default), "elastic" or "floating": what the layout offers
- *   (LAYOUTS[layout].physics; a mode it doesn't offer is "static")
- * @property {import("./physics.js").PhysicsOptions} [physicsOptions] the mode's options, all or some
- * @property {Partial<import("./animation.js").AnimationOptions>} [animation] ANIMATION_OPTIONS, all or some
- * @property {(type: keyof ControllerEvents, detail?: any) => void} [onEvent] every event (see `on` for one type at
- *   a time)
- * @property {(stats: import("./renderer.js").FrameStats) => void} [onFrame] after every drawn frame (the renderer
- *   calls it)
- * @property {() => void} [onChange]     something changed that needs a tick (renderers wake their frame loop)
- * @property {() => number} [clock]      the time now, ms (for changes made between ticks)
- * @property {boolean | "auto"} [worker] where layouts run: "auto" (the default) in a worker for big graphs, true
- *   always in a worker, false always on the page's thread (see layouter.js)
- * @property {string | URL} [workerUrl]  where the layout worker's script is, for bundlers that don't follow
- *   `new URL("./layout-worker.js", import.meta.url)` (a module worker running layout-worker.js)
- * @property {"auto" | "zoom" | "pan"} [wheel] what a plain wheel or two-finger scroll does: "auto" (the default)
- *   zooms with a mouse wheel and pans with a trackpad; a pinch (ctrl+wheel) always zooms
- * @property {boolean} [tapSelects]      a tap selects the node under it (shift, ctrl or cmd: adds or removes it) and a
- *   tap on empty space clears the selection (default true)
- * @property {number | null} [depth]     progressive disclosure: show this many levels below the roots and collapse
- *   the rest (0: just the roots; null, the default: everything). Applies to the first graph, to `setModel`, and to
- *   a graph that shares no nodes with the one before (`setGraph` with a different graph)
- * @property {boolean} [doubleTapToggles] a double tap on a node expands or collapses it (default false: a double tap
- *   is only reported, so an app can give it its own meaning)
- * @property {import("./theme.js").ThemeInput} [theme] the colours the engine picks itself (see theme.js; default
- *   "dark")
- *
- * @typedef {object} PointDetail Where a tap, double tap or long press was, and what's there.
- * @property {string | null} node        the node's id, or null for empty space
- * @property {boolean} reference         the node was found through one of its reference chips
- * @property {number} x                  CSS px from the canvas's left
- * @property {number} y
- * @property {{ x: number, y: number }} world the same point in world coordinates
- * @property {string} pointerType        "mouse", "touch" or "pen"
- *
- * @typedef {object} GraphDetail
- * @property {number} nodes              in the model
- * @property {number} edges
- * @property {number} [added]            nodes added (after a change; absent for a first graph)
- * @property {number} [removed]          nodes removed
- * @property {number} issues             problems found (see `graphIssue`)
- * @property {ReturnType<GraphModel["stats"]>} stats the model's shape (roots, depth, layers, cross-links…), worked
- *   out when first read
- *
- * @typedef {object} DisclosureDetail
- * @property {string | null} node        the node expanded or collapsed (null: expandAll or collapseTo)
- * @property {number} [depth]            levels shown (expand, expandAll, collapseTo)
- * @property {boolean} [reveal]          the expand opened the way to a node (reveal, focus)
- * @property {number} visible            nodes shown now
- * @property {number} hidden             nodes folded away now
- *
- * @typedef {object} ControllerEvents Every event a controller sends (`on(type, listener)`, `onEvent`), by type: the
- *   detail each listener is given.
- * @property {GraphDetail} graph         a graph was shown, or nodes or edges came or went
- * @property {import("./model.js").Issue} graphIssue a problem in the graph or a change to it (one per problem)
- * @property {{ nodes: number, edges: number }} graphData only data changed: nothing is drawn differently
- * @property {{ nodes: number, edges: number }} graphRestyle nodes' or edges' labels or styles changed
- * @property {Partial<import("./style.js").NodeOptions>} nodeStyle node options changed: the new values
- * @property {Partial<import("./style.js").EdgeOptions>} edgeStyle edge options changed: the new values
- * @property {{ layout: LayoutName } & Record<string, any>} layout the layout changed (setLayout): it, and all its
- *   options
- * @property {{ mode: PhysicsMode } & Record<string, any>} physics the physics changed (setPhysics): the mode, and all
- *   its options
- * @property {import("./animation.js").AnimationOptions} animation the animation options changed (setAnimation): all
- *   of them
- * @property {{ name: string }} theme    the theme changed (setTheme): "dark", "light" or "custom"
- * @property {{ renderer: string }} renderer the renderer changed (setRenderer): "webgl" or "canvas"
- * @property {undefined} reset           everything is going back to its home (reset)
- * @property {{ nodes: number, time: string }} restore a snapshot is shown (restore): its node count and time
- * @property {{ layout: LayoutName, nodes: number, edges: number }} laidOut a layout is in place
- * @property {{ nodes: number }} settled the view has come to rest (see `settled()`)
- * @property {{ k: number, pending?: boolean }} fit the camera frames the graph (pending: a layout is on its way, and
- *   another "fit" follows when it lands)
- * @property {{ node: string, k: number }} focus the camera is on its way to a node
- * @property {{ selected: string[] }} select the selection changed
- * @property {DisclosureDetail} expand   nodes were expanded (expand, expandAll, reveal)
- * @property {DisclosureDetail} collapse nodes were collapsed (collapse, collapseTo)
- * @property {{ node: string, reference: boolean }} hoverEnter the pointer is over a node (or one of its chips)
- * @property {{ node: string }} hoverLeave the pointer left it
- * @property {PointDetail} tap          a press that didn't wander (with `tapSelects`, it also selects)
- * @property {PointDetail} doubleTap     the second of two quick taps in about the same place
- * @property {PointDetail} longPress     a press held still for half a second (its release isn't a tap)
- * @property {{ node: string, carried: number }} dragStart a node is being dragged (`carried`: it and its subtree)
- * @property {{ node: string, thrown: boolean, screenSpeed: number, cancelled?: boolean }} dragEnd the drag ended:
- *   whether the node was thrown (and how fast, screen px/s), or the drag was cancelled (a pinch began, the node left)
- * @property {{ x: number, y: number }} panStart a pan began: where it started, CSS px
- * @property {{ node?: undefined, thrown: boolean, screenSpeed: number, cancelled?: boolean }} panEnd the pan ended
- *   (thrown: the camera glides on)
- * @property {{ k: number }} pinchStart  two pointers are zooming: the scale they started at
- * @property {{ k: number }} pinchEnd    the pinch ended: the scale it left
- * @property {{ message: string }} error a layout failed, or the layout worker was given up on
- */
 export declare class GraphController {
   #private;
   theme: Readonly<import("./theme.js").Theme>;
@@ -720,6 +611,24 @@ export declare class GraphController {
     mask: any;
     lit: any;
   };
+  /** @type {Set<string>} highlighted node ids (highlight) */
+  highlightIds: Set<string>;
+  highlightVersion: number;
+  highlightCache: {
+    key: number;
+    graph: any;
+    mask: any;
+  };
+  /** @type {Map<string, { start: number, ms: number }>} nodes flashing (flash) */
+  flashes: Map<
+    string,
+    {
+      start: number;
+      ms: number;
+    }
+  >;
+  /** @type {Map<string, number>} nodes pulsing (pulse): when each started */
+  pulses: Map<string, number>;
   lineages: LineageCache;
   grid: {
     graph: any;
@@ -1028,6 +937,26 @@ export declare class GraphController {
       toggle?: boolean;
     },
   ): boolean;
+  /** The highlighted node ids. */
+  get highlighted(): string[];
+  /**
+   * Highlight node `ids` (a list, one id, or null for none): each gets a halo in the theme's `highlight` colour,
+   * and they stay lit while everything else dims (as a hover's lineage does; a hover still shows its own). Ids the
+   * model doesn't have are skipped. Sends a "highlight" event and returns true when the highlight changed.
+   * @param {string | Iterable<string> | null} ids
+   */
+  highlight(ids: string | Iterable<string> | null): boolean;
+  /**
+   * Make nodes `ids` flash for `ms` (a halo in the theme's `focus` colour that comes on, holds, and fades): to
+   * show where something is ("this one"). Ids the model doesn't have are skipped.
+   * @param {string | Iterable<string>} ids
+   */
+  flash(ids: string | Iterable<string>, ms?: number): void;
+  /**
+   * A quick ring that leaves node `id` and fades as it spreads, in the node's colour: feedback for a tap.
+   * @param {string} id
+   */
+  pulse(id: string): void;
   /** The ids of the collapsed nodes. */
   get collapsed(): string[];
   /**

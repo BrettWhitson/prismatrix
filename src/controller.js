@@ -85,7 +85,14 @@ const sameInts = (a, b) =>
  * @property {Float64Array | null} labelWidths each real node's label width, as the layout kept room for it
  * @property {number} hover              the hovered node (an index), or -1
  * @property {Uint8Array | null} selected per real node, 1 when selected (null: nothing is)
- * @property {number} selectionVersion
+ * @property {Uint8Array | null} highlighted per real node, 1 when highlighted (null: nothing is)
+ * @property {Float32Array | null} flashes per real node, how strongly it's flashing, 0–1 (null: none is)
+ * @property {Float32Array | null} pulses per real node, how far through a pulse it is, 0–1 (null: none is; 0 for none)
+ * @property {Uint8Array | null} lineage the lineage lit by the hover or the selection: a lineageMask per real node
+ *   (bit 2: reached going up, bit 4: going down), or null (also while a highlight is what's lit)
+ * @property {import("./animation.js").AnimationOptions} anim
+ * @property {number} time               ms, on the controller's clock (for flow)
+ * @property {number} selectionVersion   bumped when the selection, highlight, a flash or a pulse changes
  * @property {Uint8Array | null} collapsed per real node, 1 when its children are folded away (null: none are)
  * @property {Int32Array | null} hidden  per real node, how many nodes are hidden below it (a "+N" badge)
  * @property {number} foldVersion
@@ -180,6 +187,7 @@ const sameInts = (a, b) =>
  *   another "fit" follows when it lands)
  * @property {{ node: string, k: number }} focus the camera is on its way to a node
  * @property {{ selected: string[] }} select the selection changed
+ * @property {{ highlighted: string[] }} highlight the highlighted nodes changed (highlight)
  * @property {DisclosureDetail} expand   nodes were expanded (expand, expandAll, reveal)
  * @property {DisclosureDetail} collapse nodes were collapsed (collapse, collapseTo)
  * @property {{ node: string, reference: boolean }} hoverEnter the pointer is over a node (or one of its chips)
@@ -197,6 +205,9 @@ const sameInts = (a, b) =>
  * @property {{ k: number }} pinchEnd    the pinch ended: the scale it left
  * @property {{ message: string }} error a layout failed, or the layout worker was given up on
  */
+
+/** How long a pulse takes, ms. */
+const PULSE_MS = 450;
 
 export class GraphController {
   #shownCache = null; // the display graph with references, and what it was made from
@@ -297,6 +308,14 @@ export class GraphController {
     this.selection = new Set();
     this.selectionVersion = 0;
     this.selectionCache = { key: -1, graph: null, mask: null, lit: null };
+    /** @type {Set<string>} highlighted node ids (highlight) */
+    this.highlightIds = new Set();
+    this.highlightVersion = 0;
+    this.highlightCache = { key: -1, graph: null, mask: null };
+    /** @type {Map<string, { start: number, ms: number }>} nodes flashing (flash) */
+    this.flashes = new Map();
+    /** @type {Map<string, number>} nodes pulsing (pulse): when each started */
+    this.pulses = new Map();
     this.lineages = new LineageCache();
     this.grid = { graph: null, version: -1, index: null };
     this.lit = null; // the lineage mask the shading is heading for (null: everything lit)
@@ -1287,6 +1306,8 @@ export class GraphController {
       !this.ghosts.length &&
       !this.pointers.size &&
       !this.arriving &&
+      !this.flashes.size &&
+      !this.pulses.size &&
       (this.sim.asleep || (this.mode === "floating" && this.modeOpts.drift > 0))
     );
   }
@@ -1376,10 +1397,16 @@ export class GraphController {
     busy = this.#moveCamera(now, dt) || busy;
     this.gestures.longPresses(now);
 
-    if (this.#fade(dt, this.#litMask())) {
+    const lit = this.#litMask();
+    if (this.#fade(dt, lit)) {
       this.shadeVersion++;
       busy = true;
     }
+    const marks = this.#timedMarks(now);
+    if (marks.busy) busy = true;
+    // Pulses run along a lit lineage's edges for as long as it's lit.
+    const lineage = lit && lit !== this.highlightCache.mask ? lit : null;
+    if (lineage && this.anim.flow !== "off") busy = true;
     // Edge routing knows when a layout morph is running (radial step edges keep their arcs through it).
     this.routing.morphing = !!this.tween;
     // References and ghosts are drawn from a display graph; everything else (physics, hover, hit-testing) uses the
@@ -1417,6 +1444,12 @@ export class GraphController {
       // come after the real ones and are never selected.
       hover: this.hover,
       selected: this.#selectionMask(),
+      highlighted: this.#highlightMask(),
+      flashes: marks.flashes,
+      pulses: marks.pulses,
+      lineage,
+      anim: this.anim,
+      time: now,
       selectionVersion: this.selectionVersion,
       // Progressive disclosure, a value per real node (both null when nothing shown is collapsed): `collapsed`, 1 for
       // a node whose children are folded away, and `hidden`, how many nodes are hidden below it (a "+N" badge; 0
@@ -1484,15 +1517,86 @@ export class GraphController {
   }
 
   /**
-   * The nodes the shading lights up: the lineage of the node being dragged, or else the hovered one, or else of
-   * the selection (so a tap on a touch screen, with no hover, still shows a node's family). Null: all of them.
+   * The nodes the shading lights up: the lineage of the node being dragged, or else the hovered one (the part of
+   * it the hoverLineage option says), or else the highlighted nodes, or else the selection's lineage (so a tap on a
+   * touch screen, with no hover, still shows a node's family; unless selectionLineage is off). Null: all of them.
    */
   #litMask() {
     const on = this.pointer?.node >= 0 ? this.pointer.node : this.hover;
-    if (on >= 0) return this.lineages.get(this.graph, on);
-    if (!this.selection.size) return null;
+    const part = this.anim.hoverLineage;
+    if (on >= 0 && part !== "none")
+      return this.lineages.get(this.graph, on, part);
+    const highlight = this.#highlightMask();
+    if (highlight) return highlight;
+    if (!this.selection.size || !this.anim.selectionLineage) return null;
     this.#selectionMask();
     return this.selectionCache.lit;
+  }
+
+  /** A flag per node of the working graph for the highlighted nodes, or null when none are shown. */
+  #highlightMask() {
+    if (!this.highlightIds.size) return null;
+    const cache = this.highlightCache;
+    if (cache.key === this.highlightVersion && cache.graph === this.graph)
+      return cache.mask;
+    let mask = new Uint8Array(this.graph.nodes.length);
+    let any = false;
+    for (const id of this.highlightIds) {
+      const n = this.graph.byId.get(id);
+      if (!n) continue;
+      mask[n.index] = 1;
+      any = true;
+    }
+    if (!any) mask = null;
+    Object.assign(cache, {
+      key: this.highlightVersion,
+      graph: this.graph,
+      mask,
+    });
+    return mask;
+  }
+
+  /**
+   * How strongly each node flashes and how far through its pulse it is, at `now`: arrays per node of the working
+   * graph (null when none is), and whether any is still running (finished ones are let go).
+   */
+  #timedMarks(now) {
+    if (!this.flashes.size && !this.pulses.size)
+      return { flashes: null, pulses: null, busy: false };
+    const count = this.graph.nodes.length;
+    let flashes = null,
+      pulses = null;
+    for (const [id, { start, ms }] of this.flashes) {
+      const t = (now - start) / ms;
+      if (t >= 1) {
+        this.flashes.delete(id);
+        continue;
+      }
+      const n = this.graph.byId.get(id);
+      // In quickly, held, then out over the last third.
+      if (n)
+        (flashes ??= new Float32Array(count))[n.index] = Math.min(
+          1,
+          t * 8,
+          (1 - t) * 3,
+        );
+    }
+    for (const [id, start] of this.pulses) {
+      const t = (now - start) / PULSE_MS;
+      if (t >= 1) {
+        this.pulses.delete(id);
+        continue;
+      }
+      const n = this.graph.byId.get(id);
+      if (n) (pulses ??= new Float32Array(count))[n.index] = Math.max(t, 1e-3);
+    }
+    // The halos are redrawn every frame they move.
+    this.selectionVersion++;
+    return {
+      flashes,
+      pulses,
+      busy: this.flashes.size > 0 || this.pulses.size > 0,
+    };
   }
 
   /** A flag per node of the working graph for the selection (null when nothing's selected), and its lineage. */
@@ -1572,6 +1676,65 @@ export class GraphController {
     this.#changed();
     this.#emit("select", { selected: this.selected });
     return true;
+  }
+
+  // ---- highlights, flashes and pulses ----------------------------------------------------------------------------
+
+  /** The highlighted node ids. */
+  get highlighted() {
+    return [...this.highlightIds];
+  }
+
+  /**
+   * Highlight node `ids` (a list, one id, or null for none): each gets a halo in the theme's `highlight` colour,
+   * and they stay lit while everything else dims (as a hover's lineage does; a hover still shows its own). Ids the
+   * model doesn't have are skipped. Sends a "highlight" event and returns true when the highlight changed.
+   * @param {string | Iterable<string> | null} ids
+   */
+  highlight(ids) {
+    const list = ids == null ? [] : typeof ids === "string" ? [ids] : [...ids];
+    const next = new Set();
+    for (const raw of list) {
+      const id = String(raw);
+      if (this.model.node(id)) next.add(id);
+    }
+    const before = this.highlightIds;
+    if (next.size === before.size && [...next].every((id) => before.has(id)))
+      return false;
+    this.highlightIds = next;
+    this.highlightVersion++;
+    this.selectionVersion++;
+    this.shadeVersion++;
+    this.fading = true;
+    this.#changed();
+    this.#emit("highlight", { highlighted: this.highlighted });
+    return true;
+  }
+
+  /**
+   * Make nodes `ids` flash for `ms` (a halo in the theme's `focus` colour that comes on, holds, and fades): to
+   * show where something is ("this one"). Ids the model doesn't have are skipped.
+   * @param {string | Iterable<string>} ids
+   */
+  flash(ids, ms = 2200) {
+    const start = this.clock();
+    const list = typeof ids === "string" ? [ids] : [...ids];
+    for (const raw of list) {
+      const id = String(raw);
+      if (this.model.node(id))
+        this.flashes.set(id, { start, ms: Math.max(1, ms) });
+    }
+    this.#changed();
+  }
+
+  /**
+   * A quick ring that leaves node `id` and fades as it spreads, in the node's colour: feedback for a tap.
+   * @param {string} id
+   */
+  pulse(id) {
+    if (!this.model.node(String(id))) return;
+    this.pulses.set(String(id), this.clock());
+    this.#changed();
   }
 
   // ---- progressive disclosure ----------------------------------------------------------------------------------

@@ -13,7 +13,7 @@
 // Everything is drawn relative to an origin in the middle of the layout (nodes, labels, CPU segments and GPU
 // pieces alike), so 32-bit floats stay precise far from the world's 0, 0.
 
-import { HALO_GAP, HALO_WIDTH, clearTo, edgeAlpha } from "./render.js";
+import { HALO_GAP, HALO_WIDTH, clearTo, flowShift } from "./render.js";
 import { LABEL_STRIDE, LabelLayer, textKey } from "./gl-text.js";
 import {
   END_STRIDE,
@@ -21,6 +21,7 @@ import {
   NODE_STRIDE,
   SEGMENT_STRIDE,
   edgeBrightness,
+  edgeStates,
   packEdges,
   packGlyphs,
   packHalos,
@@ -540,6 +541,15 @@ export class WebGLPainter {
         camera.k,
       );
     if (u.u_pixel) gl.uniform1f(u.u_pixel, 1 / (camera.k * dpr));
+    if (u.u_ancestors) {
+      const theme = scene.theme ?? DEFAULT_THEME;
+      gl.uniform3f(u.u_ancestors, ...parseColour(theme.ancestors));
+      gl.uniform3f(u.u_descendants, ...parseColour(theme.descendants));
+    }
+    if (u.u_flow) {
+      const { shift, sign } = flowShift(scene);
+      gl.uniform2f(u.u_flow, shift, sign);
+    }
     return u;
   }
 
@@ -665,10 +675,10 @@ export class WebGLPainter {
       const same = perEdge?.length === edgeCount && !regeometry;
       if (!same) perEdge = new Float32Array(edgeCount);
       let changed = !same;
+      const states = (this.states = edgeStates(scene, this.states));
       for (let i = 0; i < edgeCount; i++) {
-        const a = Math.fround(edgeAlpha(scene, graph.edges[i]));
-        if (perEdge[i] !== a) {
-          perEdge[i] = a;
+        if (perEdge[i] !== states[i]) {
+          perEdge[i] = states[i];
           changed = true;
         }
       }

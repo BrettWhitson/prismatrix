@@ -19,6 +19,10 @@ import { isHex, warnOnce } from "./schema.js";
  * @property {string} edge        edges, when the edge `color` option is left at its default
  * @property {string} node        nodes coloured by one colour, when the node `color` option is left at its default
  * @property {string} root        a root's colour when colouring by branch
+ * @property {string} ancestors   a lit lineage's edges going up (what a node is made from), with lineageColor on
+ * @property {string} descendants a lit lineage's edges going down (what it goes into), with lineageColor on
+ * @property {string} highlight   the halo round highlighted nodes (highlight)
+ * @property {string} focus       the halo a flash lights (flash)
  * @property {readonly string[]} palette colours by depth or branch, then wrapping
  *
  * @typedef {"dark" | "light" | (Partial<Omit<Theme, "name">> & { base?: "dark" | "light" })} ThemeInput A preset's
@@ -38,6 +42,10 @@ export const THEMES = Object.freeze({
     edge: "#5b6478",
     node: "#7aa2f7",
     root: "#e6e9f2",
+    ancestors: "#d6a74a",
+    descendants: "#62a4da",
+    highlight: "#ffd166",
+    focus: "#62a4da",
     // Colours by depth, then wrapping. Picked to read on the dark background.
     palette: Object.freeze([
       "#f6c177",
@@ -58,6 +66,10 @@ export const THEMES = Object.freeze({
     edge: "#808899",
     node: "#2f5fd0",
     root: "#1f2430",
+    ancestors: "#a8741a",
+    descendants: "#2a6fb0",
+    highlight: "#c98a00",
+    focus: "#2a6fb0",
     // The dark palette's hues, deep enough to read on a light background.
     palette: Object.freeze([
       "#b5650d",
@@ -86,7 +98,18 @@ export const NODE_COLOUR_DEFAULT = NODE_OPTIONS.find(
   (o) => o.key === "color",
 ).default;
 
-const TOKENS = ["background", "text", "textHalo", "edge", "node", "root"];
+const TOKENS = [
+  "background",
+  "text",
+  "textHalo",
+  "edge",
+  "node",
+  "root",
+  "ancestors",
+  "descendants",
+  "highlight",
+  "focus",
+];
 
 /**
  * A complete theme from a preset name or an object of tokens over a preset (`base`, "dark" by default). Unknown

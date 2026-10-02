@@ -24,6 +24,29 @@ export type AnimationOptions = {
    * 0–1: how far everything outside the hovered lineage fades
    */
   hoverDim: number;
+  /**
+   * what hovering a node lights: its whole
+   * lineage, what leads to it, what it leads to, or nothing
+   */
+  hoverLineage: "both" | "ancestors" | "descendants" | "none";
+  /**
+   * selected nodes keep their lineage lit
+   */
+  selectionLineage: boolean;
+  /**
+   * lit lineage edges keep their colour, or take the theme's `ancestors`
+   * and `descendants` colours by which way they run
+   */
+  lineageColor: "off" | "direction";
+  /**
+   * pulses running along a lit lineage's edges, toward the source or the
+   * target
+   */
+  flow: "off" | "source" | "target";
+  /**
+   * how fast the pulses run (1: about 70 world px a second)
+   */
+  flowSpeed: number;
 };
 /**
  * @typedef {object} AnimationOptions How the view moves between states (ANIMATION_OPTIONS), resolved.
@@ -34,6 +57,14 @@ export type AnimationOptions = {
  *   land, or at once
  * @property {number} hoverFade   ms the hover's emphasis takes to change
  * @property {number} hoverDim    0–1: how far everything outside the hovered lineage fades
+ * @property {"both" | "ancestors" | "descendants" | "none"} hoverLineage what hovering a node lights: its whole
+ *   lineage, what leads to it, what it leads to, or nothing
+ * @property {boolean} selectionLineage selected nodes keep their lineage lit
+ * @property {"off" | "direction"} lineageColor lit lineage edges keep their colour, or take the theme's `ancestors`
+ *   and `descendants` colours by which way they run
+ * @property {"off" | "source" | "target"} flow pulses running along a lit lineage's edges, toward the source or the
+ *   target
+ * @property {number} flowSpeed   how fast the pulses run (1: about 70 world px a second)
  */
 /** @type {import("./schema.js").OptionSpec[]} */
 export declare const ANIMATION_OPTIONS: import("./schema.js").OptionSpec[];

@@ -1,7 +1,7 @@
 // How the view moves between states: layout morphs, the camera, hover emphasis, nodes arriving. Durations are in
 // milliseconds; 0 means instant.
 
-import { range, select } from "./schema.js";
+import { bool, range, select } from "./schema.js";
 
 /**
  * @typedef {object} AnimationOptions How the view moves between states (ANIMATION_OPTIONS), resolved.
@@ -12,6 +12,14 @@ import { range, select } from "./schema.js";
  *   land, or at once
  * @property {number} hoverFade   ms the hover's emphasis takes to change
  * @property {number} hoverDim    0–1: how far everything outside the hovered lineage fades
+ * @property {"both" | "ancestors" | "descendants" | "none"} hoverLineage what hovering a node lights: its whole
+ *   lineage, what leads to it, what it leads to, or nothing
+ * @property {boolean} selectionLineage selected nodes keep their lineage lit
+ * @property {"off" | "direction"} lineageColor lit lineage edges keep their colour, or take the theme's `ancestors`
+ *   and `descendants` colours by which way they run
+ * @property {"off" | "source" | "target"} flow pulses running along a lit lineage's edges, toward the source or the
+ *   target
+ * @property {number} flowSpeed   how fast the pulses run (1: about 70 world px a second)
  */
 
 /** @type {import("./schema.js").OptionSpec[]} */
@@ -73,6 +81,46 @@ export const ANIMATION_OPTIONS = [
     0.75,
     "How far everything outside the hovered node's lineage fades: 0 not at all, 1 to nothing.",
   ),
+  select(
+    "hoverLineage",
+    "Hover lights",
+    [
+      { value: "both", label: "Its whole lineage" },
+      { value: "ancestors", label: "What leads to it" },
+      { value: "descendants", label: "What it leads to" },
+      { value: "none", label: "Nothing" },
+    ],
+    "both",
+    "Hovering a node lights it and its lineage and dims the rest: all of it, only up (its sources), only down, or not at all.",
+  ),
+  bool(
+    "selectionLineage",
+    "Selection keeps its lineage lit",
+    true,
+    "With nothing hovered, selected nodes light their lineage (as hover would) and dim the rest.",
+  ),
+  select(
+    "lineageColor",
+    "Lineage colours",
+    [
+      { value: "off", label: "Edges keep their colour" },
+      { value: "direction", label: "By direction" },
+    ],
+    "off",
+    "A lit lineage's edges in the theme's ancestors colour going up and its descendants colour going down.",
+  ),
+  select(
+    "flow",
+    "Flow",
+    [
+      { value: "off", label: "Off" },
+      { value: "target", label: "Toward the target" },
+      { value: "source", label: "Toward the source" },
+    ],
+    "off",
+    "Pulses running along a lit lineage's edges.",
+  ),
+  range("flowSpeed", "Flow speed", 0.1, 4, 0.1, 1),
 ];
 
 /**

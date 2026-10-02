@@ -90,9 +90,10 @@ export declare function patchNodes(
   iconAt?: IconAt | null,
 ): void;
 /**
- * The selected nodes (scene.selected), for the halo shader: their rows of `nodeData` (from packNodes), a handful of
- * instances, refilled when the selection, the shading or the positions change (nothing else is rebuilt for a
- * selection).
+ * The halos (haloList: the selection's, the highlight's, flashes, pulses), for the halo shader: their nodes' rows of
+ * `nodeData` (from packNodes) with the halo's colour, its alpha times the node's visibility, and its gap (CSS px,
+ * where the node's border colour was). A handful of instances, refilled when the selection, the shading or the
+ * positions change (nothing else is rebuilt for a selection).
  * @param {Float32Array} nodeData
  * @returns {{ data: Float32Array, count: number }}
  */
@@ -137,8 +138,18 @@ export declare function packEdges(
   endCount: number;
 };
 /**
- * How bright each packed segment and end is: its edge's brightness (edgeAlpha: hover, fading in). Cheap enough to
- * redo every frame of a fade. `bright` is true when every edge is at full brightness.
+ * Each edge's state for the GPU, one float: its brightness (edgeAlpha: hover, fading in, 0–1) plus twice what the
+ * lit lineage does to it (edgeLineage: 1 or 2 for its colour, 4 for flow). The edge shaders take it apart again
+ * (EDGE_STATE). Null for all: worked out for every edge.
+ * @returns {Float32Array}
+ */
+export declare function edgeStates(scene: any, out?: any): Float32Array;
+/** An edge state's brightness alone (see edgeStates). */
+export declare const stateAlpha: (v: any) => number;
+/**
+ * How bright each packed segment and end is: its edge's state (edgeStates: its brightness, hover, fading in, and
+ * the lineage's colour and flow). Cheap enough to redo every frame of a fade. `bright` is true when every edge is
+ * at full brightness.
  * @param {import("./controller.js").Scene} scene
  * @param {ReturnType<typeof packEdges>} packed
  * @param {{ segmentAlpha?: Float32Array, endAlpha?: Float32Array }} [reuse]

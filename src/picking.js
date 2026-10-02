@@ -143,23 +143,42 @@ export function lineageMask(graph, index, into = null) {
 /** How many lineages LineageCache keeps. */
 const LINEAGES_KEPT = 32;
 
+/**
+ * Part of a lineage mask: "both" is all of it; "ancestors" only what was reached going up (bit 2), "descendants"
+ * only going down (bit 4). The node itself is in both. Flags keep their bits.
+ * @param {Uint8Array} mask
+ * @param {"both" | "ancestors" | "descendants"} part
+ */
+export function lineagePart(mask, part) {
+  if (part === "both") return mask;
+  const bit = part === "ancestors" ? 2 : 4;
+  const out = new Uint8Array(mask.length);
+  for (let i = 0; i < mask.length; i++) if (mask[i] & bit) out[i] = mask[i];
+  return out;
+}
+
 /** The last few lineages worked out, for one working graph (hovering back and forth costs nothing). */
 export class LineageCache {
   constructor() {
     this.graph = null;
-    /** @type {Map<number, Uint8Array>} newest last */
+    /** @type {Map<string, Uint8Array>} by part and node, newest last */
     this.masks = new Map();
   }
 
-  get(graph, index) {
+  /**
+   * Node `index`'s lineage in `graph` (lineageMask), or the part of it going one way (lineagePart).
+   * @param {"both" | "ancestors" | "descendants"} [part]
+   */
+  get(graph, index, part = "both") {
     if (graph !== this.graph) {
       this.graph = graph;
       this.masks.clear();
     }
-    let mask = this.masks.get(index);
-    if (mask) this.masks.delete(index);
-    else mask = lineageMask(graph, index);
-    this.masks.set(index, mask);
+    const key = `${part}:${index}`;
+    let mask = this.masks.get(key);
+    if (mask) this.masks.delete(key);
+    else mask = lineagePart(lineageMask(graph, index), part);
+    this.masks.set(key, mask);
     if (this.masks.size > LINEAGES_KEPT)
       this.masks.delete(this.masks.keys().next().value);
     return mask;

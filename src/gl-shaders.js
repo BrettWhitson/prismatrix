@@ -26,6 +26,7 @@ import { GLYPH_MIN_PX, LINK } from "./references.js";
 import {
   AURA_ALPHA,
   AURA_RINGS,
+  FLOW,
   GLOW_ALPHA,
   MARKS,
   STACK_FADE,
@@ -329,8 +330,9 @@ void main() {
 }`;
 
 /**
- * A selection halo: a ring u_halo.x world px outside a node's shape (its exact offset, so corners come out round),
- * u_halo.y wide, in the node's colour. Instances are the selected nodes, packed as nodes are (packHalos).
+ * A halo: a ring u_halo.x world px (and its own gap, CSS px) outside a node's shape (its exact offset, so corners
+ * come out round), u_halo.y wide, in its colour. Instances are packed as nodes are (packHalos), the gap where the
+ * border colour was.
  */
 export const HALO_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
@@ -338,6 +340,7 @@ layout(location = 1) in vec2 a_centre;
 layout(location = 2) in float a_radius;
 layout(location = 3) in vec4 a_colour;
 layout(location = 4) in float a_shape;
+layout(location = 5) in vec4 a_gap;    // x: the halo's own gap, CSS px
 ${COMMON_VERTEX}
 ${NODE_SHAPES}
 uniform vec2 u_halo; // gap, width (world px)
@@ -346,16 +349,19 @@ out vec2 v_local;
 flat out float v_radius;
 flat out vec4 v_colour;
 flat out float v_shape;
+flat out float v_gap;
 
 void main() {
   float ring = a_shape == 5.0 ? ringHalfStroke(a_radius) : 0.0;
-  float extent = a_radius * shapeReach(a_shape) + ring + u_halo.x + u_halo.y + 2.0 * u_pixel;
+  float gap = u_halo.x + a_gap.x / u_camera.z;
+  float extent = a_radius * shapeReach(a_shape) + ring + gap + u_halo.y + 2.0 * u_pixel;
   vec2 local = a_corner * extent;
   gl_Position = toClip(a_centre + local);
   v_local = local;
   v_radius = a_radius;
   v_colour = a_colour;
   v_shape = a_shape;
+  v_gap = gap;
 }`;
 
 export const HALO_FRAGMENT = `#version 300 es
@@ -364,6 +370,7 @@ in vec2 v_local;
 flat in float v_radius;
 flat in vec4 v_colour;
 flat in float v_shape;
+flat in float v_gap;
 ${COMMON_FRAGMENT}
 ${NODE_SHAPES}
 uniform vec2 u_halo;
@@ -374,8 +381,25 @@ void main() {
   float d = v_shape == 5.0
     ? length(v_local) - v_radius - ringHalfStroke(v_radius)
     : shapeDistance(v_local, v_radius, v_shape);
-  float alpha = cover(abs(d - u_halo.x - u_halo.y * 0.5) - u_halo.y * 0.5) * v_colour.a;
+  float alpha = cover(abs(d - v_gap - u_halo.y * 0.5) - u_halo.y * 0.5) * v_colour.a;
   outColour = vec4(v_colour.rgb * alpha, alpha);
+}`;
+
+/**
+ * An edge instance's state (edgeStates in gl-pack.js): its brightness, and what a lit lineage does to it: its
+ * colour (the theme's ancestors or descendants) and whether pulses flow along it.
+ */
+const EDGE_STATE = `
+uniform vec3 u_ancestors;
+uniform vec3 u_descendants;
+
+vec4 edgeColour(vec3 colour, float state, out float flow) {
+  float code = floor(state * 0.5);
+  float tint = mod(code, 4.0);
+  flow = code >= 4.0 ? 1.0 : 0.0;
+  if (tint == 1.0) colour = u_ancestors;
+  else if (tint == 2.0) colour = u_descendants;
+  return vec4(colour, state - 2.0 * code);
 }`;
 
 /** How far past its side an edge's glow reaches (render.js glowReach), for vertex and fragment shaders alike. */
@@ -390,11 +414,13 @@ float glowReach(float halfWidth) {
  */
 const CAPSULE_CORNER = `
 ${EDGE_GLOW}
+${EDGE_STATE}
 out vec2 v_world;
 flat out vec4 v_ends;
 flat out vec2 v_half;
 flat out vec4 v_colour;
 flat out vec3 v_style; // how far along its edge the capsule starts (world px), dash style, glow
+flat out float v_flow; // 1: pulses flow along it
 
 // How far round a capsule its quad must reach: its half-width, its glow, and a couple of pixels.
 float capsulePad(float halfWidth, float glow) {
@@ -427,7 +453,7 @@ void main() {
   v_world = world;
   v_ends = a_ends;
   v_half = a_half;
-  v_colour = vec4(a_colour, a_alpha);
+  v_colour = edgeColour(a_colour, a_alpha, v_flow);
   v_style = a_style;
 }`;
 
@@ -438,8 +464,10 @@ flat in vec4 v_ends;
 flat in vec2 v_half;
 flat in vec4 v_colour;
 flat in vec3 v_style;
+flat in float v_flow;
 ${COMMON_FRAGMENT}
 ${EDGE_GLOW}
+uniform vec2 u_flow; // how far the pulses have moved (world px), and which way (1: toward targets)
 out vec4 outColour;
 
 void main() {
@@ -472,8 +500,20 @@ void main() {
     // A faint band either side, as wide as the glow reaches (the Canvas 2D painter's wide stroke under the edge).
     alpha = max(alpha, cover(d - glowReach(halfWidth)) * ${float(GLOW_ALPHA / 2)});
   }
+  vec3 colour = v_colour.rgb;
+  if (v_flow > 0.0) {
+    // The flow's pulses (render.js FLOW): short, wide and whitened, moving along the edge.
+    float along = v_style.x + dot(v_world - a, ab) / max(len, 1e-6);
+    float f = mod(along - u_flow.y * u_flow.x, ${float(FLOW.period)});
+    float on = ${float(FLOW.period * FLOW.on)};
+    float aa = max(fwidth(along), 1e-4);
+    float pulse = clamp(f / aa, 0.0, 1.0) * clamp((on - f) / aa, 0.0, 1.0);
+    float wide = cover(side - halfWidth * ${float(FLOW.widen)}) * pulse;
+    colour = mix(colour, vec3(1.0), ${float(FLOW.whiten)} * pulse);
+    alpha = max(alpha, wide);
+  }
   alpha *= v_colour.a;
-  outColour = vec4(v_colour.rgb * alpha, alpha);
+  outColour = vec4(colour * alpha, alpha);
 }`;
 
 /**
@@ -481,6 +521,7 @@ void main() {
  * instance's a_corner, a_colour and a_alpha.
  */
 const END_QUAD = `
+${EDGE_STATE}
 out vec2 v_local;
 flat out vec2 v_shape;
 flat out vec4 v_colour;
@@ -493,7 +534,8 @@ void endQuad(vec2 tip, vec2 dir, vec2 shape) {
   gl_Position = toClip(tip - dir * local.x + normal * local.y);
   v_local = local;
   v_shape = shape;
-  v_colour = vec4(a_colour, a_alpha);
+  float flow;
+  v_colour = edgeColour(a_colour, a_alpha, flow);
 }`;
 
 /** An edge's end: an arrowhead (a triangle pointing along the edge) or a dot, just short of the target. */
@@ -704,7 +746,7 @@ void capsule(vec2 a, vec2 b, bool draw, float along) {
   v_world = world;
   v_ends = vec4(a, b);
   v_half = vec2(a_half);
-  v_colour = vec4(a_colour, a_alpha);
+  v_colour = edgeColour(a_colour, a_alpha, v_flow);
   v_style = vec3(along, a_style);
 }`;
 
@@ -994,7 +1036,7 @@ void main() {
   // How far along the edge this capsule starts, for dashes: where the piece starts (past a bend, about that share of
   // the way between the nodes) and the capsules before it in the piece.
   float along = 0.0;
-  if (a_style.x > 0.0) {
+  if (a_style.x > 0.0 || a_alpha >= 8.0) {
     along = a_stopA.w > 0.5 ? 0.0 : a_stopA.z * length(t.xy - s.xy);
     for (int k = 0; k < ${RADIAL_POINTS}; k++) {
       if (k >= part) break;
@@ -1042,7 +1084,7 @@ void main() {
   bool keep = clipDisc(a, b, S, a_trim.x) && clipDisc(a, b, T, a_trim.y);
   // How far along the edge, for dashes: about where the span starts on the path, and the capsules before it.
   float along = 0.0;
-  if (a_style.x > 0.0) {
+  if (a_style.x > 0.0 || a_alpha >= 8.0) {
     along = a_along.y * length(T - S) * 1.2;
     vec2 previous = splineAt(0.0, p0, p1, p2, p3);
     for (int k = 1; k <= ${BUNDLE_STEPS}; k++) {

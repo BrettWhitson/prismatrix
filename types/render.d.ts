@@ -309,6 +309,31 @@ export declare function edgeDashes(width: any): {
   dashOn: number;
   dotPeriod: number;
 };
+/**
+ * Pulses running along a lit lineage's edges (the `flow` animation option): one every `period` world px, `on` of
+ * it long, moving at `speed` world px a second times the flowSpeed option; drawn `widen` times the edge's width,
+ * `whiten` of the way to white.
+ */
+export declare const FLOW: {
+  period: number;
+  on: number;
+  speed: number;
+  widen: number;
+  whiten: number;
+};
+/** How far the flow's pattern has moved at `scene.time`, world px (within one period), and which way (1: to targets). */
+export declare function flowShift(scene: any): {
+  shift: number;
+  sign: number;
+};
+/**
+ * What the lit lineage (`scene.lineage`) does to each edge of the display graph, or null when it does nothing: 1
+ * coloured as going up (the theme's `ancestors`), 2 as going down (`descendants`), with the lineageColor animation
+ * option; plus 4 when pulses run along it (`flow`). An edge is in the lineage when both its ends are; a reference
+ * chip counts as its ingredient.
+ * @returns {Uint8Array | null}
+ */
+export declare function edgeLineage(scene: any): Uint8Array | null;
 /** How far an edge's glow reaches past its side, for an edge `width` wide (world px), and how strong it starts. */
 export declare const glowReach: (width: any) => number;
 export declare const GLOW_ALPHA = 0.45;
@@ -326,9 +351,45 @@ export declare function drawScene(
 /** A selected node's halo: a ring this many CSS px outside its shape, this many wide, in the node's colour. */
 export declare const HALO_GAP = 3;
 export declare const HALO_WIDTH = 2;
+/** How far apart, CSS px, halos round the same node sit (a highlight outside the selection's, a flash outside both). */
+export declare const HALO_STEP = 4;
+/** How far a pulse's ring spreads, CSS px. */
+export declare const PULSE_REACH = 14;
+export type Halo = {
+  /**
+   * the node
+   */
+  index: number;
+  /**
+   * "#rrggbb"
+   */
+  colour: string;
+  /**
+   * 0–1, before the node's own visibility
+   */
+  alpha: number;
+  /**
+   * CSS px further out than a selection's halo
+   */
+  gap: number;
+};
 /**
- * A halo round each selected node: the exact outline of its shape pushed out by the gap (so corners come out
- * round), stroked. The WebGL painter draws the same ring as a distance field (HALO_FRAGMENT).
+ * @typedef {object} Halo A ring round a node (haloList).
+ * @property {number} index  the node
+ * @property {string} colour "#rrggbb"
+ * @property {number} alpha  0–1, before the node's own visibility
+ * @property {number} gap    CSS px further out than a selection's halo
+ */
+/**
+ * Every halo to draw, in order: the selection's (in each node's colour), the highlight's (the theme's `highlight`,
+ * outside the selection's), flashes (the theme's `focus`, outside both, fading in and out) and pulses (the node's
+ * colour, spreading out as they fade).
+ * @returns {Halo[]}
+ */
+export declare function haloList(scene: any): Halo[];
+/**
+ * The halos (haloList): each the exact outline of its node's shape pushed out by its gap (so corners come out
+ * round), stroked. The WebGL painter draws the same rings as distance fields (HALO_FRAGMENT).
  */
 export declare function drawHalos(ctx: any, scene: any): void;
 /** Fill the canvas with `colour`, or clear it to transparent when there's none. */

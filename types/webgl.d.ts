@@ -213,6 +213,7 @@ export declare class WebGLPainter {
     frame: any;
   };
   cleared: boolean;
+  states: any;
   brightness: any;
   /**
    * @param {HTMLCanvasElement} canvas

@@ -53,11 +53,29 @@ export declare function lineageMask(
   index: any,
   into?: any,
 ): Uint8Array;
+/**
+ * Part of a lineage mask: "both" is all of it; "ancestors" only what was reached going up (bit 2), "descendants"
+ * only going down (bit 4). The node itself is in both. Flags keep their bits.
+ * @param {Uint8Array} mask
+ * @param {"both" | "ancestors" | "descendants"} part
+ */
+export declare function lineagePart(
+  mask: Uint8Array,
+  part: "both" | "ancestors" | "descendants",
+): Uint8Array<ArrayBufferLike>;
 /** The last few lineages worked out, for one working graph (hovering back and forth costs nothing). */
 export declare class LineageCache {
   graph: any;
-  /** @type {Map<number, Uint8Array>} newest last */
-  masks: Map<number, Uint8Array>;
+  /** @type {Map<string, Uint8Array>} by part and node, newest last */
+  masks: Map<string, Uint8Array>;
   constructor();
-  get(graph: any, index: any): Uint8Array<ArrayBufferLike>;
+  /**
+   * Node `index`'s lineage in `graph` (lineageMask), or the part of it going one way (lineagePart).
+   * @param {"both" | "ancestors" | "descendants"} [part]
+   */
+  get(
+    graph: any,
+    index: any,
+    part?: "both" | "ancestors" | "descendants",
+  ): Uint8Array<ArrayBufferLike>;
 }

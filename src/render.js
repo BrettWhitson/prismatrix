@@ -269,6 +269,76 @@ export function edgeDashes(width) {
   };
 }
 
+/**
+ * Pulses running along a lit lineage's edges (the `flow` animation option): one every `period` world px, `on` of
+ * it long, moving at `speed` world px a second times the flowSpeed option; drawn `widen` times the edge's width,
+ * `whiten` of the way to white.
+ */
+export const FLOW = {
+  period: 48,
+  on: 0.18,
+  speed: 70,
+  widen: 1.8,
+  whiten: 0.55,
+};
+
+/** How far the flow's pattern has moved at `scene.time`, world px (within one period), and which way (1: to targets). */
+export function flowShift(scene) {
+  const anim = scene.anim;
+  const sign = anim?.flow === "source" ? -1 : 1;
+  const travelled =
+    (((scene.time ?? 0) / 1000) * FLOW.speed * (anim?.flowSpeed ?? 1)) %
+    FLOW.period;
+  return { shift: travelled, sign };
+}
+
+/** The last edgeLineage worked out, and what for. */
+let lineageMemo = null;
+
+/**
+ * What the lit lineage (`scene.lineage`) does to each edge of the display graph, or null when it does nothing: 1
+ * coloured as going up (the theme's `ancestors`), 2 as going down (`descendants`), with the lineageColor animation
+ * option; plus 4 when pulses run along it (`flow`). An edge is in the lineage when both its ends are; a reference
+ * chip counts as its ingredient.
+ * @returns {Uint8Array | null}
+ */
+export function edgeLineage(scene) {
+  const { lineage, graph, anim } = scene;
+  const tint = anim?.lineageColor === "direction";
+  const flow = !!anim?.flow && anim.flow !== "off";
+  if (!lineage || (!tint && !flow)) return null;
+  const m = lineageMemo;
+  if (
+    m &&
+    m.lineage === lineage &&
+    m.edges === graph.edges &&
+    m.tint === tint &&
+    m.flow === flow
+  )
+    return m.out;
+  const real = lineage.length;
+  const realOf = (i) => {
+    const r = graph.nodes[i]?.reference;
+    return r !== undefined ? r : i < real ? i : -1;
+  };
+  const out = new Uint8Array(graph.edges.length);
+  for (let ei = 0; ei < graph.edges.length; ei++) {
+    const e = graph.edges[ei];
+    if (e.ghost) continue;
+    const s = realOf(e.source),
+      t = realOf(e.target);
+    if (s < 0 || t < 0) continue;
+    const a = lineage[s],
+      b = lineage[t];
+    if (!a || !b) continue;
+    let code = flow ? 4 : 0;
+    if (tint) code |= a & 2 && b & 2 ? 1 : a & 4 && b & 4 ? 2 : 0;
+    out[ei] = code;
+  }
+  lineageMemo = { lineage, edges: graph.edges, tint, flow, out };
+  return out;
+}
+
 /** How far an edge's glow reaches past its side, for an edge `width` wide (world px), and how strong it starts. */
 export const glowReach = (width) => Math.max(2.5, width * 1.5);
 export const GLOW_ALPHA = 0.45;
@@ -302,27 +372,85 @@ export function drawScene(ctx, scene, icons = iconStore()) {
 /** A selected node's halo: a ring this many CSS px outside its shape, this many wide, in the node's colour. */
 export const HALO_GAP = 3;
 export const HALO_WIDTH = 2;
+/** How far apart, CSS px, halos round the same node sit (a highlight outside the selection's, a flash outside both). */
+export const HALO_STEP = 4;
+/** How far a pulse's ring spreads, CSS px. */
+export const PULSE_REACH = 14;
 
 /**
- * A halo round each selected node: the exact outline of its shape pushed out by the gap (so corners come out
- * round), stroked. The WebGL painter draws the same ring as a distance field (HALO_FRAGMENT).
+ * @typedef {object} Halo A ring round a node (haloList).
+ * @property {number} index  the node
+ * @property {string} colour "#rrggbb"
+ * @property {number} alpha  0–1, before the node's own visibility
+ * @property {number} gap    CSS px further out than a selection's halo
+ */
+
+/**
+ * Every halo to draw, in order: the selection's (in each node's colour), the highlight's (the theme's `highlight`,
+ * outside the selection's), flashes (the theme's `focus`, outside both, fading in and out) and pulses (the node's
+ * colour, spreading out as they fade).
+ * @returns {Halo[]}
+ */
+export function haloList(scene) {
+  const { graph, looks, selected, highlighted, flashes, pulses } = scene;
+  const theme = scene.theme ?? DEFAULT_THEME;
+  const real = graph.nodes.length;
+  const out = [];
+  const each = (values, add) => {
+    if (!values) return;
+    const count = Math.min(values.length, real);
+    for (let i = 0; i < count; i++) if (values[i]) add(i, values[i]);
+  };
+  each(selected, (i) =>
+    out.push({ index: i, colour: looks.fill[i], alpha: 1, gap: 0 }),
+  );
+  each(highlighted, (i) =>
+    out.push({
+      index: i,
+      colour: theme.highlight,
+      alpha: 1,
+      gap: selected?.[i] ? HALO_STEP : 0,
+    }),
+  );
+  each(flashes, (i, f) =>
+    out.push({ index: i, colour: theme.focus, alpha: f, gap: HALO_STEP * 2 }),
+  );
+  each(pulses, (i, t) =>
+    out.push({
+      index: i,
+      colour: looks.fill[i],
+      alpha: 1 - t,
+      gap: t * PULSE_REACH,
+    }),
+  );
+  return out;
+}
+
+/**
+ * The halos (haloList): each the exact outline of its node's shape pushed out by its gap (so corners come out
+ * round), stroked. The WebGL painter draws the same rings as distance fields (HALO_FRAGMENT).
  */
 export function drawHalos(ctx, scene) {
-  const { graph, looks, camera, selected } = scene;
-  if (!selected) return;
+  const halos = haloList(scene);
+  if (!halos.length) return;
+  const { graph, looks, camera } = scene;
   ctx.setTransform(...worldTransform(scene));
-  const width = HALO_WIDTH / camera.k;
-  const offset = (HALO_GAP + HALO_WIDTH / 2) / camera.k;
-  ctx.lineWidth = width;
-  const count = Math.min(graph.nodes.length, selected.length);
-  for (let i = 0; i < count; i++) {
-    if (!selected[i]) continue;
-    ctx.globalAlpha = nodeAlpha(scene, i);
+  ctx.lineWidth = HALO_WIDTH / camera.k;
+  for (const h of halos) {
+    const i = h.index;
+    ctx.globalAlpha = nodeAlpha(scene, i) * h.alpha;
     if (!ctx.globalAlpha) continue;
     const n = graph.nodes[i];
-    ctx.strokeStyle = looks.fill[i];
+    ctx.strokeStyle = h.colour;
     ctx.beginPath();
-    haloPath(ctx, looks.shape[i], n.x, n.y, looks.radius[i], offset);
+    haloPath(
+      ctx,
+      looks.shape[i],
+      n.x,
+      n.y,
+      looks.radius[i],
+      (HALO_GAP + h.gap + HALO_WIDTH / 2) / camera.k,
+    );
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -448,14 +576,25 @@ function drawEdges(ctx, scene) {
   const world = worldTransform(scene);
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
   const starts = startTrims(scene); // past each source's own label
-  const draw = (target, ei) =>
+  const lineage = edgeLineage(scene);
+  const theme = scene.theme ?? DEFAULT_THEME;
+  const flow = lineage ? flowShift(scene) : null;
+  const draw = (target, ei) => {
+    const code = lineage?.[ei] ?? 0;
     drawEdge(
       target,
       trimmedRoute(scene, ei, junctions, starts),
       edge,
       looks,
       ei,
+      (code & 3) === 1
+        ? theme.ancestors
+        : (code & 3) === 2
+          ? theme.descendants
+          : null,
+      code & 4 ? flow : null,
     );
+  };
   const style = (target) => {
     target.setTransform(...world);
     target.lineCap = "round";
@@ -681,10 +820,13 @@ function edgeLayer(canvas, kept = layers) {
   return layer;
 }
 
-/** Edge `ei` along `pts` (trimmedRoute), dashed or dotted by its look, with its glow and its ends. */
-function drawEdge(ctx, pts, edge, looks, ei) {
+/**
+ * Edge `ei` along `pts` (trimmedRoute), dashed or dotted by its look, with its glow and its ends; in `colour` when
+ * given (a lit lineage's), with the flow's pulses running along it when `flow` is (flowShift).
+ */
+function drawEdge(ctx, pts, edge, looks, ei, colour = null, flow = null) {
   if (!pts) return;
-  const colour = looks.edgeColour[ei];
+  colour ??= looks.edgeColour[ei];
   const width = looks.edgeWidth[ei];
   const dash = looks.edgeDash?.[ei] ?? 0;
   ctx.strokeStyle = colour;
@@ -746,6 +888,21 @@ function drawEdge(ctx, pts, edge, looks, ei) {
   ctx.setLineDash([]);
   ctx.lineDashOffset = 0;
   ctx.lineCap = "round";
+
+  if (flow) {
+    // The pulses: short, wide, whitened dashes moving along the edge.
+    ctx.save();
+    ctx.strokeStyle = mixHex(colour, "#ffffff", FLOW.whiten);
+    ctx.lineWidth = width * FLOW.widen;
+    ctx.lineCap = "butt";
+    ctx.setLineDash([FLOW.period * FLOW.on, FLOW.period * (1 - FLOW.on)]);
+    ctx.lineDashOffset = -flow.sign * flow.shift;
+    ctx.beginPath();
+    const path = rounded(pts, edge.corner);
+    for (let i = 0; i < path.length; i += 2) ctx.lineTo(path[i], path[i + 1]);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   const ends = endRooms(edge);
   const n = pts.length;

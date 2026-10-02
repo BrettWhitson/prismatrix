@@ -8,7 +8,7 @@ import {
   trimmedRoute,
 } from "./geometry.js";
 import { linkGlyphs } from "./references.js";
-import { edgeAlpha, nodeAlpha } from "./render.js";
+import { edgeAlpha, edgeLineage, haloList, nodeAlpha } from "./render.js";
 import { iconBox } from "./icons.js";
 
 /** Shape names to the ids the node shader switches on. */
@@ -195,26 +195,31 @@ function packNode(scene, n, out, origin, colour, iconAt) {
 const NONE = [0, 0, 0];
 
 /**
- * The selected nodes (scene.selected), for the halo shader: their rows of `nodeData` (from packNodes), a handful of
- * instances, refilled when the selection, the shading or the positions change (nothing else is rebuilt for a
- * selection).
+ * The halos (haloList: the selection's, the highlight's, flashes, pulses), for the halo shader: their nodes' rows of
+ * `nodeData` (from packNodes) with the halo's colour, its alpha times the node's visibility, and its gap (CSS px,
+ * where the node's border colour was). A handful of instances, refilled when the selection, the shading or the
+ * positions change (nothing else is rebuilt for a selection).
  * @param {Float32Array} nodeData
  * @returns {{ data: Float32Array, count: number }}
  */
 export function packHalos(scene, nodeData, out = null) {
-  const { graph, selected } = scene;
-  let count = 0;
-  const total = selected ? Math.min(selected.length, graph.nodes.length) : 0;
-  for (let i = 0; i < total; i++) if (selected[i]) count++;
-  out = room(out, count * NODE_STRIDE);
+  const halos = haloList(scene);
+  out = room(out, halos.length * NODE_STRIDE);
+  const colour = palette();
   let o = 0;
-  for (let i = 0; i < total; i++) {
-    if (!selected[i]) continue;
-    // Centre, radius, colour, visibility and shape: what the halo shader reads.
+  for (const h of halos) {
+    const i = h.index;
+    // Centre, radius, colour, visibility and shape: what the halo shader reads; then the gap.
     out.set(nodeData.subarray(i * NODE_STRIDE, i * NODE_STRIDE + 8), o);
+    const rgb = colour(h.colour);
+    out[o + 3] = rgb[0];
+    out[o + 4] = rgb[1];
+    out[o + 5] = rgb[2];
+    out[o + 6] *= h.alpha;
+    out[o + 8] = h.gap;
     o += NODE_STRIDE;
   }
-  return { data: out, count };
+  return { data: out, count: halos.length };
 }
 
 /**
@@ -326,8 +331,27 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
 }
 
 /**
- * How bright each packed segment and end is: its edge's brightness (edgeAlpha: hover, fading in). Cheap enough to
- * redo every frame of a fade. `bright` is true when every edge is at full brightness.
+ * Each edge's state for the GPU, one float: its brightness (edgeAlpha: hover, fading in, 0–1) plus twice what the
+ * lit lineage does to it (edgeLineage: 1 or 2 for its colour, 4 for flow). The edge shaders take it apart again
+ * (EDGE_STATE). Null for all: worked out for every edge.
+ * @returns {Float32Array}
+ */
+export function edgeStates(scene, out = null) {
+  const { edges } = scene.graph;
+  out = out?.length === edges.length ? out : new Float32Array(edges.length);
+  const lineage = edgeLineage(scene);
+  for (let i = 0; i < edges.length; i++)
+    out[i] = edgeAlpha(scene, edges[i]) + 2 * (lineage?.[i] ?? 0);
+  return out;
+}
+
+/** An edge state's brightness alone (see edgeStates). */
+export const stateAlpha = (v) => v - 2 * Math.floor(v / 2);
+
+/**
+ * How bright each packed segment and end is: its edge's state (edgeStates: its brightness, hover, fading in, and
+ * the lineage's colour and flow). Cheap enough to redo every frame of a fade. `bright` is true when every edge is
+ * at full brightness.
  * @param {import("./controller.js").Scene} scene
  * @param {ReturnType<typeof packEdges>} packed
  * @param {{ segmentAlpha?: Float32Array, endAlpha?: Float32Array }} [reuse]
@@ -335,9 +359,10 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
  */
 export function edgeBrightness(scene, packed, reuse = {}, perEdge = null) {
   const { edges } = scene.graph;
-  perEdge ??= Float32Array.from(edges, (e) => edgeAlpha(scene, e));
+  perEdge ??= edgeStates(scene);
   let bright = true;
-  for (let i = 0; i < edges.length; i++) if (perEdge[i] < 1) bright = false;
+  for (let i = 0; i < edges.length; i++)
+    if (stateAlpha(perEdge[i]) < 1) bright = false;
   const segmentAlpha = room(reuse.segmentAlpha, packed.segmentCount);
   const endAlpha = room(reuse.endAlpha, packed.endCount);
   for (let i = 0; i < packed.segmentCount; i++)

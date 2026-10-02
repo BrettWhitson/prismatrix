@@ -411,8 +411,28 @@ focused, or else the one nearest the middle, so that node stays put on screen wh
 `add`, as well as it; with `toggle`, flipping each in or out. Ids the model doesn't have are skipped. It returns
 whether the selection changed and sends `select`. `selected` is the selected ids, in the order they were selected.
 With `tapSelects` (the default), taps select: shift, ctrl or cmd adds or removes a node, and a tap on empty space
-clears the selection. Selected nodes get a halo and keep their lineage lit; a node that leaves the model leaves the
-selection (one only folded away stays selected).
+clears the selection. Selected nodes get a halo and keep their lineage lit (unless the `selectionLineage` animation
+option is off); a node that leaves the model leaves the selection (one only folded away stays selected).
+
+### Highlights, flashes and pulses
+
+| Member                 | What it does                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| `highlight(ids)`       | Highlight node `ids` (a list, one id, or null for none) in place of the highlight: a halo in the theme's `highlight` colour, and they stay lit while everything else dims (a hover still lights its own lineage over it). Returns whether it changed; sends `highlight`. For a legend: "show me these". |
+| `highlighted`          | The highlighted ids.                                                                                      |
+| `flash(ids, ms = 2200)`| A halo in the theme's `focus` colour that comes on, holds and fades over `ms`: "this one, here".          |
+| `pulse(id)`            | A ring in the node's colour that leaves it and fades as it spreads (450 ms): feedback for a tap.         |
+
+Halos round one node sit apart: the selection's, then the highlight's, then a flash's. While a flash or a pulse runs
+the view stays busy (and `settled()` waits for it).
+
+### What a hover lights
+
+The animation options decide it: `hoverLineage` lights a hovered node's whole lineage, only what leads to it
+(`ancestors`), only what it leads to (`descendants`), or nothing; `hoverDim` is how far the rest fades. With
+`lineageColor: "direction"`, a lit lineage's edges take the theme's `ancestors` colour going up and `descendants`
+going down; with `flow`, pulses run along them toward the source or the target, `flowSpeed` times about 70 world px
+a second (the view keeps drawing while they do). A highlight lights nodes, not a lineage: it neither colours nor flows.
 
 ### Expand and collapse
 
@@ -595,6 +615,7 @@ the controller mid-change.
 | `fit` | `{ k: number, pending?: boolean }` | The camera frames the graph (pending: a layout is on its way, and another "fit" follows when it lands) |
 | `focus` | `{ node: string, k: number }` | The camera is on its way to a node |
 | `select` | `{ selected: string[] }` | The selection changed |
+| `highlight` | `{ highlighted: string[] }` | The highlighted nodes changed (highlight) |
 | `expand` | `DisclosureDetail` | Nodes were expanded (expand, expandAll, reveal) |
 | `collapse` | `DisclosureDetail` | Nodes were collapsed (collapse, collapseTo) |
 | `hoverEnter` | `{ node: string, reference: boolean }` | The pointer is over a node (or one of its chips) |
@@ -875,6 +896,11 @@ own options, the layout's extras, and the layout's defaults), and throws for a m
 | `enter` | `"grow"` | `grow` (out of their parent), `fade` (in where they land), `none` (appear at once) | How new nodes arrive: growing out of their parent, fading in where they land, or at once |
 | `hoverFade` | `180` | 0 – 1000 | How long nodes and edges take to brighten or dim when the hover moves. |
 | `hoverDim` | `0.75` | 0 – 1 | How far everything outside the hovered node's lineage fades: 0 not at all, 1 to nothing. |
+| `hoverLineage` | `"both"` | `both` (its whole lineage), `ancestors` (what leads to it), `descendants` (what it leads to), `none` (nothing) | Hovering a node lights it and its lineage and dims the rest: all of it, only up (its sources), only down, or not at all. |
+| `selectionLineage` | `true` | true / false | With nothing hovered, selected nodes light their lineage (as hover would) and dim the rest. |
+| `lineageColor` | `"off"` | `off` (edges keep their colour), `direction` (by direction) | A lit lineage's edges in the theme's ancestors colour going up and its descendants colour going down. |
+| `flow` | `"off"` | `off`, `target` (toward the target), `source` (toward the source) | Pulses running along a lit lineage's edges. |
+| `flowSpeed` | `1` | 0.1 – 4 | How fast the pulses run (1: about 70 world px a second) |
 
 <!-- /generated:animation-options -->
 
@@ -954,6 +980,10 @@ its background).
 | `edge` | `#5b6478` | `#808899` | Edges, when the edge `color` option is left at its default |
 | `node` | `#7aa2f7` | `#2f5fd0` | Nodes coloured by one colour, when the node `color` option is left at its default |
 | `root` | `#e6e9f2` | `#1f2430` | A root's colour when colouring by branch |
+| `ancestors` | `#d6a74a` | `#a8741a` | A lit lineage's edges going up (what a node is made from), with lineageColor on |
+| `descendants` | `#62a4da` | `#2a6fb0` | A lit lineage's edges going down (what it goes into), with lineageColor on |
+| `highlight` | `#ffd166` | `#c98a00` | The halo round highlighted nodes (highlight) |
+| `focus` | `#62a4da` | `#2a6fb0` | The halo a flash lights (flash) |
 | `palette` | `#f6c177` `#7aa2f7` `#9ece6a` `#e27e8d` `#bb9af7` `#5ccfe6` `#ff9e64` `#c0caf5` | `#b5650d` `#2f5fd0` `#3f7d20` `#c2364f` `#7a4fd6` `#0b7a91` `#c4520f` `#5a6378` | Colours by depth or branch, then wrapping |
 
 <!-- /generated:themes -->
