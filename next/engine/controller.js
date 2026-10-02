@@ -26,7 +26,7 @@ import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
 import { looksOf } from "./render.js";
 import { runLayout, unpackRouting } from "./layout-job.js";
-import { Layouter, WORKER_MIN } from "./layouter.js";
+import { Layouter } from "./layouter.js";
 import { resolve } from "./schema.js";
 import { HIT_SCALE, HitGrid, LineageCache, lineageMask } from "./picking.js";
 
@@ -224,7 +224,7 @@ export class GraphController {
     // The renderer first: it brings the viewport size and real text measurement, which the first layout uses.
     if (renderer) this.setRenderer(renderer);
     this.#relayout();
-    this.#emit("graph", this.model.stats());
+    this.#reportGraph();
     for (const issue of this.model.issues) this.#emit("graphIssue", issue);
   }
 
@@ -292,31 +292,58 @@ export class GraphController {
     if (change.structure) {
       const shown = this.graph.nodes.length;
       this.#relayout();
-      const report = () =>
-        this.#emit("graph", {
-          ...this.model.stats(),
-          ...(shown && {
-            added: change.nodesAdded.length,
-            removed: change.nodesRemoved.length,
-          }),
-        });
-      // The stats walk the whole graph: for a big one, after this frame rather than in the middle of the update.
-      if (this.onEvent && this.model.size >= WORKER_MIN) setTimeout(report, 0);
-      else report();
+      this.#reportGraph(
+        shown && {
+          added: change.nodesAdded.length,
+          removed: change.nodesRemoved.length,
+        },
+      );
       return;
     }
-    // While a new structure is being laid out, the graph on screen is the old one: it keeps its records (the new one
-    // takes the model's when it's put in place).
-    if (
-      this.graph.model === this.model &&
-      this.graph.structure === this.model.structureVersion
-    )
-      this.graph.refresh();
-    if (change.sizes) this.#relayout({ fit: null });
-    else this.#restyle();
-    this.#emit("graphRestyle", {
+    // The same nodes and edges with new records: the graph on screen takes the changed ones (unless a new structure
+    // is being laid out: the graph that brings takes the model's records when it's put in place).
+    this.#patchRecords(change);
+    const counts = {
       nodes: change.nodesChanged.length,
       edges: change.edgesChanged.length,
+    };
+    // Data alone (a price, a rarity): nothing is drawn differently and nothing moves. No frame, no rebuild.
+    if (change.dataOnly) return this.#emit("graphData", counts);
+    if (change.sizes) this.#relayout({ fit: null });
+    else this.#restyle();
+    this.#emit("graphRestyle", counts);
+  }
+
+  /** The changed nodes' and edges' new records, onto the working graph (when it's the model's current structure). */
+  #patchRecords({ nodesChanged, edgesChanged }) {
+    const { graph, model } = this;
+    if (graph.model !== model || graph.structure !== model.structureVersion)
+      return;
+    for (const id of nodesChanged)
+      graph.nodes[model.index.get(id)].record = model.node(id);
+    for (const id of edgesChanged) {
+      const record = model.edge(id);
+      const e = graph.edges[model.edgeIndex.get(id)];
+      e.style = record.style;
+      e.data = record.data;
+    }
+  }
+
+  /**
+   * A "graph" event: how many nodes and edges, what came and went (`extra`), issues, and `stats` (the model's
+   * shape: roots, depth, layers, cross-links…), worked out only if a listener reads it (it walks the whole graph).
+   */
+  #reportGraph(extra = {}) {
+    const { model } = this;
+    let stats = null;
+    this.#emit("graph", {
+      nodes: model.size,
+      edges: model.edgeIndex.size,
+      ...extra,
+      issues: model.issues.length,
+      get stats() {
+        return (stats ??= model.stats());
+      },
     });
   }
 
@@ -346,7 +373,7 @@ export class GraphController {
       this.model.setMeasure(this.renderer.measureText);
     this.unlisten = this.model.onChange((change) => this.#onModel(change));
     this.#relayout();
-    this.#emit("graph", this.model.stats());
+    this.#reportGraph();
   }
 
   /**

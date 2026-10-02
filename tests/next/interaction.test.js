@@ -682,6 +682,56 @@ test("new nodes find where to grow from in one pass: a long new chain costs abou
   }
 });
 
+// ---- model changes that move nothing ----------------------------------------------------------------------------
+
+test("a data-only change patches the records it touched: no frame, no rebuild, a graphData event", () => {
+  let frames = 0;
+  const { c, wait, of } = setup(SMALL, { onChange: () => frames++ });
+  wait(1000);
+  const before = {
+    version: c.version,
+    geometry: c.geometryVersion,
+    looks: c.looks,
+    routing: c.routing,
+    b: node(c, "b").record,
+  };
+  frames = 0;
+  c.update({ changeNodes: [{ id: "a", data: { price: 12 } }] });
+  assert.equal(node(c, "a").data.price, 12);
+  assert.equal(node(c, "b").record, before.b, "untouched records stay");
+  assert.equal(c.version, before.version);
+  assert.equal(c.geometryVersion, before.geometry);
+  assert.equal(c.looks, before.looks);
+  assert.equal(c.routing, before.routing);
+  assert.equal(frames, 0, "no frame asked for");
+  assert.deepEqual(of("graphData").at(-1).detail, { nodes: 1, edges: 0 });
+  c.update({ changeEdges: [{ id: "a>a1", data: { count: 3 } }] });
+  assert.equal(c.graph.edges[c.model.edgeIndex.get("a>a1")].data.count, 3);
+  // A colour is drawn: a restyle, with the record patched the same way.
+  c.update({ changeNodes: [{ id: "b", style: { color: "#ff0000" } }] });
+  assert.equal(c.looks.fill[node(c, "b").index], "#ff0000");
+  assert.equal(of("graphRestyle").length, 1);
+});
+
+test("the graph event's stats are only worked out if a listener reads them", (t) => {
+  const { c, of } = setup();
+  const stats = t.mock.method(c.model, "stats");
+  c.update({
+    addNodes: [{ id: "z" }],
+    addEdges: [{ source: "b", target: "z" }],
+  });
+  const detail = of("graph").at(-1).detail;
+  assert.deepEqual(
+    { nodes: detail.nodes, edges: detail.edges, added: detail.added },
+    { nodes: 7, edges: 6, added: 1 },
+  );
+  assert.equal(stats.mock.callCount(), 0);
+  assert.equal(detail.stats.roots, 1);
+  assert.equal(detail.stats.nodes, 7);
+  detail.stats;
+  assert.equal(stats.mock.callCount(), 1, "once");
+});
+
 test("frames at rest (hover fades) don't step a sleeping simulation; a release wakes it", (t) => {
   const { c, wait, now } = setup(SMALL, { physics: "elastic" });
   wait(3000);
