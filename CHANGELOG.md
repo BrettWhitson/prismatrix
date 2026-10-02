@@ -56,15 +56,17 @@ draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the packa
     (`labelMaxWidth`); edge labels (`label`, e.g. quantities) near the target; reference chips carry a link glyph,
     show the ingredient's name on hover and fly to it on tap, and the shared node shows "×N"; collapsed nodes show
     "+N"; a node `badge`.
-  - **Model:** one-node updates cost what they change (0.01–0.6 ms at 100k nodes, was 140–630 ms); data-only changes
-    are free; a throwing listener or an update made from inside a listener can't break it; out-of-range options are
+  - **Model:** one-node updates in the model cost what they change (0.01–0.6 ms at 100k nodes, was 140–630 ms;
+    removals 16–42 ms). The whole path is still heavier: a structural change rebuilds the working graph on the page,
+    184–242 ms at 100k even with the worker. Data-only and colour changes are free; a throwing listener or an update made from inside a listener can't break it; out-of-range options are
     clamped and misspelt ones warned about.
-  - **Speed at 40k nodes:** bundled cross-links traced on the GPU too (tree morph frame 263 → 4.5 ms headless);
+  - **Speed at 40k nodes:** bundled cross-links traced on the GPU too (tree morph frame 263 → 4.5 ms headless; merged-tree
+    morph frames are still 47–52 ms);
     straight edges draw 6 vertices instead of 90; merged-tree pans rebuild nothing; hover 0.07 ms at 100k nodes
-    (was 4.4); physics steps about 10× faster (a typed-array collision grid) and nothing at all while at rest.
+    for the hit test (was 4.4), though the fade frames a hover starts still cost 16–40 ms; physics steps about 10× faster (a typed-array collision grid) and nothing at all while at rest.
   - **Robustness:** no crash above 130k nodes; a second finger no longer leaves a node held for ever; the layout
-    worker falls back to the page when it can't start or stops answering, and quick updates coalesce (the newest
-    layout lands 1 s after ten quick updates, was 7 s); busy ingredients get mass, so elastic physics settles around
+    worker falls back to the page when it can't start or stops answering, and quick updates coalesce (at most two
+    layouts run; the newest lands 1–3.7 s after ten quick updates on a 30k merged tree, was 6–10 s); busy ingredients get mass, so elastic physics settles around
     hundreds of users; a released node always springs home.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
   writes a rolling 30-second engine log to `logs/engine-stats.log`.
