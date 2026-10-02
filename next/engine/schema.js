@@ -14,6 +14,9 @@
  * @property {string} [hint]
  */
 
+/** Whether `v` is a "#rrggbb" colour. */
+export const isHex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+
 /** Messages already shown by the default warning: each is shown once, however often the same mistake is made. */
 const shown = new Set();
 
@@ -88,9 +91,7 @@ function check(o, v, warn) {
     case "bool":
       return typeof v === "boolean" ? v : invalid();
     case "color":
-      return typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : invalid();
-    default:
-      return o.default;
+      return isHex(v) ? v : invalid();
   }
 }
 
@@ -169,7 +170,7 @@ export const range = (key, label, min, max, step, value, hint) => ({
 /**
  * @param {string} key
  * @param {string} label
- * @param {(string | { value: string, label: string })[]} choices
+ * @param {{ value: string, label: string }[]} choices
  * @param {string} value
  * @param {string} [hint]
  * @returns {OptionSpec}
@@ -178,9 +179,7 @@ export const select = (key, label, choices, value, hint) => ({
   key,
   label,
   type: "select",
-  choices: choices.map((c) =>
-    typeof c === "string" ? { value: c, label: c } : c,
-  ),
+  choices,
   default: value,
   hint,
 });

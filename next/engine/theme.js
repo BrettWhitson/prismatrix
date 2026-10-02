@@ -7,8 +7,8 @@
 //
 // Pure: no DOM.
 
-import { EDGE_OPTIONS, NODE_OPTIONS, PALETTE } from "./style.js";
-import { warnOnce } from "./schema.js";
+import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
+import { isHex, warnOnce } from "./schema.js";
 
 /**
  * @typedef {object} Theme
@@ -38,7 +38,17 @@ export const THEMES = Object.freeze({
     edge: "#5b6478",
     node: "#7aa2f7",
     root: "#e6e9f2",
-    palette: Object.freeze([...PALETTE]),
+    // Colours by depth, then wrapping. Picked to read on the dark background.
+    palette: Object.freeze([
+      "#f6c177",
+      "#7aa2f7",
+      "#9ece6a",
+      "#e27e8d",
+      "#bb9af7",
+      "#5ccfe6",
+      "#ff9e64",
+      "#c0caf5",
+    ]),
   }),
   light: Object.freeze({
     name: "light",
@@ -76,7 +86,6 @@ export const NODE_COLOUR_DEFAULT = NODE_OPTIONS.find(
   (o) => o.key === "color",
 ).default;
 
-const hex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 const TOKENS = ["background", "text", "textHalo", "edge", "node", "root"];
 
 /**
@@ -106,11 +115,11 @@ export function resolveTheme(theme, warn = warnOnce) {
   for (const [key, value] of Object.entries(theme)) {
     if (key === "base" || key === "name") continue;
     if (key === "palette") {
-      if (Array.isArray(value) && value.length && value.every(hex))
+      if (Array.isArray(value) && value.length && value.every(isHex))
         out.palette = Object.freeze([...value]);
       else warn(`theme palette: a list of "#rrggbb" colours (ignored)`);
     } else if (!TOKENS.includes(key)) warn(`unknown theme colour "${key}"`);
-    else if (!hex(value))
+    else if (!isHex(value))
       warn(`theme ${key}: ${JSON.stringify(value)} isn't "#rrggbb"`);
     else out[key] = value;
   }

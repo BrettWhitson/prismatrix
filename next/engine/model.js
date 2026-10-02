@@ -15,14 +15,14 @@
 // several controllers at once), and a snapshot (snapshot.js) records it by id.
 
 import { LINE, fitLabel } from "./boxes.js";
-import { closest, resolve } from "./schema.js";
+import { closest, isHex, resolve } from "./schema.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
 
 export const GRAPH_FORMAT = "prismatrix-graph";
 export const GRAPH_VERSION = 1;
 
 /** Node options that change how much room a node takes: changing one lays the graph out again. */
-export const SIZE_KEYS = [
+const SIZE_KEYS = [
   "shape",
   "size",
   "sizeBy",
@@ -180,7 +180,6 @@ const plain = (value) =>
 const SHAPES = NODE_OPTIONS.find((o) => o.key === "shape").choices.map(
   (c) => c.value,
 );
-const colour = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 const number = (lo, hi) => (v) =>
   typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
 
@@ -198,17 +197,17 @@ const icon = (v) =>
 
 /** What a node's `style` may set, and what each value must be. */
 export const NODE_STYLE = {
-  color: colour,
+  color: isHex,
   size: number(1, 400),
   shape: (v) => SHAPES.includes(v),
-  stroke: colour,
+  stroke: isHex,
   strokeWidth: number(0, 100),
   icon,
   badge: (v) => typeof v === "string" && v.length <= 12,
 };
 /** What an edge's `style` may set. */
 export const EDGE_STYLE = {
-  color: colour,
+  color: isHex,
   width: number(0.1, 40),
 };
 
@@ -244,23 +243,11 @@ function checkStyle(raw, rules, what, problem) {
 
 /**
  * The model's own frozen copy of a node's or edge's data (or the graph's meta), so freezing it never touches the
- * caller's objects. Flat data (the usual: a price, a rarity) is a quick shallow copy; nested data is cloned.
+ * caller's objects.
  */
 function copyData(value) {
   const data = plain(value);
-  if (data === EMPTY) return EMPTY;
-  let any = false,
-    flat = true;
-  for (const k in data) {
-    any = true;
-    const v = data[k];
-    if (v !== null && typeof v === "object") {
-      flat = false;
-      break;
-    }
-  }
-  if (!any) return EMPTY;
-  if (flat) return Object.freeze({ ...data });
+  if (data === EMPTY || Object.keys(data).length === 0) return EMPTY;
   try {
     return freeze(structuredClone(data));
   } catch {
@@ -304,7 +291,6 @@ export function equal(a, b, seen) {
 function idOf(value) {
   if (typeof value === "string") return value === "" ? undefined : value;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value === "bigint") return String(value);
   return undefined;
 }
 
@@ -402,7 +388,6 @@ function checkEnds(source, target, has, id, problem) {
   return true;
 }
 
-/** The keys whose values differ, with their new values. */
 /**
  * The keys of `given` options that the schema knows and that have a value, added to `onto` (a new set either way).
  * @returns {Set<string>}
@@ -415,6 +400,7 @@ function givenKeys(schema, given, onto = null) {
   return out;
 }
 
+/** The keys whose values differ, with their new values. */
 function changes(before, after) {
   const out = {};
   for (const k of Object.keys(after))

@@ -190,8 +190,9 @@ export function runLayout(graph, name, options, spec, hint = null) {
 export function packRouting(routing, graph) {
   const { bends, references, ...rest } = routing;
   const out = { ...rest };
+  const index =
+    bends || references ? new Map(graph.edges.map((e, i) => [e, i])) : null;
   if (bends) {
-    const index = new Map(graph.edges.map((e, i) => [e, i]));
     const edges = [],
       start = [0],
       xy = [];
@@ -207,13 +208,11 @@ export function packRouting(routing, graph) {
       xy: Float64Array.from(xy),
     };
   }
-  if (references) {
-    const index = new Map(graph.edges.map((e, i) => [e, i]));
+  if (references)
     out.references = references.map(({ edge, ...r }) => ({
       ...r,
       edge: index.get(edge),
     }));
-  }
   return out;
 }
 

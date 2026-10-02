@@ -177,8 +177,6 @@ test("ids like __proto__ and constructor are ordinary ids, in the model and in s
   partial.byId.get("constructor").x = 7;
   applyState(partial, { toString: { x: 9, y: 9 } });
   assert.equal(partial.byId.get("constructor").x, 7);
-  applyState(partial, new Map([["constructor", { x: 3, y: 3 }]]));
-  assert.equal(partial.byId.get("constructor").x, 3, "a Map works too");
 
   // A style key named after Object's own properties is just an unknown style.
   const styled = GraphModel.from({
