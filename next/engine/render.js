@@ -113,7 +113,99 @@ export function drawScene(ctx, scene) {
   clearTo(ctx, scene, scene.background);
   drawEdges(ctx, scene);
   drawNodes(ctx, scene);
+  drawHalos(ctx, scene);
   drawLabels(ctx, scene);
+}
+
+/** A selected node's halo: a ring this many CSS px outside its shape, this many wide, in the node's colour. */
+export const HALO_GAP = 3;
+export const HALO_WIDTH = 2;
+
+/** Whether node `i` is selected (display-only nodes past the real ones never are). */
+export function isSelected(scene, i) {
+  return !!scene.selected?.[i];
+}
+
+/**
+ * A halo round each selected node: the exact outline of its shape pushed out by the gap (so corners come out
+ * round), stroked. The WebGL painter draws the same ring as a distance field (HALO_FRAGMENT).
+ */
+export function drawHalos(ctx, scene) {
+  const { graph, looks, camera, selected } = scene;
+  if (!selected) return;
+  ctx.setTransform(...worldTransform(scene));
+  const width = HALO_WIDTH / camera.k;
+  const offset = (HALO_GAP + HALO_WIDTH / 2) / camera.k;
+  ctx.lineWidth = width;
+  const count = Math.min(graph.nodes.length, selected.length);
+  for (let i = 0; i < count; i++) {
+    if (!selected[i]) continue;
+    ctx.globalAlpha = nodeAlpha(scene, i);
+    if (!ctx.globalAlpha) continue;
+    const n = graph.nodes[i];
+    ctx.strokeStyle = looks.fill[i];
+    ctx.beginPath();
+    haloPath(ctx, looks.shape[i], n.x, n.y, looks.radius[i], offset);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** The outline of a node's shape (centre x, y, radius r), pushed out by `o`. */
+function haloPath(ctx, shape, x, y, r, o) {
+  const polygon = (corners) => {
+    // A convex polygon pushed out: each side moves out along its normal, each corner becomes an arc of radius o.
+    const n = corners.length;
+    for (let i = 0; i < n; i++) {
+      const [px, py] = corners[(i + n - 1) % n],
+        [cx, cy] = corners[i],
+        [nx, ny] = corners[(i + 1) % n];
+      ctx.arc(
+        x + cx,
+        y + cy,
+        o,
+        Math.atan2(-(cx - px), cy - py),
+        Math.atan2(-(nx - cx), ny - cy),
+      );
+    }
+    ctx.closePath();
+  };
+  switch (shape) {
+    case "square":
+      // Corners in order of increasing angle (clockwise on screen), so each arc turns the short way.
+      return polygon([
+        [r, r],
+        [-r, r],
+        [-r, -r],
+        [r, -r],
+      ]);
+    case "rounded":
+      return ctx.roundRect(
+        x - r - o,
+        y - r - o,
+        (r + o) * 2,
+        (r + o) * 2,
+        r * 0.45 + o,
+      );
+    case "diamond":
+      return polygon([
+        [r * 1.25, 0],
+        [0, r * 1.25],
+        [-r * 1.25, 0],
+        [0, -r * 1.25],
+      ]);
+    case "hexagon":
+      return polygon(
+        Array.from({ length: 6 }, (_, i) => {
+          const a = (Math.PI / 3) * i + Math.PI / 6;
+          return [Math.cos(a) * r * 1.1, Math.sin(a) * r * 1.1];
+        }),
+      );
+    case "ring":
+      return ctx.arc(x, y, r + Math.max(1.5, r * 0.35) / 2 + o, 0, Math.PI * 2);
+    default:
+      ctx.arc(x, y, r + o, 0, Math.PI * 2);
+  }
 }
 
 /** Fill the canvas with `colour`, or clear it to transparent when there's none. */
