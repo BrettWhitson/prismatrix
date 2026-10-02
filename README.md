@@ -68,7 +68,8 @@ The full reference is [API.md](API.md); the graph and snapshot formats are in [M
 npm install github:BrettWhitson/prismatrix#vX.Y.Z
 ```
 
-Pin a release tag. Releases up to `v0.4.0` carry the earlier engine and its API (see [CHANGELOG.md](CHANGELOG.md)).
+Pin a release tag (`v0.5.0` and later: this engine). Releases up to `v0.4.0` carry the earlier engine and its API
+(see [CHANGELOG.md](CHANGELOG.md)).
 
 In a browser without a bundler, map the imports:
 

@@ -3,7 +3,7 @@
 Prismatrix: a lightning fast and lightweight graph rendering and physics engine. Versions follow `0.MINOR.PATCH`
 until the first stable release, continuing Prism's numbering.
 
-## Unreleased
+## 0.5.0
 
 The engine, rebuilt from the ground up. It is now the package's main engine: `src/`, imported from `prismatrix` and
 `prismatrix/layout`. The 0.4 engine is removed, along with its demo; the sandbox (`npm run sandbox`) takes its place.
