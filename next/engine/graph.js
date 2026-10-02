@@ -89,33 +89,6 @@ export class Node {
   set labelAngle(v) {
     this.matrix.labelAngle[this.index] = v;
   }
-  get radius() {
-    return this.matrix.radius[this.index];
-  }
-  set radius(v) {
-    this.matrix.radius[this.index] = v;
-  }
-  /** Its footprint relative to its centre: { x0, y0, x1, y1 } (a copy; set a new one to change it). */
-  get box() {
-    const m = this.matrix,
-      i = this.index;
-    return { x0: m.boxX0[i], y0: m.boxY0[i], x1: m.boxX1[i], y1: m.boxY1[i] };
-  }
-  set box(b) {
-    const m = this.matrix,
-      i = this.index;
-    m.boxX0[i] = b.x0;
-    m.boxY0[i] = b.y0;
-    m.boxX1[i] = b.x1;
-    m.boxY1[i] = b.y1;
-  }
-
-  /** A plain copy, for the console and logs. */
-  toJSON() {
-    const { id, label, index, x, y, vx, vy, homeX, homeY, depth, parent } =
-      this;
-    return { id, label, index, x, y, vx, vy, homeX, homeY, depth, parent };
-  }
 }
 
 /**
@@ -138,17 +111,12 @@ export class Node {
 
 export class Graph {
   /**
-   * @param {GraphModel | { id: string | number, label?: string, data?: object }[]} [nodes] a model, or nodes
-   * @param {{ source: string | number, target: string | number, id?: string, data?: object }[] | null} [edges]
-   * @param {Part | null} [part] with a model: show only this part of it (null: all of it)
+   * @param {GraphModel} [model] (an empty one by default)
+   * @param {Part | null} [part] show only this part of it (null: all of it)
    */
-  constructor(nodes = [], edges = [], part = null) {
+  constructor(model = new GraphModel(), part = null) {
     /** @type {GraphModel} */
-    this.model =
-      nodes instanceof GraphModel
-        ? nodes
-        : GraphModel.from({ nodes, edges: edges ?? [] });
-    const model = this.model;
+    this.model = model;
     /** The part of the model shown, or null for all of it. */
     this.part = part;
     /**
@@ -265,26 +233,5 @@ export class Graph {
       this.edges[i].style = e.style;
       this.edges[i].data = e.data;
     }
-  }
-
-  /** The bounding box of the live positions, or of the homes. */
-  bounds(homes = false) {
-    if (!this.nodes.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    const m = this.matrix;
-    const xs = homes ? m.homeX : m.x,
-      ys = homes ? m.homeY : m.y;
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (let i = 0; i < m.count; i++) {
-      const x = xs[i],
-        y = ys[i];
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-    return { minX, minY, maxX, maxY };
   }
 }

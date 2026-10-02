@@ -23,6 +23,9 @@ import {
   unpackRouting,
 } from "../../next/engine/layout-job.js";
 
+const graphOf = (nodes, edges = []) =>
+  new Graph(GraphModel.from({ nodes, edges }));
+
 function rng(seed) {
   let s = seed >>> 0;
   return () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
@@ -49,7 +52,7 @@ function recipes(seed, count, shared) {
         target: String(Math.max(a, b)),
       });
   }
-  return new Graph(nodes, edges);
+  return graphOf(nodes, edges);
 }
 
 const sizing = { gap: 0, box: () => ({ x0: -8, y0: -8, x1: 8, y1: 8 }) };
@@ -113,7 +116,7 @@ test("a plain tree lays out with no crossings and no bends", () => {
 
 test("long edges get one bend per layer they cross, in order down the edge", () => {
   // root → a → b → c, and root → c directly: the long edge crosses two layers.
-  const g = new Graph(
+  const g = graphOf(
     ["root", "a", "b", "c"].map((id) => ({ id })),
     [
       ["root", "a"],
@@ -139,7 +142,7 @@ test("long edges get one bend per layer they cross, in order down the edge", () 
 
 test("cycles are laid out anyway (a reversed edge), and the same input gives the same output", () => {
   const make = () =>
-    new Graph(
+    graphOf(
       ["a", "b", "c"].map((id) => ({ id })),
       [
         ["a", "b"],
@@ -161,7 +164,7 @@ test("cycles are laid out anyway (a reversed edge), and the same input gives the
 });
 
 test("bends move with their edge's ends when the nodes are dragged", () => {
-  const g = new Graph(
+  const g = graphOf(
     ["root", "a", "b"].map((id) => ({ id })),
     [
       ["root", "a"],
@@ -182,7 +185,7 @@ test("bends move with their edge's ends when the nodes are dragged", () => {
 });
 
 test("hovering a shared ingredient lights up every recipe that uses it", () => {
-  const g = new Graph(
+  const g = graphOf(
     ["sword", "shield", "ingot", "ore"].map((id) => ({ id })),
     [
       ["sword", "ingot"],
@@ -561,7 +564,7 @@ test("references: every cross-link into a busy ingredient ends at a compact chip
 test("an ingredient's tree edge is its edge from one layer up, not its shallowest user (the forest's choice)", () => {
   // top → mid → low → hub, and top and mid use hub too. The forest's tree edge for hub is top's (breadth first):
   // three layers long. The layout keeps low's, and the other two end at references.
-  const g = new Graph(
+  const g = graphOf(
     ["top", "mid", "low", "hub"].map((id) => ({ id })),
     [
       ["top", "mid"],
@@ -600,7 +603,7 @@ test("reference chips are compact: chips side by side on a layer sit closer than
     edges.push({ source: "r", target: `h${h}` });
     for (const u of ["a", "b"]) edges.push({ source: u, target: `h${h}` });
   }
-  const g = new Graph(nodes, edges);
+  const g = graphOf(nodes, edges);
   const routing = layeredLayout(g, { shareMin: 3, nodeGap: 16 }, wide);
   const underR = routing.references
     .filter((r) => g.nodes[r.source].id === "r")

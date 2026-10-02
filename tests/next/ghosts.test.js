@@ -2,15 +2,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Graph } from "../../next/engine/graph.js";
+import { GraphModel } from "../../next/engine/model.js";
 import {
   departures,
   foldTarget,
   withGhosts,
 } from "../../next/engine/ghosts.js";
 
+const graphOf = (nodes, edges = []) =>
+  new Graph(GraphModel.from({ nodes, edges }));
+
 /** root → a → a1 → a11, root → b. */
 const big = () =>
-  new Graph(
+  graphOf(
     ["root", "a", "b", "a1", "a11"].map((id) => ({ id, label: id })),
     [
       ["root", "a"],
@@ -43,7 +47,7 @@ const place = (g) =>
 test("departures: the nodes that left, parents first, each with its ancestors' ids", () => {
   const before = big();
   place(before);
-  const after = new Graph(
+  const after = graphOf(
     ["root", "b"].map((id) => ({ id })),
     [{ source: "root", target: "b" }],
   );
@@ -57,7 +61,7 @@ test("departures: the nodes that left, parents first, each with its ancestors' i
 });
 
 test("a ghost folds to its nearest ancestor that's still there, or a ghost still leaving, or nowhere", () => {
-  const after = new Graph(
+  const after = graphOf(
     ["root", "b"].map((id) => ({ id })),
     [{ source: "root", target: "b" }],
   );
@@ -70,7 +74,7 @@ test("a ghost folds to its nearest ancestor that's still there, or a ghost still
 test("ghosts glide onto their target, fading out, and are gone after the morph", () => {
   const before = big();
   place(before);
-  const after = new Graph(
+  const after = graphOf(
     ["root", "b"].map((id) => ({ id })),
     [{ source: "root", target: "b" }],
   );
@@ -106,7 +110,7 @@ test("ghosts glide onto their target, fading out, and are gone after the morph",
 
 test("no morph time, no ghosts", () => {
   const before = big();
-  const after = new Graph([{ id: "root" }], []);
+  const after = graphOf([{ id: "root" }], []);
   const ghosts = departures(before, after, looksOf(before), 0);
   const out = withGhosts(after, ghosts, baseOf(after), 0, 0, (t) => t);
   assert.equal(out.graph, after);

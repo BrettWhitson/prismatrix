@@ -7,8 +7,8 @@
 //
 // Pure: no DOM.
 
-import { EDGE_OPTIONS, NODE_OPTIONS, PALETTE } from "./style.js";
-import { warnOnce } from "./schema.js";
+import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
+import { isHex, warnOnce } from "./schema.js";
 
 /**
  * @typedef {object} Theme
@@ -26,7 +26,7 @@ import { warnOnce } from "./schema.js";
  */
 
 /**
- * The theme presets. Every palette colour has at least 4:1 contrast with its background (see contrast).
+ * The theme presets. Every palette colour has at least 4:1 contrast (WCAG 2) with its background.
  * @type {Readonly<{ dark: Readonly<Theme>, light: Readonly<Theme> }>}
  */
 export const THEMES = Object.freeze({
@@ -38,7 +38,17 @@ export const THEMES = Object.freeze({
     edge: "#5b6478",
     node: "#7aa2f7",
     root: "#e6e9f2",
-    palette: Object.freeze([...PALETTE]),
+    // Colours by depth, then wrapping. Picked to read on the dark background.
+    palette: Object.freeze([
+      "#f6c177",
+      "#7aa2f7",
+      "#9ece6a",
+      "#e27e8d",
+      "#bb9af7",
+      "#5ccfe6",
+      "#ff9e64",
+      "#c0caf5",
+    ]),
   }),
   light: Object.freeze({
     name: "light",
@@ -76,7 +86,6 @@ export const NODE_COLOUR_DEFAULT = NODE_OPTIONS.find(
   (o) => o.key === "color",
 ).default;
 
-const hex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 const TOKENS = ["background", "text", "textHalo", "edge", "node", "root"];
 
 /**
@@ -106,34 +115,13 @@ export function resolveTheme(theme, warn = warnOnce) {
   for (const [key, value] of Object.entries(theme)) {
     if (key === "base" || key === "name") continue;
     if (key === "palette") {
-      if (Array.isArray(value) && value.length && value.every(hex))
+      if (Array.isArray(value) && value.length && value.every(isHex))
         out.palette = Object.freeze([...value]);
       else warn(`theme palette: a list of "#rrggbb" colours (ignored)`);
     } else if (!TOKENS.includes(key)) warn(`unknown theme colour "${key}"`);
-    else if (!hex(value))
+    else if (!isHex(value))
       warn(`theme ${key}: ${JSON.stringify(value)} isn't "#rrggbb"`);
     else out[key] = value;
   }
   return Object.freeze(out);
-}
-
-/** A colour's relative luminance (WCAG 2), 0 for black to 1 for white. */
-export function luminance(colour) {
-  const n = parseInt(colour.slice(1), 16);
-  const linear = (c) => {
-    c /= 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return (
-    0.2126 * linear((n >> 16) & 255) +
-    0.7152 * linear((n >> 8) & 255) +
-    0.0722 * linear(n & 255)
-  );
-}
-
-/** The contrast ratio between two colours (WCAG 2): 1 for the same, 21 for black on white. */
-export function contrast(a, b) {
-  const x = luminance(a),
-    y = luminance(b);
-  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }

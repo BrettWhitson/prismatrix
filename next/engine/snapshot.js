@@ -106,17 +106,13 @@ export function snapshotModel(snapshot) {
 
 /**
  * Put a snapshot's recorded layout state onto a working graph's nodes, by id. Nodes it doesn't mention keep theirs.
- * `state` is an object by id (own keys only: "constructor" isn't every node's state) or a Map.
+ * `state` is an object by id (own keys only: "constructor" isn't every node's state).
  * @param {import("./graph.js").Graph} graph
- * @param {Record<string, NodeState> | Map<string, NodeState>} state
+ * @param {Record<string, NodeState>} state
  */
 export function applyState(graph, state) {
-  const stateOf =
-    state instanceof Map
-      ? (id) => state.get(id)
-      : (id) => (state && Object.hasOwn(state, id) ? state[id] : undefined);
   for (const n of graph.nodes) {
-    const s = stateOf(n.id);
+    const s = state && Object.hasOwn(state, n.id) ? state[n.id] : undefined;
     if (!s || typeof s !== "object") continue;
     n.x = s.x;
     n.y = s.y;

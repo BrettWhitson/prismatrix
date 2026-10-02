@@ -11,6 +11,9 @@ import {
   parseColour,
 } from "../../next/engine/webgl.js";
 
+const graphOf = (nodes, edges = []) =>
+  new Graph(GraphModel.from({ nodes, edges }));
+
 test("every node shape the options offer has a shader id", () => {
   const shapes = NODE_OPTIONS.find((o) => o.key === "shape").choices;
   for (const { value } of shapes) assert.ok(value in SHAPE_IDS, value);
@@ -21,7 +24,7 @@ test("colours are parsed to 0–1 channels", () => {
 });
 
 test("nodes pack as centre, radius, colour, visibility and shape, in index order", () => {
-  const g = new Graph([{ id: "a" }, { id: "b" }], []);
+  const g = graphOf([{ id: "a" }, { id: "b" }], []);
   g.nodes[1].x = 10;
   g.nodes[1].y = -5;
   const scene = {
@@ -64,7 +67,7 @@ import {
 
 /** root → a, b; a → a1 */
 function small() {
-  const g = new Graph(
+  const g = graphOf(
     ["root", "a", "b", "a1"].map((id) => ({ id })),
     [
       ["root", "a"],
@@ -276,7 +279,7 @@ test("every easing starts at 0 and ends at 1", () => {
 
 test("packing grows its buffers mid-frame without losing what's already in them", () => {
   const ids = Array.from({ length: 400 }, (_, i) => `n${i}`);
-  const g = new Graph(
+  const g = graphOf(
     ids.map((id) => ({ id })),
     ids.slice(1).map((t, i) => ({ source: ids[Math.floor(i / 3)], target: t })),
   );
@@ -316,7 +319,7 @@ test("label boxes sit where the Canvas 2D renderer puts its text", () => {
 
 test("brightness follows each segment's own edge, and refilling it never touches the geometry", () => {
   const ids = Array.from({ length: 40 }, (_, i) => `n${i}`);
-  const g = new Graph(
+  const g = graphOf(
     ids.map((id) => ({ id })),
     ids.slice(1).map((t, i) => ({ source: ids[Math.floor(i / 3)], target: t })),
   );
@@ -352,7 +355,7 @@ test("brightness follows each segment's own edge, and refilling it never touches
 import { looksOf } from "../../next/engine/render.js";
 
 test("each node's and edge's own style wins over the view's options", () => {
-  const g = new Graph(
+  const g = graphOf(
     [
       { id: "a", style: { color: "#ff0000", size: 30, shape: "diamond" } },
       { id: "b" },

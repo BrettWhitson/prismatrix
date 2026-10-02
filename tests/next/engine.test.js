@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Graph } from "../../next/engine/graph.js";
+import { GraphModel } from "../../next/engine/model.js";
 import {
   LAYOUTS,
   constrainer,
@@ -17,10 +18,21 @@ import {
 import { edgePoints, fanJunctions, trim } from "../../next/engine/geometry.js";
 import { resolve } from "../../next/engine/schema.js";
 
+const graphOf = (nodes, edges = []) =>
+  new Graph(GraphModel.from({ nodes, edges }));
+
+/** Node `i`'s footprint relative to its centre, in the matrix. */
+function setBox(m, i, x0, y0, x1, y1) {
+  m.boxX0[i] = x0;
+  m.boxY0[i] = y0;
+  m.boxX1[i] = x1;
+  m.boxY1[i] = y1;
+}
+
 /** root → a, b; a → a1, a2; b → b1 */
 function small() {
   const ids = ["root", "a", "b", "a1", "a2", "b1"];
-  return new Graph(
+  return graphOf(
     ids.map((id) => ({ id })),
     [
       ["root", "a"],
@@ -45,7 +57,7 @@ test("the graph reads its edges as a forest", () => {
 });
 
 test("an edge into a node that already has a parent is a cross-link, and cycles still get a root", () => {
-  const g = new Graph(
+  const g = graphOf(
     ["x", "y", "z"].map((id) => ({ id })),
     [
       { source: "x", target: "y" },
@@ -59,7 +71,7 @@ test("an edge into a node that already has a parent is a cross-link, and cycles 
 });
 
 test("edges to unknown nodes and self-loops are dropped", () => {
-  const g = new Graph(
+  const g = graphOf(
     [{ id: "a" }],
     [
       { source: "a", target: "a" },
@@ -98,7 +110,7 @@ test("radial: one root sits in the middle, depth is the ring, and siblings never
 });
 
 test("radial: separate trees share the first ring around an empty centre", () => {
-  const g = new Graph(
+  const g = graphOf(
     ["p", "q"].map((id) => ({ id })),
     [],
   );
@@ -212,8 +224,7 @@ test("floating: nodes stacked on one spot push apart, and without memory or drif
     physicsOptions("radial", "floating", { memory: 0, drift: 0 }),
   );
   settle(sim, 10);
-  const b = g.bounds();
-  assert.ok(b.maxX - b.minX > 50);
+  assert.ok(Math.max(...g.matrix.x) - Math.min(...g.matrix.x) > 50);
   assert.ok(sim.asleep);
 });
 
@@ -306,16 +317,12 @@ test("resolve clamps numbers out of range and drops unknown keys", () => {
   const out = resolve(
     schema,
     { repulsion: -5, friction: 3, bogus: 1 },
-    (message, warning) => warnings.push(warning),
+    (message) => warnings.push(message),
   );
   assert.equal(out.repulsion, schema.find((o) => o.key === "repulsion").min);
-  assert.deepEqual(
-    warnings.map((w) => [w.kind, w.key]),
-    [
-      ["clamped", "repulsion"],
-      ["unknown", "bogus"],
-    ],
-  );
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /^option "repulsion" is out of its range/);
+  assert.match(warnings[1], /^unknown option "bogus"/);
   assert.equal(out.friction, 3);
   assert.ok(!("bogus" in out));
 });
@@ -347,10 +354,10 @@ test("floating with no drift eases to a stop", () => {
 });
 
 test("collision pushes overlapping circles apart, and a held node doesn't give way", () => {
-  const g = new Graph([{ id: "a" }, { id: "b" }], []);
+  const g = graphOf([{ id: "a" }, { id: "b" }], []);
   for (const n of g.nodes) {
-    n.radius = 10;
-    n.box = { x0: -10, y0: -10, x1: 10, y1: 10 };
+    g.matrix.radius[n.index] = 10;
+    setBox(g.matrix, n.index, -10, -10, 10, 10);
     n.homeX = n.x = 0;
   }
   g.nodes[1].x = 5;
@@ -367,8 +374,8 @@ test("collision pushes overlapping circles apart, and a held node doesn't give w
 });
 
 test("label boxes collide on the axis they overlap least", () => {
-  const g = new Graph([{ id: "a" }, { id: "b" }], []);
-  for (const n of g.nodes) n.box = { x0: -5, y0: -5, x1: 60, y1: 5 }; // a long label to the right
+  const g = graphOf([{ id: "a" }, { id: "b" }], []);
+  for (const n of g.nodes) setBox(g.matrix, n.index, -5, -5, 60, 5); // a long label to the right
   g.nodes[1].x = 40;
   g.nodes[1].y = 2;
   const sim = new Simulation(g);
@@ -415,7 +422,7 @@ test("tree: wide labels push siblings apart and deep labels push levels apart", 
 test("tree: subtrees nest under each other's overhangs (contours, not slots)", () => {
   // root → [x → x1..x4], [y]. y sits beside x, and its single child-free node can tuck in close.
   const ids = ["root", "x", "y", "x1", "x2", "x3", "x4"];
-  const g = new Graph(
+  const g = graphOf(
     ids.map((id) => ({ id })),
     ["x", "y"]
       .map((t) => ({ source: "root", target: t }))
@@ -434,7 +441,7 @@ test("tree: subtrees nest under each other's overhangs (contours, not slots)", (
 
 test("radial: rings grow when the nodes on them wouldn't fit side by side", () => {
   const ids = ["root", ...Array.from({ length: 40 }, (_, i) => `c${i}`)];
-  const g = new Graph(
+  const g = graphOf(
     ids.map((id) => ({ id })),
     ids.slice(1).map((t) => ({ source: "root", target: t })),
   );
@@ -466,7 +473,7 @@ test("fan: one shared junction per parent; none when children surround it", () =
   assert.ok(j[a.index * 2 + 1] > a.y);
   assert.ok(Number.isNaN(j[at(g, "a1").index * 2]), "leaves have none");
 
-  const star = new Graph(
+  const star = graphOf(
     ["c", "n", "e", "s", "w"].map((id) => ({ id })),
     ["n", "e", "s", "w"].map((t) => ({ source: "c", target: t })),
   );
@@ -484,7 +491,7 @@ test("fan: one shared junction per parent; none when children surround it", () =
 
 test("floating fades its forces over the settle time, so even a stretched graph stops soon after", () => {
   const ids = Array.from({ length: 30 }, (_, i) => `n${i}`);
-  const g = new Graph(
+  const g = graphOf(
     ids.map((id) => ({ id })),
     ids.slice(1).map((t, i) => ({ source: ids[Math.floor(i / 2)], target: t })),
   );
@@ -510,13 +517,13 @@ test("level and ring locks hold even when collisions push nodes", () => {
     ["tree", treeLayout, "levelLock"],
     ["radial", radialLayout, "ringLock"],
   ]) {
-    const g = new Graph(
+    const g = graphOf(
       ids.map((id) => ({ id })),
       ids.slice(1).map((t) => ({ source: "n0", target: t })),
     );
     for (const n of g.nodes) {
-      n.radius = 8;
-      n.box = { x0: -8, y0: -8, x1: 8, y1: 8 };
+      g.matrix.radius[n.index] = 8;
+      setBox(g.matrix, n.index, -8, -8, 8, 8);
     }
     const routing = run(g, {});
     for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
@@ -559,7 +566,7 @@ test("a big floating graph can't lock up a frame: repulsion stays local and phys
       }
     level = next;
   }
-  const g = new Graph(nodes, edges);
+  const g = graphOf(nodes, edges);
   radialLayout(g, {});
   for (const n of g.nodes) [n.x, n.y] = [n.homeX, n.homeY];
   const sim = new Simulation(g);
@@ -572,7 +579,7 @@ test("a big floating graph can't lock up a frame: repulsion stays local and phys
 });
 
 test("repulsion pushes close nodes apart and ignores far ones", () => {
-  const g = new Graph(
+  const g = graphOf(
     ["a", "b", "far"].map((id) => ({ id })),
     [],
   );
@@ -590,7 +597,7 @@ test("repulsion pushes close nodes apart and ignores far ones", () => {
 
 test("one node still moving among many keeps the simulation awake", () => {
   const ids = Array.from({ length: 2000 }, (_, i) => `n${i}`);
-  const g = new Graph(
+  const g = graphOf(
     ids.map((id) => ({ id })),
     [],
   );
@@ -618,7 +625,7 @@ function randomGraph(seed, count, bushiness) {
       target: String(i),
     });
   }
-  return new Graph(nodes, edges);
+  return graphOf(nodes, edges);
 }
 
 /** Footprints like the view's: a node of radius 8 with its label below, 6 px per character. */
@@ -694,8 +701,8 @@ test("radial tidy spacing pulls a crowded first ring well in", () => {
       }
   const ring1 = (g) =>
     Math.hypot(g.byId.get("l0").homeX, g.byId.get("l0").homeY);
-  const a = new Graph(nodes, edges),
-    b = new Graph(nodes, edges);
+  const a = graphOf(nodes, edges),
+    b = graphOf(nodes, edges);
   radialLayout(a, {}, sized(a));
   radialLayout(b, { spacing: "leaves" }, sized(b));
   assert.ok(ring1(a) < ring1(b) * 0.9, `ring 1 at ${ring1(a)} vs ${ring1(b)}`);
@@ -716,7 +723,7 @@ test("radial: a balanced tree still fans out evenly, and children stay inside th
       }
     level = next;
   }
-  const g = new Graph(nodes, edges);
+  const g = graphOf(nodes, edges);
   radialLayout(g, {});
   const angle = (id) => {
     const n = g.byId.get(id);
@@ -761,7 +768,7 @@ test("radial: partial sweeps and forests lay out without overlaps, inside the sw
     // A half circle centred on "up": every node at or above the centre line.
     assert.ok(n.homeY <= 1e-6, `${n.id} below the line`);
   }
-  const forest = new Graph(
+  const forest = graphOf(
     Array.from({ length: 30 }, (_, i) => ({ id: `n${i}`, label: `n${i}` })),
     Array.from({ length: 30 }, (_, i) => i)
       .filter((i) => i % 10)
@@ -818,7 +825,7 @@ test("a radial step edge falls back to a curve when it would loop", () => {
 
 /** root → a → a1, root → b → b1, plus a cross-link a1 → b1 (a shared ingredient). */
 function sharedIngredient() {
-  const g = new Graph(
+  const g = graphOf(
     ["root", "a", "b", "a1", "b1"].map((id) => ({ id })),
     [
       ["root", "a"],
@@ -865,7 +872,7 @@ test("a cross-link bundles along the tree: from one end to the other via their c
 });
 
 test("cross-links between separate trees go straight; straight edges stay straight; tree edges keep their shape", () => {
-  const g = new Graph(
+  const g = graphOf(
     ["a", "a1", "b", "b1"].map((id) => ({ id })),
     [
       ["a", "a1"],
