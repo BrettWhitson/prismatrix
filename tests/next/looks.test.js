@@ -595,6 +595,30 @@ test("restylesSince: the restyles in between, or null when one restyled everythi
   ]);
 });
 
+test("a restyle in place finds nodes in the graph on screen when some are folded away", () => {
+  let time = 1000;
+  const c = new GraphController(new GraphModel(SMALL), null, {
+    clock: () => time,
+    worker: false,
+    depth: 1, // root, a, b shown; a1 folded away
+  });
+  c.setViewport(800, 600);
+  c.run(1000, { start: time });
+  time += 1000;
+  assert.equal(c.graph.nodes.length, 3);
+  const geometry = c.geometryVersion;
+  c.update({
+    changeNodes: [
+      { id: "b", style: { color: "#ff0000" } },
+      { id: "a1", style: { color: "#00ff00" } },
+    ],
+  });
+  assert.equal(c.geometryVersion, geometry, "patched, not rebuilt");
+  const b = c.graph.byId.get("b").index;
+  assert.equal(c.looks.fill[b], "#ff0000");
+  assert.deepEqual([...c.restyles.at(-1).nodes], [b], "a1 isn't on screen");
+});
+
 function craftingSmall() {
   const url = new URL(
     "../fixtures/graphs/crafting-small.json",
