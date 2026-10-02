@@ -187,7 +187,7 @@ export function runLayout(graph, name, options, spec, hint = null) {
 }
 
 /** A routing with its edge-keyed parts (bends, references) by edge index. */
-export function packRouting(routing, graph) {
+function packRouting(routing, graph) {
   const { bends, references, ...rest } = routing;
   const out = { ...rest };
   const index =
