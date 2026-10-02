@@ -13,7 +13,7 @@ export { LAYOUTS } from "./layouts.js";
 export { PHYSICS, physicsSchema } from "./physics.js";
 export { NODE_OPTIONS, EDGE_OPTIONS } from "./style.js";
 export { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
-export { defaultsOf, resolve } from "./schema.js";
+export { resolve } from "./schema.js";
 export { THEMES, resolveTheme } from "./theme.js";
 export {
   SNAPSHOT_FORMAT,

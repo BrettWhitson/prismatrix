@@ -8,7 +8,7 @@ import { GraphModel, equal } from "../../next/engine/model.js";
 import { GraphController } from "../../next/engine/controller.js";
 import { Graph } from "../../next/engine/graph.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "../../next/engine/style.js";
-import { defaultsOf } from "../../next/engine/schema.js";
+import { resolve } from "../../next/engine/schema.js";
 import { THEMES, resolveTheme } from "../../next/engine/theme.js";
 
 import {
@@ -61,8 +61,8 @@ function contrast(a, b) {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
-const NODE = defaultsOf(NODE_OPTIONS);
-const EDGE = defaultsOf(EDGE_OPTIONS);
+const NODE = resolve(NODE_OPTIONS);
+const EDGE = resolve(EDGE_OPTIONS);
 
 /** root → a, b; a → a1 */
 const SMALL = {

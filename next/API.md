@@ -86,7 +86,7 @@ What `prismatrix/next` exports:
 | `PHYSICS`, `physicsSchema`                      | The physics modes and their options; a mode's full schema within a layout.       |
 | `NODE_OPTIONS`, `EDGE_OPTIONS`                  | How nodes and edges look: the option schemas.                                    |
 | `ANIMATION_OPTIONS`, `EASINGS`                  | How the view moves between states, and the easing curves.                        |
-| `resolve`, `defaultsOf`                         | Checking options against a schema; a schema's defaults.                          |
+| `resolve`                                       | Checking options against a schema (with no values: its defaults).                |
 | `THEMES`, `resolveTheme`                        | The theme presets, and a theme from a name or tokens.                            |
 | `SNAPSHOT_FORMAT`, `SNAPSHOT_VERSION`, `snapshotModel` | The snapshot format's name and version, and a snapshot's graph as a model. |
 | `WORKER_MIN`                                    | Graphs with at least this many nodes lay out in a worker (2,000).                |
@@ -952,8 +952,8 @@ is a schema: a list of `OptionSpec`s, `{ key, label, type, default, min?, max?, 
 - **`resolve(schema, values?, warn?)`** returns every key of the schema: from `values` where usable, else the
   default. A number outside its range is clamped; anything else unusable (a wrong type, a choice that isn't one)
   takes the default; unknown keys are dropped. Each of those is reported to `warn(message)` (by default once per
-  message on the console), with the closest known key or choice when one is close (a typo).
-- **`defaultsOf(schema)`** is the defaults as a plain object.
+  message on the console), with the closest known key or choice when one is close (a typo). `resolve(schema)` alone
+  is the defaults.
 
 ## Layout without a screen
 
@@ -977,7 +977,7 @@ positions.get("mjolnir"); // { x, y }, world px
 returns `positions` (every node's home, by id), `routing` (how edges bend: its `kind`, the tree's `direction` or the
 radial's centre `cx`, `cy`, and for the merged tree `bends` as `{ edges, start, xy }` and `references`, edges by their
 index in `model.edges` and nodes by theirs in `model.nodes`) and the `model`. The entry also exports `GraphModel`,
-`LAYOUTS`, `NODE_OPTIONS`, `EDGE_OPTIONS`, `resolve` and `defaultsOf`.
+`LAYOUTS`, `NODE_OPTIONS`, `EDGE_OPTIONS` and `resolve`.
 
 ## Performance
 

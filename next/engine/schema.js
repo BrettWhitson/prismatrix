@@ -14,15 +14,6 @@
  * @property {string} [hint]
  */
 
-/**
- * The defaults of a schema as a plain object.
- * @param {readonly OptionSpec[]} schema
- * @returns {Record<string, any>}
- */
-export function defaultsOf(schema) {
-  return Object.fromEntries(schema.map((o) => [o.key, o.default]));
-}
-
 /** Messages already shown by the default warning: each is shown once, however often the same mistake is made. */
 const shown = new Set();
 
