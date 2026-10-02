@@ -343,11 +343,22 @@ export function drawNodes(ctx, scene) {
   ctx.globalAlpha = 1;
 }
 
-/** Labels with room kept for them (label collision) always show; otherwise they drop out when too small to read. */
+/**
+ * Whether labels show at this zoom. Labels with room kept for them (label collision) show until their text is
+ * smaller than LABEL_MIN_PX (a smudge, and with a whole big graph in view, tens of thousands of them to rasterise);
+ * others drop out when too small to read (6 px).
+ */
+export function labelsShown(node, camera) {
+  if (node.labels === "off") return false;
+  return node.labelSize * camera.k >= (node.labelCollide ? LABEL_MIN_PX : 6);
+}
+
+/** Text smaller than this many CSS px is never drawn. */
+export const LABEL_MIN_PX = 2;
+
 export function drawLabels(ctx, scene) {
   const { graph, node, looks, camera } = scene;
-  const labelPx = node.labelSize * camera.k;
-  if (node.labels === "off" || (!node.labelCollide && labelPx < 6)) return;
+  if (!labelsShown(node, camera)) return;
   ctx.setTransform(...worldTransform(scene));
   ctx.font = `${node.labelSize}px system-ui, sans-serif`;
   ctx.fillStyle = "#d5d9e4";

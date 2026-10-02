@@ -652,3 +652,17 @@ test("a selection change redraws halos without rebuilding the edge pieces", () =
     assert.equal(painter.layer.gpu, pieces);
   });
 });
+
+import { labelsShown } from "../../next/engine/render.js";
+
+test("labels: kept-room labels show until they're a smudge, others until they're too small to read", () => {
+  const node = { labels: "on", labelSize: 12, labelCollide: true };
+  assert.ok(
+    labelsShown(node, { k: 0.2 }),
+    "2.4 px: still shown with room kept",
+  );
+  assert.ok(!labelsShown(node, { k: 0.1 }), "1.2 px: not rasterised at all");
+  assert.ok(!labelsShown({ ...node, labelCollide: false }, { k: 0.4 }));
+  assert.ok(labelsShown({ ...node, labelCollide: false }, { k: 0.5 }));
+  assert.ok(!labelsShown({ ...node, labels: "off" }, { k: 4 }));
+});

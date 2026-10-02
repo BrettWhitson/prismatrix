@@ -19,6 +19,7 @@ import {
   clearTo,
   edgeAlpha,
   labelAlpha,
+  labelsShown,
 } from "./render.js";
 import { LABEL_STRIDE, LabelLayer } from "./gl-text.js";
 import {
@@ -738,18 +739,14 @@ class GLLayer {
   }
 
   /**
-   * Labels with room kept for them (label collision) always show; otherwise they drop out when too small to read.
-   * They're rebuilt when anything moved, the zoom crossed a raster step, or some are still waiting for the atlas.
+   * Labels, when they show at this zoom (labelsShown, as Canvas 2D). They're rebuilt when anything moved, the zoom
+   * crossed a raster step, or some are still waiting for the atlas.
    */
   #drawLabels(scene, fresh) {
     const { gl } = this;
     const { node, camera } = scene;
     this.pending = false;
-    if (
-      node.labels === "off" ||
-      (!node.labelCollide && node.labelSize * camera.k < 6)
-    )
-      return;
+    if (!labelsShown(node, camera)) return;
     // Labels are built for the view plus half a view around it: rebuild when the zoom crosses a raster step or
     // the camera has moved about half a view (measured at the step's zoom, so zooming within a step doesn't).
     const step = Math.ceil(Math.log2(camera.k));
