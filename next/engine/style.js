@@ -184,15 +184,3 @@ export const EDGE_OPTIONS = [
     "Where an edge's own label (a quantity, say) is drawn. Shown once zoomed in far enough to read.",
   ),
 ];
-
-/** Colours by depth, then wrapping. Picked to read on the dark background. */
-export const PALETTE = [
-  "#f6c177",
-  "#7aa2f7",
-  "#9ece6a",
-  "#e27e8d",
-  "#bb9af7",
-  "#5ccfe6",
-  "#ff9e64",
-  "#c0caf5",
-];

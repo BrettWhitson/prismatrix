@@ -24,15 +24,14 @@
  * @param {number[][]} graph.lower   per layout node, its neighbours one layer down
  * @param {ArrayLike<number>} graph.block per layout node, the block it belongs to (0 … blocks - 1)
  * @param {number} graph.blocks
- * @param {{ rounds?: number, work?: number, movable?: ArrayLike<number> | null }} [options] work: stop starting new
+ * @param {{ rounds: number, work: number, movable?: ArrayLike<number> | null }} options work: stop starting new
  *   blocks after this many steps; movable: per block, nonzero if it may be moved (the others keep their order among
  *   themselves, so a layout that's mostly as it was stays so: see layered.js's hint); all of them when left out
- * @returns {{ layers: number[][], rounds: number, exact: boolean, work: number }} exact: the starting order was
- *   the layers given (so the result has no more crossings than they had); work: the steps it took
+ * @returns {{ layers: number[][] }}
  */
 export function globalSifting(
   { layers, layer, upper, lower, block, blocks },
-  { rounds = 6, work = Infinity, movable = null } = {},
+  { rounds, work, movable = null },
 ) {
   const vertices = layer.length;
   // Each block's span of layers and its vertex on each.
@@ -70,7 +69,7 @@ export function globalSifting(
     lower[v].forEach((u, i) => (downIds[downStart[s] + i] = block[u]));
   }
 
-  const { order, exact } = startingOrder(layers, block, blocks, hi);
+  const order = startingOrder(layers, block, blocks, hi);
   // Each block's index in the order. A block being tried elsewhere sits half a place to one side of a neighbour.
   const place = new Float64Array(blocks);
   order.forEach((b, i) => (place[b] = i));
@@ -128,8 +127,7 @@ export function globalSifting(
     downStart[at[b + 1]] -
     downStart[at[b]];
 
-  let round = 0;
-  for (; round < rounds && spent < work; round++) {
+  for (let round = 0; round < rounds && spent < work; round++) {
     let improved = false;
     const queue = order
       .filter((b) => !movable || movable[b])
@@ -170,10 +168,7 @@ export function globalSifting(
           place[order[i]] = i;
       }
     }
-    if (!improved) {
-      round++;
-      break;
-    }
+    if (!improved) break;
   }
 
   const out = layers.map(() => []);
@@ -182,15 +177,15 @@ export function globalSifting(
       const v = vertexAt[s];
       out[layer[v]].push(v);
     }
-  return { layers: out, rounds: round, exact, work: spent };
+  return { layers: out };
 }
 
 /**
  * One left-to-right order of blocks that reads back as the layers given: each layer's neighbours in order are
  * constraints (left one first), and the blocks are taken in topological order of them, the one furthest left on
  * average first among those free to go. When the constraints go round in a circle (two long edges swap sides
- * between layers), the block furthest left on average that's still waiting goes next anyway, and the order is no
- * longer exact.
+ * between layers), the block furthest left on average that's still waiting goes next anyway, and the order no
+ * longer reads back as the layers given.
  */
 function startingOrder(layers, block, blocks, hi) {
   const mean = new Float64Array(blocks),
@@ -258,14 +253,12 @@ function startingOrder(layers, block, blocks, hi) {
   const done = new Uint8Array(blocks);
   for (const b of used) if (!waiting[b]) push(b);
   const order = [];
-  let exact = true;
   while (order.length < used.length) {
     let b;
     if (heap.length) b = pop();
     else {
       while (done[byMean[scan]]) scan++;
       b = byMean[scan];
-      exact = false;
     }
     if (done[b]) continue;
     done[b] = 1;
@@ -275,5 +268,5 @@ function startingOrder(layers, block, blocks, hi) {
       if (--waiting[c] === 0 && !done[c]) push(c);
     }
   }
-  return { order, exact };
+  return order;
 }

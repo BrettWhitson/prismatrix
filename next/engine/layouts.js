@@ -3,7 +3,7 @@
 
 import { bool, range, select } from "./schema.js";
 import { tidy } from "./tidy.js";
-import { layeredLayout } from "./layered.js";
+import { layeredLayout, medianShift } from "./layered.js";
 
 /**
  * @typedef {object} Routing How edges bend for this layout (what a layout returns, with edges by object).
@@ -93,6 +93,42 @@ export const TREE_LABEL_ANGLE = {
 };
 
 /**
+ * Every node's footprint (sizing.box, its label pointing the tree's way) in a tree's or a layered drawing's terms,
+ * into the arrays given by node index: how far it reaches `left` and `right` along its level, and `near` and `far`
+ * across levels, in the direction they grow.
+ * @param {{ index: number }[]} nodes
+ * @param {Sizing} sizing
+ * @param {string} direction TB, BT, LR or RL
+ * @param {Float64Array} left
+ * @param {Float64Array} right
+ * @param {Float64Array} near
+ * @param {Float64Array} far
+ */
+export function levelFootprints(
+  nodes,
+  sizing,
+  direction,
+  left,
+  right,
+  near,
+  far,
+) {
+  const flip = direction === "BT" || direction === "RL";
+  const across = direction === "LR" || direction === "RL";
+  const angle = TREE_LABEL_ANGLE[direction];
+  for (const { index } of nodes) {
+    const box = sizing.box(index, angle);
+    const [lo, hi, a, b] = across
+      ? [box.y0, box.y1, box.x0, box.x1]
+      : [box.x0, box.x1, box.y0, box.y1];
+    left[index] = Math.max(0, -lo);
+    right[index] = Math.max(0, hi);
+    near[index] = flip ? -b : a;
+    far[index] = flip ? -a : b;
+  }
+}
+
+/**
  * Tidy tree: Walker's algorithm in linear time (Buchheim, Jünger & Leipert; see tidy.js), with every node's real
  * footprint (node and label). Subtrees pack as tightly as their outlines allow, small ones between big ones are
  * spread out evenly, and every parent sits centred over its children. Levels are at least `levelGap` apart, and
@@ -123,16 +159,7 @@ export function treeLayout(
     right = new Float64Array(count),
     d0 = new Float64Array(count),
     d1 = new Float64Array(count);
-  for (const n of graph.nodes) {
-    const box = sizing.box(n.index, TREE_LABEL_ANGLE[direction]);
-    const [lo, hi, near, far] = across
-      ? [box.y0, box.y1, box.x0, box.x1]
-      : [box.x0, box.x1, box.y0, box.y1];
-    left[n.index] = Math.max(0, -lo);
-    right[n.index] = Math.max(0, hi);
-    d0[n.index] = flip ? -far : near;
-    d1[n.index] = flip ? -near : far;
-  }
+  levelFootprints(graph.nodes, sizing, direction, left, right, d0, d1);
 
   const { x: breadth } = tidy(
     {
@@ -424,22 +451,12 @@ export function radialLayout(
  * down (the move that keeps most of them exactly in place, when most of the drawing kept its shape).
  */
 function holdPlace(graph, hint) {
-  const dx = [],
-    dy = [];
-  for (const n of graph.nodes) {
-    if (Number.isNaN(hint.x[n.index])) continue;
-    dx.push(n.homeX - hint.x[n.index]);
-    dy.push(n.homeY - hint.y[n.index]);
-  }
-  if (!dx.length) return;
-  const median = (list) => {
-    list.sort((a, b) => a - b);
-    const m = list.length >> 1;
-    return list.length % 2 ? list[m] : (list[m - 1] + list[m]) / 2;
-  };
-  const mx = median(dx),
-    my = median(dy);
-  for (const n of graph.nodes) {
+  const { nodes } = graph;
+  const shift = (home, was) =>
+    medianShift(Float64Array.from(nodes, home), was, nodes.length, 0);
+  const mx = shift((n) => n.homeX, hint.x),
+    my = shift((n) => n.homeY, hint.y);
+  for (const n of nodes) {
     n.homeX -= mx;
     n.homeY -= my;
   }
@@ -483,6 +500,43 @@ export function constrainer(routing, opts) {
   return null;
 }
 
+/** The tree's and the merged tree's shared options. */
+const DIRECTION = select(
+  "direction",
+  "Direction",
+  [
+    { value: "TB", label: "Top → bottom" },
+    { value: "BT", label: "Bottom → top" },
+    { value: "LR", label: "Left → right" },
+    { value: "RL", label: "Right → left" },
+  ],
+  "TB",
+);
+const LEVEL_GAP = range(
+  "levelGap",
+  "Level gap",
+  20,
+  300,
+  5,
+  90,
+  "At least this far apart; more when labels need it.",
+);
+/** The tree's and the merged tree's physics: elastic can lock nodes to their `level` (a "level" or a "layer"). */
+const levelPhysics = (level) => ({
+  static: {},
+  elastic: {
+    options: [
+      bool(
+        "levelLock",
+        "Lock to level",
+        false,
+        `Nodes only slide sideways along their ${level}.`,
+      ),
+    ],
+    defaults: { anchor: 60, links: 40, friction: 9 },
+  },
+});
+
 /**
  * The layouts. `physics` lists the modes each one supports; for each mode, `options` are extra knobs only this
  * layout has and `defaults` override the mode's general defaults. `edgeDefaults`, where a layout has them, replace
@@ -494,26 +548,8 @@ export const LAYOUTS = {
     label: "Tree",
     run: treeLayout,
     options: [
-      select(
-        "direction",
-        "Direction",
-        [
-          { value: "TB", label: "Top → bottom" },
-          { value: "BT", label: "Bottom → top" },
-          { value: "LR", label: "Left → right" },
-          { value: "RL", label: "Right → left" },
-        ],
-        "TB",
-      ),
-      range(
-        "levelGap",
-        "Level gap",
-        20,
-        300,
-        5,
-        90,
-        "At least this far apart; more when labels need it.",
-      ),
+      DIRECTION,
+      LEVEL_GAP,
       range(
         "siblingGap",
         "Sibling gap",
@@ -543,20 +579,7 @@ export const LAYOUTS = {
         "Centre a parent between its first and last child's centres (the classic tidy tree), or between their outer edges, which counts their labels too.",
       ),
     ],
-    physics: {
-      static: {},
-      elastic: {
-        options: [
-          bool(
-            "levelLock",
-            "Lock to level",
-            false,
-            "Nodes only slide sideways along their level.",
-          ),
-        ],
-        defaults: { anchor: 60, links: 40, friction: 9 },
-      },
-    },
+    physics: levelPhysics("level"),
   },
   merged: {
     label: "Merged tree",
@@ -564,26 +587,8 @@ export const LAYOUTS = {
     // Step edges from unrelated parents run along the same layer gaps and merge into rails; curves can each be traced.
     edgeDefaults: { shape: "curve" },
     options: [
-      select(
-        "direction",
-        "Direction",
-        [
-          { value: "TB", label: "Top → bottom" },
-          { value: "BT", label: "Bottom → top" },
-          { value: "LR", label: "Left → right" },
-          { value: "RL", label: "Right → left" },
-        ],
-        "TB",
-      ),
-      range(
-        "levelGap",
-        "Level gap",
-        20,
-        300,
-        5,
-        90,
-        "At least this far apart; more when labels need it.",
-      ),
+      DIRECTION,
+      LEVEL_GAP,
       range(
         "nodeGap",
         "Node gap",
@@ -651,20 +656,7 @@ export const LAYOUTS = {
         "When the graph changes (a recipe expanded or collapsed), how firmly everything else keeps its place: the old order is kept and nodes are pulled back to where they were. At 0, every change is laid out afresh.",
       ),
     ],
-    physics: {
-      static: {},
-      elastic: {
-        options: [
-          bool(
-            "levelLock",
-            "Lock to level",
-            false,
-            "Nodes only slide sideways along their layer.",
-          ),
-        ],
-        defaults: { anchor: 60, links: 40, friction: 9 },
-      },
-    },
+    physics: levelPhysics("layer"),
   },
   radial: {
     label: "Radial",

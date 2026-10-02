@@ -90,7 +90,7 @@ test("a lineage mask is the node, everything above it and everything below it; u
       edges.push({ source: `n${Math.floor(r() * i)}`, target: `n${i}` });
   }
   const graph = new Graph(new GraphModel({ nodes, edges }));
-  const cache = new LineageCache(4);
+  const cache = new LineageCache();
   for (const i of [0, 17, 150, 299]) {
     const mask = lineageMask(graph, i);
     const set = lineage(graph, i);

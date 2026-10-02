@@ -313,15 +313,30 @@ test("ghosts are linear in what left: a 20k chain folds away in a few ms", () =>
     source: `n${i}`,
     target: `n${i + 1}`,
   }));
-  const before = new Graph(nodes, edges);
-  const after = new Graph([{ id: "n0" }], []);
-  const looks = { radius: new Float64Array(n + 1).fill(5), fill: [] };
+  const before = new Graph(GraphModel.from({ nodes, edges }));
+  const after = new Graph(GraphModel.from({ nodes: [{ id: "n0" }] }));
+  const looks = {
+    radius: new Float64Array(n + 1).fill(5),
+    fill: [],
+    shape: [],
+  };
   const t0 = performance.now();
   const gone = departures(before, after, looks, 0);
   const shown = withGhosts(
     after,
     gone,
-    { looks: { radius: [5], fill: ["#fff"] } },
+    {
+      looks: {
+        radius: [5],
+        fill: ["#fff"],
+        shape: ["circle"],
+        edgeColour: [],
+        edgeWidth: [],
+        edgeDefault: { colour: "#fff", width: 1, byTarget: false },
+      },
+      shade: new Float32Array(1),
+      appear: new Float32Array(1),
+    },
     10,
     100,
     (t) => t,
@@ -330,7 +345,11 @@ test("ghosts are linear in what left: a 20k chain folds away in a few ms", () =>
   assert.equal(gone.length, n);
   assert.equal(gone[0].id, "n1");
   assert.equal(gone.at(-1).depth, n);
-  assert.deepEqual(gone[2].ancestors, ["n2", "n1", "n0"]);
+  assert.deepEqual(
+    [gone[2].up.id, gone[2].up.up.id, gone[2].up.up.up.id],
+    ["n2", "n1", "n0"],
+  );
+  assert.equal(gone[2].up.up.up.up, null);
   assert.equal(shown.graph.nodes.length, n + 1);
   assert.ok(ms < 500, `${ms.toFixed(0)} ms`);
 });

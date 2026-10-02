@@ -8,8 +8,9 @@ import { GraphModel, equal } from "../../next/engine/model.js";
 import { GraphController } from "../../next/engine/controller.js";
 import { Graph } from "../../next/engine/graph.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "../../next/engine/style.js";
-import { defaultsOf } from "../../next/engine/schema.js";
-import { THEMES, contrast, resolveTheme } from "../../next/engine/theme.js";
+import { resolve } from "../../next/engine/schema.js";
+import { THEMES, resolveTheme } from "../../next/engine/theme.js";
+
 import {
   drawNodes,
   drawScene,
@@ -39,8 +40,29 @@ import { PIECE_STRIDE, packPieces } from "../../next/engine/gl-edges.js";
 import { WebGLPainter, restylesSince } from "../../next/engine/webgl.js";
 import { LABEL_STRIDE } from "../../next/engine/gl-text.js";
 
-const NODE = defaultsOf(NODE_OPTIONS);
-const EDGE = defaultsOf(EDGE_OPTIONS);
+/** A colour's relative luminance (WCAG 2), 0 for black to 1 for white. */
+function luminance(colour) {
+  const n = parseInt(colour.slice(1), 16);
+  const linear = (c) => {
+    c /= 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return (
+    0.2126 * linear((n >> 16) & 255) +
+    0.7152 * linear((n >> 8) & 255) +
+    0.0722 * linear(n & 255)
+  );
+}
+
+/** The contrast ratio between two colours (WCAG 2): 1 for the same, 21 for black on white. */
+function contrast(a, b) {
+  const x = luminance(a),
+    y = luminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+const NODE = resolve(NODE_OPTIONS);
+const EDGE = resolve(EDGE_OPTIONS);
 
 /** root → a, b; a → a1 */
 const SMALL = {

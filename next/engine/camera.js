@@ -4,8 +4,8 @@
 //
 // Pure: no DOM.
 
-export const MAX_ZOOM = 8;
-export const MIN_ZOOM = 0.05; // the furthest out a zoom may go, unless the graph needs further to fit
+const MAX_ZOOM = 8;
+const MIN_ZOOM = 0.05; // the furthest out a zoom may go, unless the graph needs further to fit
 const FIT_PAD = 40; // screen px kept clear around a framed graph
 const FIT_MAX = 2.5; // the closest a fit zooms in (a tiny graph isn't blown up)
 
@@ -56,7 +56,7 @@ export function footprints(m, homes) {
 }
 
 /** The scale that fits `box` (world px), with padding, in a `width` × `height` view: at most FIT_MAX. */
-export function fitScale({ minX, minY, maxX, maxY }, width, height) {
+function fitScale({ minX, minY, maxX, maxY }, width, height) {
   return Math.min(
     (width - FIT_PAD * 2) / Math.max(maxX - minX, 1),
     (height - FIT_PAD * 2) / Math.max(maxY - minY, 1),

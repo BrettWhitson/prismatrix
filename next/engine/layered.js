@@ -31,7 +31,8 @@
 //
 // Pure: no DOM. Measured with `npm run bench:merged`.
 
-import { TREE_LABEL_ANGLE, DEFAULT_SIZING } from "./layouts.js";
+import { DEFAULT_SIZING, levelFootprints } from "./layouts.js";
+import { compressedRows, dagOf } from "./model.js";
 import { networkSimplex } from "./simplex.js";
 import { globalSifting } from "./sifting.js";
 
@@ -90,42 +91,24 @@ export function layeredLayout(
   const flip = direction === "BT" || direction === "RL";
   const across = direction === "LR" || direction === "RL";
 
-  // ---- 1. cycles: reverse back edges found by a depth-first search from the forest's roots, then the rest
-  const out = Array.from({ length: n }, () => []);
-  edges.forEach((e, i) => out[e.source].push(i));
-  const reversed = new Uint8Array(edges.length);
-  {
-    const state = new Uint8Array(n); // 0 new, 1 on the stack, 2 done
-    const visit = (start) => {
-      const stack = [[start, 0]];
-      state[start] = 1;
-      while (stack.length) {
-        const top = stack[stack.length - 1];
-        const [v, k] = top;
-        if (k < out[v].length) {
-          top[1]++;
-          const ei = out[v][k];
-          const w = edges[ei].target;
-          if (state[w] === 1) reversed[ei] = 1;
-          else if (state[w] === 0) {
-            state[w] = 1;
-            stack.push([w, 0]);
-          }
-        } else {
-          state[v] = 2;
-          stack.pop();
-        }
-      }
-    };
-    for (const r of graph.roots) if (!state[r]) visit(r);
-    for (let v = 0; v < n; v++) if (!state[v]) visit(v);
-  }
+  // ---- 1. cycles: reverse back edges found by a depth-first search from the forest's roots, then the rest; and
+  // (step 2) each node's longest path from the sources with them reversed
+  const dag = dagOf(
+    n,
+    compressedRows(
+      n,
+      Int32Array.from(edges, (e) => e.source),
+      Int32Array.from(edges, (e) => e.target),
+    ),
+    graph.roots,
+  );
+  const reversed = dag.back;
   const from = (ei) => (reversed[ei] ? edges[ei].target : edges[ei].source);
   const to = (ei) => (reversed[ei] ? edges[ei].source : edges[ei].target);
 
   // ---- 2. layers: network simplex (fewest layers crossed in all), or longest path from the sources
   /** @type {Int32Array} */
-  let layerOf = new Int32Array(n);
+  let layerOf = dag.longest;
   let simplex;
   if (ranking === "simplex") {
     // Network simplex stops after this much work (nodes and edges visited, simplex.js): crafting graphs of up to
@@ -143,22 +126,6 @@ export function layeredLayout(
     );
     layerOf = ranked.rank;
     simplex = { pivots: ranked.pivots, optimal: ranked.optimal };
-  } else {
-    const indegree = new Int32Array(n);
-    const down = Array.from({ length: n }, () => []);
-    edges.forEach((_, ei) => {
-      indegree[to(ei)]++;
-      down[from(ei)].push(to(ei));
-    });
-    const queue = [];
-    for (let v = 0; v < n; v++) if (!indegree[v]) queue.push(v);
-    for (let head = 0; head < queue.length; head++) {
-      const v = queue[head];
-      for (const w of down[v]) {
-        layerOf[w] = Math.max(layerOf[w], layerOf[v] + 1);
-        if (--indegree[w] === 0) queue.push(w);
-      }
-    }
   }
   let layerCount = 0;
   for (let v = 0; v < n; v++) layerCount = Math.max(layerCount, layerOf[v] + 1);
@@ -268,8 +235,7 @@ export function layeredLayout(
     for (let v = 0; v < total; v++) if (!seen[v]) visit(v);
   }
   const pos = new Float64Array(total);
-  const index = (list) => list.forEach((v, i) => (pos[v] = i));
-  layers.forEach(index);
+  indexLayers(layers, pos);
   const initialCrossings = countCrossings(layers, lower, pos);
   const structure = {
     layer: lay,
@@ -277,6 +243,8 @@ export function layeredLayout(
     lower,
     block: blockOf,
     blocks: real + edges.length,
+    // Blocks with something in them: every real node, and every long edge with dummies.
+    used: real + chains.filter((c) => c.length > 2).length,
     segments: total - real + edges.length,
   };
   // ---- 4a. with a hint (the layout before a change): where each kept node was, along its layer and across them.
@@ -305,24 +273,14 @@ export function layeredLayout(
     : orderLayers(layers, initialCrossings, structure, ordering);
   layers = ordered.layers;
   const bestCrossings = ordered.crossings;
-  layers.forEach(index);
+  indexLayers(layers, pos);
 
   // ---- 5. positions along each layer
   const left = new Float64Array(total),
     right = new Float64Array(total),
     near = new Float64Array(total),
     far = new Float64Array(total);
-  const angle = TREE_LABEL_ANGLE[direction];
-  for (const node of nodes) {
-    const box = sizing.box(node.index, angle);
-    const [lo, hi, a, b] = across
-      ? [box.y0, box.y1, box.x0, box.x1]
-      : [box.x0, box.x1, box.y0, box.y1];
-    left[node.index] = Math.max(0, -lo);
-    right[node.index] = Math.max(0, hi);
-    near[node.index] = flip ? -b : a;
-    far[node.index] = flip ? -a : b;
-  }
+  levelFootprints(nodes, sizing, direction, left, right, near, far);
   refs.forEach(({ target }, k) => {
     // A reference is a chip with no label: REFERENCE_HALF each way, or less if its ingredient is smaller.
     left[n + k] = Math.min(REFERENCE_HALF, left[target]);
@@ -495,20 +453,19 @@ const RESTARTS = 30;
  *     round of sifting costs more than a whole layout should, and the sweeps do better in the time.
  */
 function orderLayers(start, startCrossings, graph, ordering) {
-  const { layer, upper, lower, block, blocks, segments } = graph;
+  const { layer, upper, lower, block, blocks, used, segments } = graph;
   const total = layer.length;
   const pos = new Float64Array(total);
   const key = new Float64Array(total); // each node's barycenter, for the sort
-  const index = (list) => list.forEach((v, i) => (pos[v] = i));
   const crossingsOf = (layers) => {
-    layers.forEach(index);
+    indexLayers(layers, pos);
     return countCrossings(layers, lower, pos);
   };
   /** Barycenter sweeps down and up (each followed by transposition if asked), keeping the best order seen. */
   const sweep = (from, crossings, count, transposing) => {
     const layers = from.map((l) => l.slice());
     let best = { layers: from, crossings };
-    layers.forEach(index);
+    indexLayers(layers, pos);
     for (let s = 0; s < count && best.crossings > 0; s++) {
       const downward = s % 2 === 0;
       for (let step = 1; step < layers.length; step++) {
@@ -521,7 +478,7 @@ function orderLayers(start, startCrossings, graph, ordering) {
         }
         // Stable: ties keep their current order.
         list.sort((a, b) => key[a] - key[b] || pos[a] - pos[b]);
-        index(list);
+        indexLayers([list], pos);
       }
       if (transposing) transpose(layers, upper, lower, pos);
       const c = countCrossings(layers, lower, pos);
@@ -530,15 +487,6 @@ function orderLayers(start, startCrossings, graph, ordering) {
     }
     return best;
   };
-  let used = 0; // blocks with something in them
-  {
-    const seen = new Uint8Array(blocks);
-    for (let v = 0; v < total; v++)
-      if (!seen[block[v]]) {
-        seen[block[v]] = 1;
-        used++;
-      }
-  }
   if (ordering !== "sifting" || used > SIFT_MAX_BLOCKS)
     return sweep(start, startCrossings, ORDER_SWEEPS, true);
 
@@ -571,7 +519,7 @@ function orderLayers(start, startCrossings, graph, ordering) {
     });
     let candidate = sweep(shuffled, crossingsOf(shuffled), ORDER_SWEEPS, false);
     const layers = candidate.layers.map((l) => l.slice());
-    layers.forEach(index);
+    indexLayers(layers, pos);
     transpose(layers, upper, lower, pos);
     const crossings = countCrossings(layers, lower, pos);
     if (crossings < candidate.crossings) candidate = { layers, crossings };
@@ -708,21 +656,13 @@ const FRESH_SHARE = 0.4;
  *      (1 + stability) times fewer, and 10 · stability / (1 - stability) besides. At stability 1, never.
  */
 function orderFromHint(dfs, { key, known }, graph, ordering, stability) {
-  const { layer, upper, lower, block, blocks, segments } = graph;
+  const { layer, upper, lower, block, blocks, used, segments } = graph;
   const total = layer.length;
   const pos = new Float64Array(total);
-  const index = (layers) =>
-    layers.forEach((list) => list.forEach((v, i) => (pos[v] = i)));
   const movable = new Uint8Array(blocks);
-  const used = new Uint8Array(blocks);
-  let free = 0,
-    blocksUsed = 0;
+  let free = 0;
   for (let v = 0; v < total; v++) {
     const b = block[v];
-    if (!used[b]) {
-      used[b] = 1;
-      blocksUsed++;
-    }
     if (!known[v] && !movable[b]) {
       movable[b] = 1;
       free++;
@@ -730,18 +670,18 @@ function orderFromHint(dfs, { key, known }, graph, ordering, stability) {
   }
   /** The layers sorted by `keys` (ties in the depth-first order), then sifted and transposed. */
   const refine = (keys) => {
-    index(dfs);
+    indexLayers(dfs, pos);
     let layers = dfs.map((list) =>
       list.slice().sort((a, b) => keys[a] - keys[b] || pos[a] - pos[b]),
     );
-    index(layers);
+    indexLayers(layers, pos);
     let crossings = countCrossings(layers, lower, pos);
     if (crossings && free) {
       layers = globalSifting(
         { layers, layer, upper, lower, block, blocks },
         { rounds: SIFT_ROUNDS, work: free * SIFT_WORK_PER_BLOCK, movable },
       ).layers;
-      index(layers);
+      indexLayers(layers, pos);
       crossings = countCrossings(layers, lower, pos);
     }
     if (crossings) {
@@ -776,9 +716,9 @@ function orderFromHint(dfs, { key, known }, graph, ordering, stability) {
   if (
     stability < 1 &&
     best.crossings &&
-    free >= FRESH_SHARE * stability * blocksUsed
+    free >= FRESH_SHARE * stability * used
   ) {
-    index(dfs);
+    indexLayers(dfs, pos);
     const fresh = orderLayers(
       dfs,
       countCrossings(dfs, lower, pos),
@@ -794,6 +734,11 @@ function orderFromHint(dfs, { key, known }, graph, ordering, stability) {
   return best;
 }
 
+/** Each node's index along its layer, into `pos`. */
+function indexLayers(layers, pos) {
+  for (const list of layers) list.forEach((v, i) => (pos[v] = i));
+}
+
 /** How hard a kept node is pulled towards where it was, for a stability from 0 to 1 (see layeredLayout). */
 function pullWeight(stability) {
   return stability >= 1 ? 1e6 : (PULL * stability) / (1 - stability);
@@ -803,7 +748,7 @@ function pullWeight(stability) {
  * The shift that moves the first `count` positions least in all (L1) towards where they were: the median of
  * `now[v] - was[v]` over those with a `was` (NaN: none). `fallback` when none has.
  */
-function medianShift(now, was, count, fallback) {
+export function medianShift(now, was, count, fallback) {
   const moves = [];
   for (let v = 0; v < count; v++)
     if (!Number.isNaN(was[v])) moves.push(now[v] - was[v]);
