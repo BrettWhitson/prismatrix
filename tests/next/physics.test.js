@@ -208,6 +208,105 @@ test("edges drawn as references have no spring: dragging a recipe doesn't tug it
   );
 });
 
+// ---- getting home ------------------------------------------------------------------------------------------
+
+/** 300 recipes plus 200 uses of 12 busy ingredients: a merged tree with references and tightly packed layers. */
+function busyRecipes(seed) {
+  const r = rng(seed);
+  const nodes = [{ id: "n0" }],
+    edges = [];
+  for (let i = 1; i < 300; i++) {
+    nodes.push({ id: `n${i}` });
+    edges.push({ source: `n${Math.floor(r() ** 1.3 * i)}`, target: `n${i}` });
+  }
+  const seen = new Set(edges.map((e) => `${e.source}>${e.target}`));
+  for (let k = 0; k < 200; k++) {
+    const target = `n${280 + Math.floor(r() * 12)}`,
+      source = `n${Math.floor(r() * 280)}`;
+    if (seen.has(`${source}>${target}`)) continue;
+    seen.add(`${source}>${target}`);
+    edges.push({ source, target });
+  }
+  return { nodes, edges };
+}
+
+test("elastic: a node dragged through a packed layer and let go gets all the way home, and everything sleeps", () => {
+  let time = 1000;
+  const c = new GraphController(new GraphModel(busyRecipes(11)), null, {
+    layout: "merged",
+    physics: "elastic",
+    physicsOptions: { anchor: 60, links: 40, friction: 9, collide: true },
+    worker: false,
+    clock: () => time,
+  });
+  c.setViewport(1200, 800);
+  const frame = () => c.tick((time += 1000 / 60));
+  for (let k = 0; k < 180; k++) frame();
+  assert.ok(c.routing.references?.length > 100, "references in play");
+  assert.ok(c.sim.collision?.boxes, "label boxes collide");
+  const m = c.graph.matrix;
+  const failures = [];
+  // Every seventh node, dragged a layer and a half down and up: before, about one drag in twelve left its node
+  // wedged against the row it had to cross (asleep off home, or pushed back out of it every step, awake for ever).
+  for (let i = 1; i < m.count; i += 7)
+    for (const dy of [140, -140]) {
+      const n = c.graph.nodes[i];
+      const from = c.toScreen(n.x, n.y);
+      c.pointerDown({ x: from.x, y: from.y, time });
+      if (c.pointer?.node !== i) {
+        c.pointerUp({ time });
+        continue;
+      }
+      for (let k = 1; k <= 10; k++) {
+        time += 1000 / 60;
+        c.pointerMove({
+          x: from.x,
+          y: from.y + (dy * c.camera.k * k) / 10,
+          time,
+        });
+        c.tick(time);
+      }
+      time += 200; // stopped before letting go: no throw
+      c.pointerUp({ time });
+      let t = 0,
+        result;
+      for (; t < 6; t += 1 / 60) {
+        result = frame();
+        if (!result.busy) break;
+      }
+      let worst = 0;
+      for (let j = 0; j < m.count; j++)
+        worst = Math.max(
+          worst,
+          Math.hypot(m.x[j] - m.homeX[j], m.y[j] - m.homeY[j]),
+        );
+      if (result.busy || worst > 1)
+        failures.push(
+          `${n.id} by ${dy}: ${result.busy ? "still busy" : "asleep"}, ${worst.toFixed(1)} px off`,
+        );
+    }
+  assert.deepEqual(failures, []);
+});
+
+test("a step where nothing goes anywhere counts as still, whatever the speeds say", () => {
+  const g = new Graph([{ id: "a" }], []);
+  const sim = new Simulation(g);
+  // A lock that holds the node where it is, against a speed that never runs out.
+  sim.configure(
+    "static",
+    physicsOptions("tree", "static", { friction: 0.5 }),
+    (m, i) => {
+      m.x[i] = 0;
+      m.y[i] = 0;
+    },
+  );
+  g.nodes[0].vx = 3000;
+  sim.wake();
+  for (let s = 0; s < 40; s++) sim.step(1 / 120);
+  assert.ok(sim.asleep);
+  assert.equal(g.nodes[0].vx, 0, "falling asleep stops what was left");
+});
+
 // ---- sleep -------------------------------------------------------------------------------------------------
 
 test("a big graph shaken in every mode falls asleep, and asleep costs nothing until it's woken", () => {
@@ -474,8 +573,8 @@ test("collision tries every overlapping pair exactly once, huge labels included,
   }
 });
 
-test("collision with a huge label and many long ones still pushes the nodes under it out, in about linear time", () => {
-  const time = (count) => {
+test("collision with a huge label and many long ones still pushes the nodes under it out, in about linear work", () => {
+  const run = (count) => {
     const g = new Graph(
       Array.from({ length: count }, (_, i) => ({ id: `n${i}` })),
       [],
@@ -498,11 +597,17 @@ test("collision with a huge label and many long ones still pushes the nodes unde
       { boxes: true, padding: 4 },
     );
     sim.step(1 / 120);
-    const start = performance.now();
-    for (let s = 0; s < 5; s++) sim.step(1 / 120);
-    return { ms: performance.now() - start, g };
+    // The work: how many pairs collision tries in a step (wall time is too noisy to test on).
+    let tried = 0;
+    const separate = sim.separate;
+    sim.separate = (a, b) => {
+      tried++;
+      separate(a, b);
+    };
+    sim.step(1 / 120);
+    return { tried, g };
   };
-  const { g } = time(2000);
+  const { g } = run(2000);
   // Every node on the huge label's row was pushed off it.
   const label = g.nodes[0];
   for (let i = 1; i < 200; i++) {
@@ -512,10 +617,10 @@ test("collision with a huge label and many long ones still pushes the nodes unde
       `n${i} pushed off the label`,
     );
   }
-  const small = time(4000).ms,
-    big = time(40000).ms;
+  const small = run(4000).tried,
+    big = run(40000).tried;
   assert.ok(
-    big < small * 40,
-    `10× the nodes took ${(big / small).toFixed(1)}× as long`,
+    big < small * 20,
+    `10× the nodes tried ${(big / small).toFixed(1)}× as many pairs`,
   );
 });

@@ -168,6 +168,7 @@ const STIFF_MAX = 2;
 const OVERSIZE = 2;
 const LEVELS = 8;
 const HUGE = 255;
+const AT_HOME = 0.5; // within this of its home on both axes (world px), an elastic node counts as at home
 
 /**
  * @typedef {object} Collision
@@ -226,6 +227,9 @@ export class Simulation {
     this.placeHW = new Float64Array(count); // hw and hh by place in the collision grid
     this.placeHH = new Float64Array(count);
     this.shoved = new Uint8Array(count); // pushed by a collision this step
+    this.away = new Uint8Array(count); // held, or off its home (elastic collides only pairs with one of these)
+    this.lastX = new Float64Array(count); // where each node was at the start of the step
+    this.lastY = new Float64Array(count);
     this.level = new Uint8Array(count); // which collision grid each footprint is in, by size (see #collide)
     this.huge = new Int32Array(count); // the footprints too big for any of them
     this.members = new Int32Array(LEVELS + 1); // how many in each
@@ -280,10 +284,13 @@ export class Simulation {
       const half = this.collision.padding / 2;
       const boxes = this.collision.boxes;
       const { x, y } = this.matrix;
-      const { offX, offY, hw, hh } = this;
+      const { offX, offY, hw, hh, away } = this;
+      const elastic = mode === "elastic";
       // Most pairs the grid offers don't touch: a quick look at where they are now (an earlier push this step may
-      // have moved them) before the real test.
+      // have moved them) before the real test. In elastic, two nodes both at home are left as they are: homes are
+      // where the layout put them, and a drag elsewhere shouldn't nudge them.
       this.separate = (a, b) => {
+        if (elastic && !away[a] && !away[b]) return;
         if (
           Math.abs(x[a] + offX[a] - x[b] - offX[b]) > hw[a] + hw[b] ||
           Math.abs(y[a] + offY[a] - y[b] - offY[b]) > hh[a] + hh[b]
@@ -392,11 +399,13 @@ export class Simulation {
   step(h) {
     const m = this.matrix;
     const { x, y, vx, vy, count } = m;
-    const { ax, ay, opts, pinned, constrain } = this;
+    const { ax, ay, opts, pinned, constrain, lastX, lastY } = this;
     pinned.fill(0);
     for (const i of this.held) pinned[i] = 1;
     ax.fill(0);
     ay.fill(0);
+    lastX.set(x);
+    lastY.set(y);
     this.time += h;
     // Held nodes keep the graph awake: their neighbours respond for as long as they're dragged.
     this.since = this.held.size ? 0 : this.since + h;
@@ -429,25 +438,41 @@ export class Simulation {
       y[i] += w * h;
       if (constrain) constrain(m, i);
     }
-    if (this.collision) {
+    // Elastic collides only while something is held: the dragged node shoves what's in its way, and what it shoves
+    // shoves on. Let go, everything springs home through everything else. Homes never overlap (layouts make room),
+    // but the way back can cross a row of labels packed edge to edge, and pushing a node back out of that row every
+    // step would hold it off its home for ever, wedged.
+    if (this.collision && (this.mode !== "elastic" || this.held.size)) {
       this.#collide();
       // A push can shove a node off its level or ring: put it back, so locks hold against collisions too.
       if (constrain)
         for (let i = 0; i < count; i++) if (!pinned[i]) constrain(m, i);
     }
     let energy = 0,
-      fastest = 0;
+      fastest = 0,
+      furthest = 0;
     if (this.pushed) this.moved = true;
     this.pushed = false;
     for (let i = 0; i < count; i++) {
       const v2 = vx[i] * vx[i] + vy[i] * vy[i];
       energy += v2;
       if (v2 > fastest) fastest = v2;
+      const dx = x[i] - lastX[i],
+        dy = y[i] - lastY[i];
+      if (dx * dx + dy * dy > furthest) furthest = dx * dx + dy * dy;
     }
     energy = count ? energy / count : 0;
     if (fastest > 0) this.moved = true;
-    // At rest means every node, not the average: one node still moving among thousands barely shifts the mean.
-    this.quiet = fastest < SLEEP ? this.quiet + 1 : 0;
+    // At rest means every node, not the average: one node still moving among thousands barely shifts the mean. A
+    // step where nothing actually went anywhere counts too, whatever the speeds say: a node held in place (by a lock,
+    // say) mustn't keep everything awake for ever.
+    const still = fastest < SLEEP || furthest < SLEEP * h * h;
+    this.quiet = still ? this.quiet + 1 : 0;
+    // Falling asleep: whatever speed is left goes nowhere, so it goes.
+    if (this.quiet === QUIET_STEPS) {
+      vx.fill(0);
+      vy.fill(0);
+    }
     return energy;
   }
 
@@ -567,6 +592,17 @@ export class Simulation {
       cx[i] = x[i] + offX[i];
       cy[i] = y[i] + offY[i];
       sizes[sizeClass(Math.max(hw[i], hh[i]))]++;
+    }
+    if (this.mode === "elastic") {
+      const { homeX, homeY } = this.matrix;
+      const { away, pinned } = this;
+      for (let i = 0; i < count; i++)
+        away[i] =
+          pinned[i] ||
+          Math.abs(x[i] - homeX[i]) > AT_HOME ||
+          Math.abs(y[i] - homeY[i]) > AT_HOME
+            ? 1
+            : 0;
     }
     // Typical: the top of the size class that holds the median (between it and twice it).
     let median = 0,
@@ -688,6 +724,7 @@ export class Simulation {
     if (!shares) return;
     this.pushed = true;
     this.shoved[a] = this.shoved[b] = 1;
+    this.away[a] = this.away[b] = 1;
     if (ox < oy) {
       const dir =
         x[a] + (boxX0[a] + boxX1[a]) / 2 <= x[b] + (boxX0[b] + boxX1[b]) / 2
@@ -731,6 +768,7 @@ export class Simulation {
     const push = min - d;
     this.pushed = true;
     this.shoved[a] = this.shoved[b] = 1;
+    this.away[a] = this.away[b] = 1;
     x[a] -= dx * push * shares[0];
     y[a] -= dy * push * shares[0];
     x[b] += dx * push * shares[1];
