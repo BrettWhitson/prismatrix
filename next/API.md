@@ -951,9 +951,8 @@ is a schema: a list of `OptionSpec`s, `{ key, label, type, default, min?, max?, 
 
 - **`resolve(schema, values?, warn?)`** returns every key of the schema: from `values` where usable, else the
   default. A number outside its range is clamped; anything else unusable (a wrong type, a choice that isn't one)
-  takes the default; unknown keys are dropped. Each of those is reported to `warn(message, { kind, key,
-  suggestion? })` (by default once per message on the console), with the closest known key or choice when one is
-  close (a typo).
+  takes the default; unknown keys are dropped. Each of those is reported to `warn(message)` (by default once per
+  message on the console), with the closest known key or choice when one is close (a typo).
 - **`defaultsOf(schema)`** is the defaults as a plain object.
 
 ## Layout without a screen

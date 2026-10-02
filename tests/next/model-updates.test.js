@@ -400,7 +400,7 @@ test("options: numbers out of range are clamped; misspelt keys and bad choices a
       sise: 20,
       labelCollide: "yes",
     },
-    (message, warning) => warnings.push([warning.kind, warning.key, message]),
+    (message) => warnings.push(message),
   );
   const spec = (key) => NODE_OPTIONS.find((o) => o.key === key);
   assert.equal(out.size, spec("size").max);
@@ -411,19 +411,21 @@ test("options: numbers out of range are clamped; misspelt keys and bad choices a
   assert.equal(out.labelCollide, spec("labelCollide").default);
   assert.ok(!("sise" in out));
   assert.deepEqual(
-    warnings.map(([kind, key]) => [kind, key]),
+    warnings.map((m) => m.match(/"(\w+)"/)[1]),
     [
-      ["invalid", "shape"],
-      ["clamped", "size"],
-      ["clamped", "outline"],
-      ["clamped", "labelSize"],
-      ["invalid", "collisionRadius"],
-      ["invalid", "labelCollide"],
-      ["unknown", "sise"],
+      "shape",
+      "size",
+      "outline",
+      "labelSize",
+      "collisionRadius",
+      "labelCollide",
+      "sise",
     ],
   );
-  assert.match(warnings[0][2], /did you mean "circle"/);
-  assert.match(warnings.at(-1)[2], /did you mean "size"/);
+  assert.match(warnings[0], /isn't valid .*did you mean "circle"/);
+  assert.match(warnings[1], /is out of its range/);
+  assert.match(warnings[4], /isn't valid/);
+  assert.match(warnings.at(-1), /^unknown option .*did you mean "size"/);
   assert.equal(closest("labelsize", ["labelSize", "labels"]), "labelSize");
   assert.equal(closest("zzzzzz", ["size", "shape"]), undefined);
 

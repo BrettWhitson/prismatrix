@@ -317,16 +317,12 @@ test("resolve clamps numbers out of range and drops unknown keys", () => {
   const out = resolve(
     schema,
     { repulsion: -5, friction: 3, bogus: 1 },
-    (message, warning) => warnings.push(warning),
+    (message) => warnings.push(message),
   );
   assert.equal(out.repulsion, schema.find((o) => o.key === "repulsion").min);
-  assert.deepEqual(
-    warnings.map((w) => [w.kind, w.key]),
-    [
-      ["clamped", "repulsion"],
-      ["unknown", "bogus"],
-    ],
-  );
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /^option "repulsion" is out of its range/);
+  assert.match(warnings[1], /^unknown option "bogus"/);
   assert.equal(out.friction, 3);
   assert.ok(!("bogus" in out));
 });

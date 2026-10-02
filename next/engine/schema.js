@@ -12,16 +12,6 @@
  * @property {number} [step]
  * @property {{ value: string, label: string }[]} [choices]
  * @property {string} [hint]
- *
- * @typedef {object} OptionWarning
- * @property {"unknown" | "invalid" | "clamped"} kind  an unknown key, a value that can't be used (the default is
- *   used instead), or a number outside its range (brought to the nearest end)
- * @property {string} key
- * @property {string} [suggestion] for an unknown key or a bad choice: the closest known one, if any is close
- *
- * @callback WarnOption
- * @param {string} message  ready to show ("unknown option "sise" (ignored; did you mean "size"?)")
- * @param {OptionWarning} warning
  */
 
 /**
@@ -52,7 +42,8 @@ export function warnOnce(message) {
  * @template {Record<string, any>} [T=Record<string, any>] the resolved options' type (NodeOptions, say)
  * @param {readonly OptionSpec[]} schema
  * @param {object} [values]
- * @param {WarnOption} [warn]
+ * @param {(message: string) => void} [warn] hears each problem, ready to show ("unknown option "sise" (ignored; did
+ *   you mean "size"?)")
  * @returns {T}
  */
 export function resolve(schema, values = {}, warn = warnOnce) {
@@ -70,11 +61,7 @@ export function resolve(schema, values = {}, warn = warnOnce) {
         key,
         schema.map((o) => o.key),
       );
-      warn(`unknown option "${key}" (ignored${didYouMean(suggestion)})`, {
-        kind: "unknown",
-        key,
-        ...(suggestion && { suggestion }),
-      });
+      warn(`unknown option "${key}" (ignored${didYouMean(suggestion)})`);
     }
   return /** @type {T} */ (out);
 }
@@ -85,7 +72,6 @@ function check(o, v, warn) {
   const invalid = (suggestion) => {
     warn(
       `option "${o.key}": ${show(v)} isn't valid (the default ${show(o.default)} is used${didYouMean(suggestion)})`,
-      { kind: "invalid", key: o.key, ...(suggestion && { suggestion }) },
     );
     return o.default;
   };
@@ -95,7 +81,6 @@ function check(o, v, warn) {
       if (v >= o.min && v <= o.max) return v;
       warn(
         `option "${o.key}" is out of its range ${o.min} to ${o.max} (clamped)`,
-        { kind: "clamped", key: o.key },
       );
       return v < o.min ? o.min : o.max;
     }
