@@ -505,7 +505,11 @@ test("the WebGL painter sends nothing new for a frame where only the display gra
       globalThis.document.createElement("canvas"),
     );
     const scene = c.scene;
-    painter.draw(scene);
+    // Until every label is in the atlas (a few milliseconds a frame; slower when the machine is busy).
+    for (let i = 0; i < 100; i++) {
+      painter.draw(scene);
+      if (!painter.pending) break;
+    }
     // The view builds the display graph again every frame (withReferences): same content, new objects.
     const again = withReferences(c.graph, c.routing.references, {
       looks: c.looks,
