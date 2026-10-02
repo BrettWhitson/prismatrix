@@ -30,9 +30,12 @@ import {
 import { ringStroke } from "./references.js";
 import { edgeAlpha, labelAlpha, nodeAlpha } from "./render.js";
 import { DEFAULT_THEME } from "./theme.js";
+import { labelPlace } from "./style.js";
+import { CARD_TEXT, cardBox, cardRuns, cardTextArea } from "./cards.js";
 
-/** The font for text `px` high. */
-export const font = (px) => `${px}px system-ui, sans-serif`;
+/** The font for text `px` high (bold, for a card's title). */
+export const font = (px, bold = false) =>
+  `${bold ? "600 " : ""}${px}px system-ui, sans-serif`;
 
 /** How far a halo reaches past the glyphs, as a share of the font size (the stroke is twice this wide). */
 export const TEXT_HALO = 0.2;
@@ -98,6 +101,7 @@ export function textColours(theme = DEFAULT_THEME) {
  * @property {string} colour    the text's, "#rrggbb"
  * @property {string} under     the halo's (or the pill's), "#rrggbb"
  * @property {boolean} pill     a badge: the text on a pill, instead of a halo
+ * @property {boolean} [bold]   a card's title
  */
 
 /**
@@ -189,7 +193,7 @@ export function edgeLabelAt(pts, place, back, gap) {
  * others drop out when too small to read (6 px).
  */
 export function labelsShown(node, camera) {
-  if (node.labels === "off") return false;
+  if (labelPlace(node) === "off") return false;
   return node.labelSize * camera.k >= (node.labelCollide ? LABEL_MIN_PX : 6);
 }
 
@@ -318,10 +322,11 @@ export class Room {
  * labels on top). Only what's anchored in `near` (a world rectangle; everything without it), except pinned labels.
  * @param {import("./controller.js").Scene} scene
  * @param {{ fit: (text: string, size: number, max: number) => string,
+ *   measure?: (text: string, size: number) => number,
  *   near?: { x0: number, y0: number, x1: number, y1: number } | null }} options
  * @returns {TextItem[]}
  */
-export function planText(scene, { fit, near = null }) {
+export function planText(scene, { fit, measure = null, near = null }) {
   const { graph, node, edge, looks } = scene;
   const items = [];
   const show = textVisibility(scene);
@@ -333,7 +338,7 @@ export function planText(scene, { fit, near = null }) {
     : () => true;
   const reachOf = (i) => looks.radius[i] * reach(looks.shape[i]);
   const real = Math.min(scene.matrix?.count ?? Infinity, graph.nodes.length);
-  const labelled = node.labels !== "off";
+  const labelled = labelPlace(node) !== "off";
   const max = node.labelMaxWidth ?? 0;
   const pinned = labelled ? pinnedNodes(scene) : new Map();
 
@@ -458,7 +463,14 @@ export function planText(scene, { fit, near = null }) {
     });
   };
 
-  if (labelled && show.labels) {
+  const cards = node.look === "card";
+  if (cards && show.labels)
+    for (let i = 0; i < real; i++) {
+      const n = graph.nodes[i];
+      if (inside(n))
+        cardText(scene, n, show.small, colours, fit, measure, items);
+    }
+  else if (labelled && show.labels) {
     const size = node.labelSize;
     for (const n of graph.nodes)
       if (n.label && !pinned.has(n.index) && inside(n))
@@ -478,11 +490,99 @@ export function planText(scene, { fit, near = null }) {
         const r = looks.radius[i];
         add(i, graph.nodes[hover].label, r + ringStroke(r) / 2, size, !world);
       }
-    for (const [i, whole] of pinned) {
-      const label = graph.nodes[i].label;
-      const text = whole ? label : fit(label, node.labelSize, max);
-      add(i, text, reachOf(i), size, !world);
-    }
+    // A card's title is inside it, and shows while it can be read.
+    if (!cards)
+      for (const [i, whole] of pinned) {
+        const label = graph.nodes[i].label;
+        const text = whole ? label : fit(label, node.labelSize, max);
+        add(i, text, reachOf(i), size, !world);
+      }
   }
   return items;
+}
+
+/**
+ * Card `n`'s text into `items` (cards.js): its label in bold; zoomed in far enough (`detail`), its style's
+ * subtitle and value under it, run by run, and its tag in a pill on the card's top edge. The text sits on the card's
+ * face, so its halo is the card's colour.
+ */
+function cardText(scene, n, detail, colours, fit, measure, items) {
+  const { node } = scene;
+  const theme = scene.theme ?? DEFAULT_THEME;
+  const alpha = labelAlpha(scene, n.index);
+  if (alpha <= 0) return;
+  const style = n.style ?? {};
+  const area = cardTextArea(node);
+  const box = cardBox(node);
+  const size = node.labelSize;
+  const lines = [];
+  if (detail) {
+    const subtitle = cardRuns(style.subtitle);
+    const value = cardRuns(style.value);
+    if (subtitle.length)
+      lines.push({
+        runs: subtitle,
+        size: size * CARD_TEXT.subtitle,
+        colour: colours.quiet,
+      });
+    if (value.length)
+      lines.push({
+        runs: value,
+        size: size * CARD_TEXT.value,
+        colour: colours.label,
+      });
+  }
+  const step = size * CARD_TEXT.line;
+  // The lines centred on the card, the title first.
+  let y = n.y - (lines.length * step) / 2;
+  const x = n.x + area.x;
+  const base = {
+    screen: false,
+    align: "left",
+    baseline: "middle",
+    alpha,
+    under: theme.card,
+    pill: false,
+  };
+  if (n.label)
+    items.push({
+      ...base,
+      text: fit(n.label, size, area.width * 0.94),
+      size,
+      x,
+      y,
+      colour: colours.label,
+      bold: true,
+    });
+  for (const line of lines) {
+    y += step;
+    let at = x;
+    for (const run of line.runs) {
+      if (!run.text) continue;
+      const room = x + area.width - at;
+      if (room <= 0) break;
+      const text = measure ? fit(run.text, line.size, room) : run.text;
+      items.push({
+        ...base,
+        text,
+        size: line.size,
+        x: at,
+        y,
+        colour: run.colour ?? line.colour,
+      });
+      at += measure ? measure(text, line.size) : text.length * line.size * 0.56;
+    }
+  }
+  if (detail && style.tag)
+    items.push({
+      ...base,
+      text: style.tag,
+      size: size * CARD_TEXT.tag,
+      x: n.x + box.x + box.width - 6,
+      y: n.y + box.y,
+      align: "right",
+      colour: colours.pillText,
+      under: colours.label,
+      pill: true,
+    });
 }

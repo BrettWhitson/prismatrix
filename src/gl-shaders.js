@@ -23,6 +23,7 @@ import {
   RADIAL_POINTS,
 } from "./gl-edges.js";
 import { GLYPH_MIN_PX, LINK } from "./references.js";
+import { CARD } from "./cards.js";
 import {
   AURA_ALPHA,
   AURA_RINGS,
@@ -121,6 +122,23 @@ float ringHalfStroke(float r) {
   return max(1.5, r * 0.35) * 0.5;
 }`;
 
+/**
+ * A card's box (cards.js): u_card is its width, height and corner radius; a node's centre is its icon's, half the
+ * card's height from its left end. Distance from it, negative inside.
+ */
+const CARD_SHAPE = `
+uniform vec3 u_card;
+
+float cardDistance(vec2 p) {
+  float half_ = u_card.y * 0.5;
+  return roundedBox(p - vec2(u_card.x * 0.5 - half_, 0.0), vec2(u_card.x * 0.5, half_), u_card.z);
+}
+
+// How far a card reaches from its node's centre (its right end).
+float cardReach() {
+  return u_card.x - u_card.y * 0.5;
+}`;
+
 /** The marks round a node (render.js MARKS: the ring's gap and width, the aura's reach), for radius r. */
 const NODE_MARKS = `
 float ringGap(float r) {
@@ -154,9 +172,11 @@ layout(location = 9) in vec4 a_aura;    // colour r, g, b, 1 (0: none)
 layout(location = 10) in vec3 a_style;  // border style (0 solid, 1 dashed, 2 dotted), stack (1: yes), fill opacity
 layout(location = 11) in vec4 a_badgeUv; // the badge image's rectangle in its atlas page
 layout(location = 12) in float a_badgePage; // -1 for none
+layout(location = 13) in float a_card;  // 1: a card
 ${COMMON_VERTEX}
 ${NODE_SHAPES}
 ${NODE_MARKS}
+${CARD_SHAPE}
 uniform float u_outline;
 
 out vec2 v_local;
@@ -171,15 +191,18 @@ flat out vec4 v_aura;
 flat out vec3 v_style;
 flat out vec4 v_badgeUv;
 flat out vec2 v_badge; // page, how much of the badge shows
+flat out float v_card;
 
 void main() {
   float ring = a_shape == 5.0 ? ringHalfStroke(a_radius) : 0.0;
-  float reach = a_radius * shapeReach(a_shape) + ring;
+  float reach = a_card > 0.5 ? cardReach() : a_radius * shapeReach(a_shape) + ring;
+  // A card's marks are sized by the card.
+  float mr = a_card > 0.5 ? u_card.y * 0.5 : a_radius;
   // Big enough for the shape, half its outline or ring stroke, its marks, and a couple of pixels of anti-aliasing.
   float marks = u_outline * 0.5;
-  if (a_aura.w > 0.0) marks = max(marks, auraReach(a_radius));
-  if (a_ring.w > 0.0) marks = max(marks, ringGap(a_radius) + ringWidth(a_radius));
-  if (a_style.y > 0.0) marks = max(marks, a_radius * ${float(MARKS.stackShift * 1.5)});
+  if (a_aura.w > 0.0) marks = max(marks, auraReach(mr));
+  if (a_ring.w > 0.0) marks = max(marks, ringGap(mr) + ringWidth(mr));
+  if (a_style.y > 0.0) marks = max(marks, mr * ${float(MARKS.stackShift * 1.5)});
   float extent = reach + marks;
   if (a_badgePage >= 0.0)
     extent = max(extent, a_radius * ${float(MARKS.badgeAt + MARKS.badgeRadius)});
@@ -196,6 +219,7 @@ void main() {
   v_aura = a_aura;
   v_style = a_style;
   v_badgeUv = a_badgeUv;
+  v_card = a_card;
   // Icons fade in from ICON_MIN_PX across on screen to ICON_MIN_PX + ICON_FADE_PX (iconShown in icons.js).
   float shown = clamp((2.0 * a_radius * u_camera.z - ${ICON_MIN_PX.toFixed(1)}) / ${ICON_FADE_PX.toFixed(1)}, 0.0, 1.0);
   v_icon = vec4(a_icon, a_icon.x < 0.0 ? 0.0 : shown);
@@ -217,11 +241,15 @@ flat in vec4 v_aura;
 flat in vec3 v_style;
 flat in vec4 v_badgeUv;
 flat in vec2 v_badge;
+flat in float v_card;
 ${COMMON_FRAGMENT}
 ${NODE_SHAPES}
 ${NODE_MARKS}
+${CARD_SHAPE}
 uniform float u_outline;
 uniform vec3 u_background;
+uniform vec3 u_cardFace;
+uniform vec3 u_cardBorder;
 uniform mediump sampler2DArray u_icons;
 out vec4 outColour;
 
@@ -244,6 +272,18 @@ float dashMask(vec2 p, float style) {
   return mix(mask, on, clamp(aa / on - 0.5, 0.0, 1.0));
 }
 
+// How much of a card border's dash is drawn, "along" world px along an edge: the spacing a node of radius r would have.
+float cardDash(float along, float style, float r) {
+  if (style == 0.0) return 1.0;
+  float count = style == 1.0 ? ${float(MARKS.dashes)} : ${float(MARKS.dots)};
+  float on = style == 1.0 ? ${float(MARKS.dashOn)} : ${float(MARKS.dotOn)};
+  float t = along / (6.28318531 * r / count);
+  float f = fract(t);
+  float aa = max(fwidth(t), 1e-4);
+  float mask = clamp(f / aa, 0.0, 1.0) * clamp((on - f) / aa, 0.0, 1.0);
+  return mix(mask, on, clamp(aa / on - 0.5, 0.0, 1.0));
+}
+
 // A shape's distance at p, a ring measured from its stroke's outside.
 float outerDistance(vec2 p, float r, float shape) {
   return shape == 5.0 ? length(p) - r - ringHalfStroke(r) : shapeDistance(p, r, shape);
@@ -252,26 +292,48 @@ float outerDistance(vec2 p, float r, float shape) {
 void main() {
   vec2 p = v_local;
   float r = v_radius;
-  float d0 = outerDistance(p, r, v_shape);
+  bool card = v_card > 0.5;
+  // A card's marks go round the card, sized by it.
+  float d0 = card ? cardDistance(p) : outerDistance(p, r, v_shape);
+  float mr = card ? u_card.y * 0.5 : r;
   vec4 result = vec4(0.0);
   if (v_aura.w > 0.0) {
     // A glow fading out over its reach: the smooth form of the Canvas 2D painter's rings of falling strength.
-    float reach = auraReach(r);
+    float reach = auraReach(mr);
     float rings = ${float(AURA_RINGS)} * clamp(1.0 - d0 / reach, 0.0, 1.0);
     float a = 1.0 - pow(1.0 - ${float(AURA_ALPHA / AURA_RINGS)}, rings);
     result = vec4(v_aura.rgb * a, a);
   }
   if (v_style.y > 0.0) {
     // A copy of the shape, shifted right and up, toward the background: there's more behind this one.
-    float shift = r * ${float(MARKS.stackShift)};
-    float a = cover(outerDistance(p - vec2(shift, -shift), r, v_shape));
+    float shift = mr * ${float(MARKS.stackShift)};
+    vec2 q = p - vec2(shift, -shift);
+    float a = cover(card ? cardDistance(q) : outerDistance(q, r, v_shape));
     vec3 c = mix(v_colour.rgb, u_background, ${float(STACK_FADE)});
     result = over(vec4(c * a, a), result);
   }
   if (v_ring.w > 0.0) {
-    float width = ringWidth(r);
-    float a = cover(abs(d0 - ringGap(r) - width * 0.5) - width * 0.5);
+    float width = ringWidth(mr);
+    float a = cover(abs(d0 - ringGap(mr) - width * 0.5) - width * 0.5);
     result = over(vec4(v_ring.rgb * a, a), result);
+  }
+  if (card) {
+    // The card's face (at the fill's opacity), a stripe in the node's colour down its left edge, and its border:
+    // the node's stroke (dashed or dotted by its style) or the theme's card border.
+    float cx = p.x + u_card.y * 0.5;
+    vec4 face = vec4(u_cardFace, 1.0) * v_style.z;
+    face = mix(face, vec4(v_colour.rgb, 1.0), cover(cx - ${float(CARD.stripe)}));
+    bool stroked = v_stroke.w > 0.0;
+    float bw = stroked ? v_stroke.w : ${float(CARD.border)};
+    vec3 bc = stroked ? v_stroke.rgb : u_cardBorder;
+    // The border's dashes, spaced by distance along its edges (top and bottom by x, the ends by y), as many as
+    // round a node of the card's height would have.
+    vec2 mid = p - vec2(u_card.x * 0.5 - u_card.y * 0.5, 0.0);
+    float along = abs(mid.y) > u_card.y * 0.5 - u_card.z ? mid.x : mid.y;
+    float band = (1.0 - cover(d0 + bw)) * cardDash(along, v_style.x, u_card.y * 0.5);
+    face = mix(face, vec4(bc, 1.0), band);
+    float a = cover(d0);
+    result = over(face * a, result);
   }
   vec4 body;
   if (v_shape == 5.0) {
@@ -283,7 +345,8 @@ void main() {
     vec3 colour = mix(u_background, v_colour.rgb, alpha > 0.0 ? stroke / alpha : 0.0);
     body = vec4(colour * alpha, alpha);
   } else {
-    float d = d0;
+    // The icon is the node's own shape, inside a card.
+    float d = card ? outerDistance(p, r, v_shape) : d0;
     // Premultiplied, layer over layer: the fill (at its opacity), the icon, the border, the outline; then the
     // shape's coverage.
     vec4 colour = vec4(v_colour.rgb, 1.0) * v_style.z;
@@ -297,7 +360,7 @@ void main() {
       if (v_shape == 6.0) colour *= 1.0 - v_icon.w;
       colour = icon + colour * (1.0 - icon.a);
     }
-    if (v_stroke.w > 0.0) {
+    if (v_stroke.w > 0.0 && !card) {
       // The border: the band v_stroke.w wide inside the shape's edge.
       float band = (1.0 - cover(d + v_stroke.w)) * dashMask(p, v_style.x);
       colour = mix(colour, vec4(v_stroke.rgb, 1.0), band);
@@ -340,9 +403,10 @@ layout(location = 1) in vec2 a_centre;
 layout(location = 2) in float a_radius;
 layout(location = 3) in vec4 a_colour;
 layout(location = 4) in float a_shape;
-layout(location = 5) in vec4 a_gap;    // x: the halo's own gap, CSS px
+layout(location = 5) in vec4 a_gap;    // x: the halo's own gap, CSS px; y: 1 round a card
 ${COMMON_VERTEX}
 ${NODE_SHAPES}
+${CARD_SHAPE}
 uniform vec2 u_halo; // gap, width (world px)
 
 out vec2 v_local;
@@ -350,11 +414,13 @@ flat out float v_radius;
 flat out vec4 v_colour;
 flat out float v_shape;
 flat out float v_gap;
+flat out float v_card;
 
 void main() {
   float ring = a_shape == 5.0 ? ringHalfStroke(a_radius) : 0.0;
   float gap = u_halo.x + a_gap.x / u_camera.z;
-  float extent = a_radius * shapeReach(a_shape) + ring + gap + u_halo.y + 2.0 * u_pixel;
+  float reach = a_gap.y > 0.5 ? cardReach() : a_radius * shapeReach(a_shape) + ring;
+  float extent = reach + gap + u_halo.y + 2.0 * u_pixel;
   vec2 local = a_corner * extent;
   gl_Position = toClip(a_centre + local);
   v_local = local;
@@ -362,6 +428,7 @@ void main() {
   v_colour = a_colour;
   v_shape = a_shape;
   v_gap = gap;
+  v_card = a_gap.y;
 }`;
 
 export const HALO_FRAGMENT = `#version 300 es
@@ -371,14 +438,16 @@ flat in float v_radius;
 flat in vec4 v_colour;
 flat in float v_shape;
 flat in float v_gap;
+flat in float v_card;
 ${COMMON_FRAGMENT}
 ${NODE_SHAPES}
+${CARD_SHAPE}
 uniform vec2 u_halo;
 out vec4 outColour;
 
 void main() {
-  // Distance from the node's outer edge (a ring's stroke reaches past its circle).
-  float d = v_shape == 5.0
+  // Distance from the node's outer edge (a ring's stroke reaches past its circle; a card's box).
+  float d = v_card > 0.5 ? cardDistance(v_local) : v_shape == 5.0
     ? length(v_local) - v_radius - ringHalfStroke(v_radius)
     : shapeDistance(v_local, v_radius, v_shape);
   float alpha = cover(abs(d - v_gap - u_halo.y * 0.5) - u_halo.y * 0.5) * v_colour.a;

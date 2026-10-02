@@ -27,9 +27,9 @@ export const SHAPE_IDS = {
  * r, g, b and width (0: no border); its icon's rectangle in the icon atlas (u0, v0, u1, v1), page (-1: no icon) and
  * box (half its width and height, world px: iconBox); its ring's colour r, g, b and 1 (0: none); its aura's colour
  * r, g, b and 1 (0: none); its border style (STROKE_STYLES), 1 for a stacked copy, its fill's opacity; its badge
- * image's rectangle in the icon atlas (u0, v0, u1, v1) and page (-1: none).
+ * image's rectangle in the icon atlas (u0, v0, u1, v1) and page (-1: none); 1 for a card (the `look` node option).
  */
-export const NODE_STRIDE = 35;
+export const NODE_STRIDE = 36;
 /**
  * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b; how far along its edge it
  * starts (world px, for dashes); the edge's dash style (0 solid, 1 dashed, 2 dotted) and glow (1: yes). Its
@@ -190,6 +190,7 @@ function packNode(scene, n, out, origin, colour, iconAt) {
     out.fill(0, o + 30, o + 34);
     out[o + 34] = -1;
   }
+  out[o + 35] = looks.card && i < (scene.matrix?.count ?? Infinity) ? 1 : 0;
 }
 
 const NONE = [0, 0, 0];
@@ -217,6 +218,7 @@ export function packHalos(scene, nodeData, out = null) {
     out[o + 5] = rgb[2];
     out[o + 6] *= h.alpha;
     out[o + 8] = h.gap;
+    out[o + 9] = nodeData[i * NODE_STRIDE + 35];
     o += NODE_STRIDE;
   }
   return { data: out, count: halos.length };

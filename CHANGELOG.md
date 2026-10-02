@@ -59,6 +59,11 @@ Nothing from 0.4 carries over: an app moves to the new API ([API.md](API.md)). T
   `highlight` and `focus`.
 - **Camera and pictures:** `setCamera`, a `camera` event whenever it moves, `nodePosition`, `positions`, `bounds`,
   and `toImage()`: the whole graph as a canvas, for saving as a PNG.
+- **Cards:** `look: "card"` (with `cardWidth`, `cardHeight`) draws each node as a card: its icon, its label in bold,
+  and its style's `subtitle`, `value` (text or coloured runs, marks and dots) and `tag`. Layouts, hits, marks, halos
+  and edges all go by the card. Theme tokens `card` and `cardBorder`.
+- **Edges clear their target's label too** (`endTrims`), as they already did their source's: in a bottom-to-top tree
+  they no longer strike through the label of the node they come into.
 - **Speed at 40k nodes:** edges are traced on the GPU from a positions texture, so a tree morph frame takes a few ms
   (105–199 ms when the CPU traced them; merged-tree morph frames are still 47–52 ms). Pans rebuild nothing;
   hover hit tests take 0.07 ms at 100k nodes; a restyle uploads only the bytes that changed.

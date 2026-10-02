@@ -41,9 +41,9 @@ export function bucketScale(zoom, dpr) {
   return step * dpr;
 }
 
-/** A cell's key in the atlas: the text, its size and units, and whether it's a badge. */
+/** A cell's key in the atlas: the text, its size and units, whether it's a badge, and whether it's bold. */
 const keyOf = (item) =>
-  `${item.pill ? "p" : "t"}${item.screen ? "s" : "w"}${item.size}|${item.text}`;
+  `${item.pill ? "p" : "t"}${item.screen ? "s" : "w"}${item.bold ? "b" : ""}${item.size}|${item.text}`;
 
 /** One atlas: text at one raster scale, packed in shelves (rows of cells about the same height) across pages. */
 class Atlas {
@@ -100,7 +100,7 @@ class Atlas {
   /** Draw `item`'s text (and halo or pill) at `px` texels a font size, as `key`. False when the atlas is full. */
   add(key, item, px) {
     const ctx = this.ctx;
-    ctx.font = font(px);
+    ctx.font = font(px, item.bold);
     let textW = ctx.measureText(item.text).width;
     const padFor = (size) =>
       PAD + Math.ceil(item.pill ? 1 : TEXT_HALO * size + 1);
@@ -110,7 +110,7 @@ class Atlas {
     // than cut off: a little softer, but whole.
     if (w > PAGE) {
       px *= (PAGE - 8) / w;
-      ctx.font = font(px);
+      ctx.font = font(px, item.bold);
       textW = ctx.measureText(item.text).width;
       pad = padFor(px);
       w = Math.min(
@@ -133,7 +133,7 @@ class Atlas {
     // keeps its own coverage where they meet.
     ctx.clearRect(0, 0, w, h);
     ctx.globalCompositeOperation = "lighter";
-    ctx.font = font(px);
+    ctx.font = font(px, item.bold);
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     const textX = pad + (item.pill ? PILL.pad * px : 0);
@@ -194,9 +194,11 @@ export class LabelLayer {
     this.current = null;
     this.previous = null;
     this.data = new Float32Array(0);
-    this.fit = textMeasurer(
+    const measurer = textMeasurer(
       document.createElement("canvas").getContext("2d"),
-    ).fit;
+    );
+    this.fit = measurer.fit;
+    this.measure = measurer.measure;
   }
 
   /**
@@ -230,7 +232,11 @@ export class LabelLayer {
       y0: camera.y - halfH,
       y1: camera.y + halfH,
     };
-    const items = planText(scene, { fit: this.fit, near });
+    const items = planText(scene, {
+      fit: this.fit,
+      measure: this.measure,
+      near,
+    });
 
     const started = performance.now();
     let outOfTime = false;

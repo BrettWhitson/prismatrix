@@ -4,6 +4,12 @@ export declare class HitGrid {
   x: Float64Array<ArrayBufferLike>;
   y: Float64Array<ArrayBufferLike>;
   radius: Float64Array<ArrayBufferLike>;
+  boxes: {
+    x0: Float64Array<ArrayBufferLike>;
+    y0: Float64Array<ArrayBufferLike>;
+    x1: Float64Array<ArrayBufferLike>;
+    y1: Float64Array<ArrayBufferLike>;
+  };
   /** The furthest any node reaches from its centre and still counts as hit. */
   reach: number;
   cols: any;
@@ -14,21 +20,36 @@ export declare class HitGrid {
   minY: number;
   cell: number;
   /**
-   * @param {{ x: Float64Array, y: Float64Array, radius: Float64Array, count: number }} matrix positions and reaches
+   * @param {{ x: Float64Array, y: Float64Array, radius: Float64Array, count: number, boxX0?: Float64Array,
+   *   boxY0?: Float64Array, boxX1?: Float64Array, boxY1?: Float64Array }} matrix positions and reaches (and
+   *   footprints)
+   * @param {boolean} [boxes] a node is hit anywhere in its footprint (cards: the whole card), not just its circle
    */
-  constructor({
-    x,
-    y,
-    radius,
-    count,
-  }: {
-    x: Float64Array;
-    y: Float64Array;
-    radius: Float64Array;
-    count: number;
-  });
+  constructor(
+    {
+      x,
+      y,
+      radius,
+      count,
+      boxX0,
+      boxY0,
+      boxX1,
+      boxY1,
+    }: {
+      x: Float64Array;
+      y: Float64Array;
+      radius: Float64Array;
+      count: number;
+      boxX0?: Float64Array;
+      boxY0?: Float64Array;
+      boxX1?: Float64Array;
+      boxY1?: Float64Array;
+    },
+    boxes?: boolean,
+  );
   /**
-   * The topmost node (highest index, drawn last) whose hit circle, grown by `slack` world px, holds (px, py); or -1.
+   * The topmost node (highest index, drawn last) whose hit circle (or footprint), grown by `slack` world px, holds
+   * (px, py); or -1.
    */
   at(px: any, py: any, slack?: number): number;
 }

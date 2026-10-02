@@ -86,7 +86,34 @@ export type NodeStyle = {
    * the label stays at any zoom, like a root's
    */
   pinLabel?: boolean;
+  /**
+   * a card's second line (cards only: the `look` node option)
+   */
+  subtitle?: CardText;
+  /**
+   * a card's third line
+   */
+  value?: CardText;
+  /**
+   * a card's tag: up to 24 characters in a pill on its top edge ("owned", "×3")
+   */
+  tag?: string;
 };
+export type CardText =
+  | string
+  | (
+      | string
+      | {
+          text: string;
+          color?: string;
+        }
+      | {
+          mark: string;
+        }
+      | {
+          dot: string;
+        }
+    )[];
 export type EdgeStyle = {
   /**
    * "#rrggbb"
@@ -307,6 +334,8 @@ export type Adjacency = {
  * width and a height that a canvas can draw). Only a URL survives toJSON.
  */
 declare const icon: (v: any) => boolean;
+/** A card's line (CardText): text, or up to 24 runs of text, coloured text, marks and dots. */
+declare const cardText: (v: any) => boolean;
 /** What a node's `style` may set, and what each value must be. */
 export declare const NODE_STYLE: {
   color: typeof isHex;
@@ -323,6 +352,9 @@ export declare const NODE_STYLE: {
   aura: typeof isHex;
   stack: (v: any) => v is boolean;
   pinLabel: (v: any) => v is boolean;
+  subtitle: typeof cardText;
+  value: typeof cardText;
+  tag: (v: any) => boolean;
 };
 /** What an edge's `style` may set. */
 export declare const EDGE_STYLE: {
@@ -448,7 +480,7 @@ export declare class GraphModel {
    * A label wider than the `labelMaxWidth` option is cut short with an ellipsis (fitLabel), as the painters draw it.
    */
   labelWidths(): Float64Array<ArrayBuffer>;
-  /** A label's height (one line) at the current label size, world px. */
+  /** A label's height (one line) at the current label size, world px; a card's text has the card's height. */
   get labelHeight(): number;
   /**
    * Measure labels with `measure` from now on (a renderer's real text measurement, say).
@@ -545,6 +577,15 @@ export declare class GraphModel {
    */
   toJSON(): GraphJSON;
 }
+/**
+ * How wide a card's text is, for these node options: the card less its icon square (the card's height) and the gap
+ * after it. A card's footprint is its icon and this "label" to its right: its own box.
+ * @param {{ cardWidth: number, cardHeight: number }} node
+ */
+export declare function cardTextWidth(node: {
+  cardWidth: number;
+  cardHeight: number;
+}): number;
 /**
  * A structure as compressed sparse rows, from each edge's ends: each node's outgoing and incoming edges, in edge
  * order (a counting sort by source and by target). For a model's adjacency, and for a working graph that shows only

@@ -16,6 +16,7 @@ import { footprint, reach } from "./boxes.js";
 import { Graph } from "./graph.js";
 import { GraphModel } from "./model.js";
 import { LAYOUTS } from "./layouts.js";
+import { labelPlace } from "./style.js";
 
 /**
  * @typedef {object} SizingSpec
@@ -110,19 +111,23 @@ export function hintFrom(previous, graph, routing = null) {
  */
 export function sizingSpec(graph, model, looks) {
   const { node } = model.opts;
-  const labelled = node.labels !== "off";
+  const card = node.look === "card";
+  const place = labelPlace(node);
+  const labelled = place !== "off";
   return {
     widths: labelled
       ? graph.pick(model.labelWidths())
       : new Float64Array(graph.nodes.length),
-    reach: Float64Array.from(
-      graph.nodes,
-      (n) => looks.radius[n.index] * reach(looks.shape[n.index]),
+    // A card reaches its half height every way from its icon's centre, and its text is its "label".
+    reach: Float64Array.from(graph.nodes, (n) =>
+      card
+        ? node.cardHeight / 2
+        : looks.radius[n.index] * reach(looks.shape[n.index]),
     ),
     height: model.labelHeight,
     gap: node.collisionRadius,
-    labels: node.labels,
-    collide: labelled && node.labelCollide,
+    labels: place,
+    collide: card || (labelled && node.labelCollide),
   };
 }
 

@@ -23,6 +23,8 @@ import { isHex, warnOnce } from "./schema.js";
  * @property {string} descendants a lit lineage's edges going down (what it goes into), with lineageColor on
  * @property {string} highlight   the halo round highlighted nodes (highlight)
  * @property {string} focus       the halo a flash lights (flash)
+ * @property {string} card        a card's face (the `look` node option)
+ * @property {string} cardBorder  a card's border
  * @property {readonly string[]} palette colours by depth or branch, then wrapping
  *
  * @typedef {"dark" | "light" | (Partial<Omit<Theme, "name">> & { base?: "dark" | "light" })} ThemeInput A preset's
@@ -46,6 +48,8 @@ export const THEMES = Object.freeze({
     descendants: "#62a4da",
     highlight: "#ffd166",
     focus: "#62a4da",
+    card: "#181c26",
+    cardBorder: "#2e3546",
     // Colours by depth, then wrapping. Picked to read on the dark background.
     palette: Object.freeze([
       "#f6c177",
@@ -70,6 +74,8 @@ export const THEMES = Object.freeze({
     descendants: "#2a6fb0",
     highlight: "#c98a00",
     focus: "#2a6fb0",
+    card: "#ffffff",
+    cardBorder: "#d3d8e2",
     // The dark palette's hues, deep enough to read on a light background.
     palette: Object.freeze([
       "#b5650d",
@@ -109,6 +115,8 @@ const TOKENS = [
   "descendants",
   "highlight",
   "focus",
+  "card",
+  "cardBorder",
 ];
 
 /**

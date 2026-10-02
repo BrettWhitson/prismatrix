@@ -1,3 +1,4 @@
+import { cardBox } from "./cards.js";
 export type Looks = {
   /**
    * per node, world px
@@ -47,6 +48,10 @@ export type Looks = {
    * per node, 1 for a stacked copy behind it
    */
   stack: Uint8Array;
+  /**
+   * a card's box, when nodes are cards (the `look` node option)
+   */
+  card: ReturnType<typeof cardBox> | null;
   /**
    * per edge
    */
@@ -170,6 +175,7 @@ export type Shown = {
  * @property {(string | null)[]} ring  per node, a ring's colour (null: none)
  * @property {(string | null)[]} aura  per node, a glow's colour (null: none)
  * @property {Uint8Array} stack        per node, 1 for a stacked copy behind it
+ * @property {ReturnType<typeof cardBox> | null} card a card's box, when nodes are cards (the `look` node option)
  * @property {string[]} edgeColour     per edge
  * @property {Float64Array} edgeWidth  per edge, world px
  * @property {Uint8Array} edgeDash     per edge, 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
@@ -392,6 +398,8 @@ export declare function haloList(scene: any): Halo[];
  * round), stroked. The WebGL painter draws the same rings as distance fields (HALO_FRAGMENT).
  */
 export declare function drawHalos(ctx: any, scene: any): void;
+/** How many of the scene's display nodes are real (the rest are reference chips and ghosts, never cards). */
+export declare const realCount: (scene: any) => number;
 /** Fill the canvas with `colour`, or clear it to transparent when there's none. */
 export declare function clearTo(
   ctx: any,
@@ -420,7 +428,12 @@ export declare function edgeAlpha(scene: any, e: any): number;
  */
 export declare function drawNodes(ctx: any, scene: any, icons?: any): void;
 /** The Canvas 2D dash pattern for a border style (STROKE_STYLES) round a shape of radius r, or [] for solid. */
-export declare function dashPattern(style: any, shape: any, r: any): number[];
+export declare function dashPattern(
+  style: any,
+  shape: any,
+  r: any,
+  card?: any,
+): number[];
 /** How many rings the Canvas 2D painter builds an aura from, and how strong an aura is at the shape's edge. */
 export declare const AURA_RINGS = 10;
 export declare const AURA_ALPHA = 0.6;

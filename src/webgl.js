@@ -35,6 +35,7 @@ import {
 import { IconAtlas } from "./gl-icons.js";
 import { iconStore } from "./icons.js";
 import { DEFAULT_THEME } from "./theme.js";
+import { CARD } from "./cards.js";
 import {
   BUNDLE_TIP_STRIDE,
   KINDS,
@@ -370,6 +371,7 @@ export class WebGLPainter {
       [10, 3, 27], // border style, stack, fill opacity
       [11, 4, 30], // badge image rectangle
       [12, 1, 34], // badge image page
+      [13, 1, 35], // a card
     ];
     // A new context has none of the old one's textures: icons are copied in again as nodes ask for them.
     this.iconAtlas = new IconAtlas(gl, this.icons);
@@ -545,6 +547,18 @@ export class WebGLPainter {
       const theme = scene.theme ?? DEFAULT_THEME;
       gl.uniform3f(u.u_ancestors, ...parseColour(theme.ancestors));
       gl.uniform3f(u.u_descendants, ...parseColour(theme.descendants));
+    }
+    if (u.u_card) {
+      const theme = scene.theme ?? DEFAULT_THEME;
+      const n = scene.node;
+      gl.uniform3f(
+        u.u_card,
+        n?.cardWidth ?? 0,
+        n?.cardHeight ?? 0,
+        CARD.corner,
+      );
+      gl.uniform3f(u.u_cardFace, ...parseColour(theme.card));
+      gl.uniform3f(u.u_cardBorder, ...parseColour(theme.cardBorder));
     }
     if (u.u_flow) {
       const { shift, sign } = flowShift(scene);

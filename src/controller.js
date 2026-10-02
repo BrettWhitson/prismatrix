@@ -38,6 +38,7 @@ import { Simulation, physicsOptions, referencedEdges } from "./physics.js";
 import { drawScene, looksOf, patchLooks } from "./render.js";
 import { iconStore } from "./icons.js";
 import { resolveTheme } from "./theme.js";
+import { labelPlace } from "./style.js";
 import {
   hintFrom,
   runLayout,
@@ -1458,7 +1459,7 @@ export class GraphController {
     this.labelWidths = spec.widths; // painters start edges past these (startTrims)
     for (let i = 0; i < m.count; i++) {
       const angle = labelAngle(
-        this.node.labels,
+        labelPlace(this.node),
         this.routing,
         m.homeX[i],
         m.homeY[i],
@@ -1479,7 +1480,9 @@ export class GraphController {
       this.modeOpts,
       constrainer(this.routing, this.modeOpts),
       {
-        boxes: this.node.labelCollide && this.node.labels !== "off",
+        boxes:
+          this.node.look === "card" ||
+          (this.node.labelCollide && this.node.labels !== "off"),
         padding: this.node.collisionRadius,
       },
       // Edges drawn as references don't pull: dragging a recipe doesn't tug a far-away ingredient.
@@ -2271,7 +2274,7 @@ export class GraphController {
       // Built at most once per frame that moved something, and kept while nothing moves.
       grid.graph = this.graph;
       grid.version = this.version;
-      grid.index = new HitGrid(m);
+      grid.index = new HitGrid(m, this.node.look === "card");
     }
     const direct = grid.index.at(p.x, p.y, slack);
     if (direct >= 0 || !references) return { index: direct, reference: false };

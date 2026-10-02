@@ -2,6 +2,7 @@
 // shape. Pure functions, no drawing.
 
 import { LINE, reach, startTrim } from "./boxes.js";
+import { labelPlace } from "./style.js";
 
 /** Radians per point along a ring arc (the CPU's radial steps; the GPU's pieces size their corners by it too). */
 export const ARC_STEP = 0.06;
@@ -500,11 +501,11 @@ export function pathLength(pts) {
 
 /**
  * Edge `ei` of the scene's graph as painters draw it: its route (through its parent's fan junction when `junctions`,
- * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target, each also clear
- * of the end there, if it has one (an arrow or a dot: endRooms). Null when nothing is left.
+ * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end at its target's trim (endTrims),
+ * each also clear of the end there, if it has one (an arrow or a dot: endRooms). Null when nothing is left.
  */
 export function trimmedRoute(scene, ei, junctions, starts) {
-  const { graph, edge, looks } = scene;
+  const { graph, edge } = scene;
   const e = graph.edges[ei];
   const jx = junctions && e.tree ? junctions[e.source * 2] : NaN;
   const junction = Number.isNaN(jx)
@@ -514,12 +515,12 @@ export function trimmedRoute(scene, ei, junctions, starts) {
   return trim(
     edgeRoute(graph, scene.routing, edge.shape, e, junction),
     starts[ei] + ends.source,
-    looks.radius[e.target] + ends.target,
+    endTrims(scene)[ei] + ends.target,
   );
 }
 
-/** The last startTrims worked out, and what for: painters ask every frame, and it changes only with the layout. */
-let trimsMemo = null;
+/** The last trims worked out for each end, and what for: painters ask every frame, and they change only with the layout. */
+const trimsMemo = { source: null, target: null };
 
 /**
  * Where each edge starts, as a distance from its source's centre (what `trim` cuts off its route's start, and the
@@ -529,12 +530,35 @@ let trimsMemo = null;
  * along the layout's axis (a radial's spokes), a straight edge towards its first stop. At most 45% of the way to
  * that stop (35% for a fan, whose trunk splits early). Cross-links that bundle along the tree start off the node
  * only (they rarely leave through the label, and the GPU clips them to a disc). Needs `scene.labelWidths` (each
- * real node's label width as the layout kept room for it); without it, every edge starts at its node's radius.
+ * real node's label width as the layout kept room for it); without it, every edge starts at its node's radius. A
+ * card (the `look` node option) counts as its node: edges start at its rim.
  * @returns {Float64Array} per edge of the scene's graph
  */
 export function startTrims(scene) {
+  return trimsAt(scene, "source");
+}
+
+/**
+ * Where each edge ends, as a distance from its target's centre: off the node, and past the node's label when the
+ * edge comes in through it (labels below in a bottom-to-top tree), the same way startTrims works out the start.
+ * @returns {Float64Array} per edge of the scene's graph
+ */
+export function endTrims(scene) {
+  return trimsAt(scene, "target");
+}
+
+/** How far an edge stays off node `i` when nothing else is in the way: its radius, or its card's half height. */
+export function clearOf(scene, i) {
+  const real = scene.matrix?.count ?? Infinity;
+  return scene.node?.look === "card" && i < real
+    ? scene.node.cardHeight / 2
+    : scene.looks.radius[i];
+}
+
+/** startTrims (`end` "source") or endTrims ("target"). */
+function trimsAt(scene, end) {
   const { graph, routing, edge, looks, node, labelWidths } = scene;
-  const m = trimsMemo;
+  const m = trimsMemo[end];
   if (
     m &&
     scene.geometryVersion !== undefined &&
@@ -545,25 +569,33 @@ export function startTrims(scene) {
     m.routing === routing
   )
     return m.trims;
+  const atSource = end === "source";
   const edges = graph.edges;
   const out = new Float64Array(edges.length);
-  for (let i = 0; i < edges.length; i++) out[i] = looks.radius[edges[i].source];
-  if (labelWidths && node && node.labels !== "off") {
-    const h = node.labelSize * LINE;
+  for (let i = 0; i < edges.length; i++)
+    out[i] = clearOf(scene, atSource ? edges[i].source : edges[i].target);
+  const card = node?.look === "card";
+  if (labelWidths && node && labelPlace(node) !== "off") {
+    const h = card ? node.cardHeight : node.labelSize * LINE;
     const radial = routing.kind === "radial";
     const layered = routing.kind === "layered";
     const axis = TREE_AXIS[routing.direction] ?? TREE_AXIS.TB;
     const shaped = edge.shape !== "straight";
     for (let i = 0; i < edges.length; i++) {
       const e = edges[i];
-      const w = labelWidths[e.source];
+      // The node at this end, and the stop the edge goes to from it (the other node, or the nearest bend).
+      const here = atSource ? e.source : e.target;
+      const w = labelWidths[here];
       if (!(w > 0)) continue;
       if (!layered && !e.tree && shaped) continue; // bundled
-      const s = graph.nodes[e.source],
-        t = graph.nodes[e.target];
+      const s = graph.nodes[here],
+        t = graph.nodes[atSource ? e.target : e.source];
       const sx = s.homeX ?? s.x,
         sy = s.homeY ?? s.y;
-      const bend = layered ? routing.bends.get(e)?.[0] : null;
+      const bends = layered ? routing.bends.get(e) : null;
+      const bend = bends?.length
+        ? bends[atSource ? 0 : bends.length - 1]
+        : null;
       const fx = bend ? bend[0] : (t.homeX ?? t.x),
         fy = bend ? bend[1] : (t.homeY ?? t.y);
       let dx = fx - sx,
@@ -572,7 +604,7 @@ export function startTrims(scene) {
       if (len < 1e-6) continue;
       let reachOut = len;
       if (shaped && radial) {
-        // Out along the source's spoke (in, towards a child nearer the centre); from the centre, at the child.
+        // Along this node's spoke (in, towards a node nearer the centre); from the centre, at the other node.
         const rx = sx - routing.cx,
           ry = sy - routing.cy;
         const rs = Math.hypot(rx, ry);
@@ -596,19 +628,21 @@ export function startTrims(scene) {
         dx /= len;
         dy /= len;
       }
+      const clear = clearOf(scene, here);
       out[i] = startTrim(
-        looks.radius[e.source],
-        looks.radius[e.source] * reach(looks.shape[e.source]),
+        clear,
+        card ? clear : looks.radius[here] * reach(looks.shape[here]),
         s.labelAngle ?? Math.PI / 2,
         w,
         h,
         dx,
         dy,
-        reachOut * (edge.shape === "fan" ? 0.35 : 0.45),
+        // A card is opaque, and the layout keeps its gap clear: an edge always starts past one.
+        card ? Infinity : reachOut * (edge.shape === "fan" ? 0.35 : 0.45),
       );
     }
   }
-  trimsMemo = {
+  trimsMemo[end] = {
     version: scene.geometryVersion,
     edges,
     looks,

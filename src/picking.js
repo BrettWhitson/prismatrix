@@ -13,12 +13,19 @@ export const HIT_SCALE = 1.15;
 
 export class HitGrid {
   /**
-   * @param {{ x: Float64Array, y: Float64Array, radius: Float64Array, count: number }} matrix positions and reaches
+   * @param {{ x: Float64Array, y: Float64Array, radius: Float64Array, count: number, boxX0?: Float64Array,
+   *   boxY0?: Float64Array, boxX1?: Float64Array, boxY1?: Float64Array }} matrix positions and reaches (and
+   *   footprints)
+   * @param {boolean} [boxes] a node is hit anywhere in its footprint (cards: the whole card), not just its circle
    */
-  constructor({ x, y, radius, count }) {
+  constructor(
+    { x, y, radius, count, boxX0, boxY0, boxX1, boxY1 },
+    boxes = false,
+  ) {
     this.x = x;
     this.y = y;
     this.radius = radius;
+    this.boxes = boxes ? { x0: boxX0, y0: boxY0, x1: boxX1, y1: boxY1 } : null;
     let minX = Infinity,
       minY = Infinity,
       maxX = -Infinity,
@@ -32,6 +39,14 @@ export class HitGrid {
       if (y[i] < minY) minY = y[i];
       if (y[i] > maxY) maxY = y[i];
       if (radius[i] > reach) reach = radius[i];
+      if (boxes)
+        reach = Math.max(
+          reach,
+          -boxX0[i] / HIT_SCALE,
+          boxX1[i] / HIT_SCALE,
+          -boxY0[i] / HIT_SCALE,
+          boxY1[i] / HIT_SCALE,
+        );
     }
     /** The furthest any node reaches from its centre and still counts as hit. */
     this.reach = reach * HIT_SCALE;
@@ -79,11 +94,21 @@ export class HitGrid {
   }
 
   /**
-   * The topmost node (highest index, drawn last) whose hit circle, grown by `slack` world px, holds (px, py); or -1.
+   * The topmost node (highest index, drawn last) whose hit circle (or footprint), grown by `slack` world px, holds
+   * (px, py); or -1.
    */
   at(px, py, slack = 0) {
     if (!this.cols) return -1;
     const { x, y, radius, cell, cols, rows, minX, minY, start, items } = this;
+    const b = this.boxes;
+    const hits = b
+      ? (i) =>
+          px >= x[i] + b.x0[i] - slack &&
+          px <= x[i] + b.x1[i] + slack &&
+          py >= y[i] + b.y0[i] - slack &&
+          py <= y[i] + b.y1[i] + slack
+      : (i) =>
+          Math.hypot(x[i] - px, y[i] - py) <= radius[i] * HIT_SCALE + slack;
     const r = this.reach + slack;
     const c0 = Math.max(Math.floor((px - r - minX) / cell), 0),
       c1 = Math.min(Math.floor((px + r - minX) / cell), cols - 1),
@@ -95,11 +120,7 @@ export class HitGrid {
         const c = row * cols + col;
         for (let k = start[c]; k < start[c + 1]; k++) {
           const i = items[k];
-          if (
-            i > best &&
-            Math.hypot(x[i] - px, y[i] - py) <= radius[i] * HIT_SCALE + slack
-          )
-            best = i;
+          if (i > best && hits(i)) best = i;
         }
       }
     return best;

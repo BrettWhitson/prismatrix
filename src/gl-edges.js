@@ -11,7 +11,14 @@
 // CPU's own edge routes, is in tests/helpers/gl-twins.js.)
 
 import { palette, runsOf } from "./gl-pack.js";
-import { BUNDLE_STEPS, bundlePath, endRooms, startTrims } from "./geometry.js";
+import {
+  BUNDLE_STEPS,
+  bundlePath,
+  clearOf,
+  endRooms,
+  endTrims,
+  startTrims,
+} from "./geometry.js";
 
 // The shaders (gl-shaders.js) take these from here, so the GPU and its JavaScript twins (tests/helpers/gl-twins.js)
 // trace the same points.
@@ -103,6 +110,7 @@ export function packPieces(scene, origin) {
   const colour = palette();
   const edges = graph.edges;
   const starts = startTrims(scene);
+  const targetTrims = endTrims(scene);
   // Cross-links bundle (unless edges are straight); those whose path has nothing to bend round go straight.
   const bundled = !layered && edge.shape !== "straight";
   const paths = new Array(edges.length).fill(null);
@@ -161,7 +169,7 @@ export function packPieces(scene, origin) {
     // A piece's first stop is trimmed past its source's label (startTrims); a bundle's only off its node (a disc).
     // Each end holds the edge off its node by its own room.
     const trimA = starts[ei] + rooms.source,
-      trimB = looks.radius[e.target] + rooms.target;
+      trimB = targetTrims[ei] + rooms.target;
     const path = paths[ei];
     if (path) {
       // A span per four consecutive control points of the clamped spline: points before the first and after the
@@ -177,7 +185,7 @@ export function packPieces(scene, origin) {
         }
         spans[o + 8] = e.source;
         spans[o + 9] = e.target;
-        spans[o + 10] = looks.radius[e.source] + rooms.source;
+        spans[o + 10] = clearOf(scene, e.source) + rooms.source;
         spans[o + 11] = trimB;
         spans[o + 12] = half;
         spans[o + 13] = rgb[0];
@@ -199,7 +207,7 @@ export function packPieces(scene, origin) {
         }
         bundleTips[o + 8] = backwards ? e.target : e.source;
         bundleTips[o + 9] = backwards ? e.source : e.target;
-        bundleTips[o + 10] = looks.radius[backwards ? e.source : e.target];
+        bundleTips[o + 10] = clearOf(scene, backwards ? e.source : e.target);
         bundleTips[o + 11] = edge.arrowSize;
         bundleTips[o + 12] = kind;
         bundleTips[o + 13] = rgb[0];
@@ -242,7 +250,7 @@ export function packPieces(scene, origin) {
       write(tips, o, stops[backwards ? 1 : stops.length - 2], backwards);
       tips[o + 4] = backwards ? e.target : e.source;
       tips[o + 5] = backwards ? e.source : e.target;
-      tips[o + 6] = backwards ? starts[ei] : looks.radius[e.target];
+      tips[o + 6] = backwards ? starts[ei] : targetTrims[ei];
       tips[o + 7] = edge.arrowSize;
       tips[o + 8] = kind;
       tips[o + 9] = rgb[0];

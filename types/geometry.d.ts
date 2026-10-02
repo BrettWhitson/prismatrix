@@ -112,8 +112,8 @@ export declare function trim(pts: any, from: any, to: any): any[];
 export declare function pathLength(pts: any): number;
 /**
  * Edge `ei` of the scene's graph as painters draw it: its route (through its parent's fan junction when `junctions`,
- * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target, each also clear
- * of the end there, if it has one (an arrow or a dot: endRooms). Null when nothing is left.
+ * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end at its target's trim (endTrims),
+ * each also clear of the end there, if it has one (an arrow or a dot: endRooms). Null when nothing is left.
  */
 export declare function trimmedRoute(
   scene: any,
@@ -129,7 +129,16 @@ export declare function trimmedRoute(
  * along the layout's axis (a radial's spokes), a straight edge towards its first stop. At most 45% of the way to
  * that stop (35% for a fan, whose trunk splits early). Cross-links that bundle along the tree start off the node
  * only (they rarely leave through the label, and the GPU clips them to a disc). Needs `scene.labelWidths` (each
- * real node's label width as the layout kept room for it); without it, every edge starts at its node's radius.
+ * real node's label width as the layout kept room for it); without it, every edge starts at its node's radius. A
+ * card (the `look` node option) counts as its node: edges start at its rim.
  * @returns {Float64Array} per edge of the scene's graph
  */
 export declare function startTrims(scene: any): Float64Array;
+/**
+ * Where each edge ends, as a distance from its target's centre: off the node, and past the node's label when the
+ * edge comes in through it (labels below in a bottom-to-top tree), the same way startTrims works out the start.
+ * @returns {Float64Array} per edge of the scene's graph
+ */
+export declare function endTrims(scene: any): Float64Array;
+/** How far an edge stays off node `i` when nothing else is in the way: its radius, or its card's half height. */
+export declare function clearOf(scene: any, i: any): any;

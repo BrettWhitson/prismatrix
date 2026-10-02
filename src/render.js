@@ -18,6 +18,7 @@ import {
   iconShown,
   iconStore,
 } from "./icons.js";
+import { CARD, cardBox } from "./cards.js";
 import {
   DEFAULT_THEME,
   EDGE_COLOUR_DEFAULT,
@@ -38,6 +39,7 @@ import {
  * @property {(string | null)[]} ring  per node, a ring's colour (null: none)
  * @property {(string | null)[]} aura  per node, a glow's colour (null: none)
  * @property {Uint8Array} stack        per node, 1 for a stacked copy behind it
+ * @property {ReturnType<typeof cardBox> | null} card a card's box, when nodes are cards (the `look` node option)
  * @property {string[]} edgeColour     per edge
  * @property {Float64Array} edgeWidth  per edge, world px
  * @property {Uint8Array} edgeDash     per edge, 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
@@ -122,6 +124,7 @@ export function looksOf(graph, node, edge, theme = DEFAULT_THEME) {
     ring: new Array(count),
     aura: new Array(count),
     stack: new Uint8Array(count),
+    card: node.look === "card" ? cardBox(node) : null,
     edgeColour: new Array(graph.edges.length),
     edgeWidth: new Float64Array(graph.edges.length),
     edgeDash: new Uint8Array(graph.edges.length),
@@ -172,8 +175,11 @@ function nodeLook(looks, n, node) {
   if (node.sizeBy === "descendants")
     scale = 1 + 0.35 * Math.log2(1 + n.descendants);
   else if (node.sizeBy === "depth") scale = Math.max(0.4, 1 - n.depth * 0.14);
-  looks.radius[i] =
-    style.size !== undefined ? style.size / 2 : (node.size / 2) * scale;
+  looks.radius[i] = looks.card
+    ? looks.card.icon
+    : style.size !== undefined
+      ? style.size / 2
+      : (node.size / 2) * scale;
   looks.shape[i] = style.shape ?? node.shape;
   const { palette } = theme;
   looks.fill[i] =
@@ -443,21 +449,34 @@ export function drawHalos(ctx, scene) {
     const n = graph.nodes[i];
     ctx.strokeStyle = h.colour;
     ctx.beginPath();
+    const card = looks.card && i < realCount(scene) ? looks.card : null;
     haloPath(
       ctx,
-      looks.shape[i],
+      card ? "card" : looks.shape[i],
       n.x,
       n.y,
       looks.radius[i],
       (HALO_GAP + h.gap + HALO_WIDTH / 2) / camera.k,
+      card,
     );
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
 }
 
-/** The outline of a node's shape (centre x, y, radius r), pushed out by `o` (0: the shape itself). */
-function haloPath(ctx, shape, x, y, r, o) {
+/**
+ * The outline of a node's shape (centre x, y, radius r), pushed out by `o` (0: the shape itself). Shape "card" is
+ * a card's box (`card`, from cardBox).
+ */
+function haloPath(ctx, shape, x, y, r, o, card = null) {
+  if (shape === "card" && card)
+    return ctx.roundRect(
+      x + card.x - o,
+      y + card.y - o,
+      card.width + o * 2,
+      card.height + o * 2,
+      CARD.corner + o,
+    );
   const polygon = (corners) => {
     // A convex polygon pushed out: each side moves out along its normal, each corner becomes an arc of radius o.
     const n = corners.length;
@@ -513,6 +532,10 @@ function haloPath(ctx, shape, x, y, r, o) {
       ctx.arc(x, y, r + o, 0, Math.PI * 2);
   }
 }
+
+/** How many of the scene's display nodes are real (the rest are reference chips and ghosts, never cards). */
+export const realCount = (scene) =>
+  Math.min(scene.matrix?.count ?? Infinity, scene.graph.nodes.length);
 
 /** Fill the canvas with `colour`, or clear it to transparent when there's none. */
 export function clearTo(ctx, { width, height, dpr }, colour) {
@@ -635,6 +658,7 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
   const background = scene.background ?? scene.theme?.background;
   ctx.setTransform(...worldTransform(scene));
   ctx.imageSmoothingQuality = "high";
+  const real = realCount(scene);
   for (const n of graph.nodes) {
     const alpha = nodeAlpha(scene, n.index);
     if (!alpha) continue;
@@ -677,8 +701,16 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
       stack: looks.stack?.[i] ?? 0,
       badge,
       badgeShown,
+      card: looks.card && i < real ? looks.card : null,
+      theme: scene.theme ?? DEFAULT_THEME,
     };
-    const marked = !!(look.ring || look.aura || look.stack || badgeShown > 0);
+    const marked = !!(
+      look.ring ||
+      look.aura ||
+      look.stack ||
+      look.card ||
+      badgeShown > 0
+    );
     const layered =
       alpha < 1 &&
       (marked ||
@@ -738,7 +770,11 @@ function drawLabels(ctx, scene) {
     y0: camera.y - height / 2 / k - margin,
     y1: camera.y + height / 2 / k + margin,
   };
-  const items = planText(scene, { fit: fitter.fit, near });
+  const items = planText(scene, {
+    fit: fitter.fit,
+    measure: fitter.measure,
+    near,
+  });
   if (!items.length) return;
   ctx.setTransform(...worldTransform(scene));
   ctx.textAlign = "left";
@@ -750,7 +786,7 @@ function drawLabels(ctx, scene) {
     const size = item.size * u;
     const y = item.y + box.middle * u;
     ctx.globalAlpha = item.alpha;
-    ctx.font = font(size);
+    ctx.font = font(size, item.bold);
     if (item.pill) {
       ctx.fillStyle = item.under;
       ctx.beginPath();
@@ -945,6 +981,13 @@ function drawEnd(ctx, edge, x, y, px, py) {
 /** How far node `look` reaches from its centre, marks and all, world px. */
 function nodeReach(look) {
   const { r, shape } = look;
+  if (look.card) {
+    const c = look.card;
+    const far =
+      Math.max(c.width + c.x, c.half) +
+      Math.max(auraOf(c.half), c.half * MARKS.stackShift * 1.5);
+    return far;
+  }
   let reach = r * (shape === "diamond" ? 1.25 : shape === "hexagon" ? 1.1 : 1);
   if (shape === "ring") reach += Math.max(1.5, r * 0.35) / 2;
   let out = reach;
@@ -960,8 +1003,10 @@ function nodeReach(look) {
 }
 
 /** About how long a shape's outline is (for spacing a dashed border evenly round it). */
-function perimeter(shape, r) {
+function perimeter(shape, r, card = null) {
   switch (shape) {
+    case "card":
+      return 2 * (card.width + card.height);
     case "square":
       return 8 * r;
     case "rounded":
@@ -979,11 +1024,14 @@ function perimeter(shape, r) {
 }
 
 /** The Canvas 2D dash pattern for a border style (STROKE_STYLES) round a shape of radius r, or [] for solid. */
-export function dashPattern(style, shape, r) {
+export function dashPattern(style, shape, r, card = null) {
   if (!style) return [];
-  const count = style === 1 ? MARKS.dashes : MARKS.dots;
   const on = style === 1 ? MARKS.dashOn : MARKS.dotOn;
-  const period = perimeter(shape, r) / count;
+  // A card's dashes keep a node's spacing (about), however long the card is.
+  const count =
+    (style === 1 ? MARKS.dashes : MARKS.dots) *
+    (shape === "card" ? perimeter(shape, r, card) / (2 * Math.PI * r) : 1);
+  const period = perimeter(shape, r, card) / Math.round(count);
   return [period * on, period * (1 - on)];
 }
 
@@ -1000,39 +1048,43 @@ export const AURA_ALPHA = 0.6;
 function drawNode(ctx, look) {
   const { shape, outline, n, r, fill, background, alpha, icon, shown } = look;
   const { x, y } = n;
-  const outer = shape === "ring" ? "circle" : shape;
+  const card = look.card;
+  const outer = card ? "card" : shape === "ring" ? "circle" : shape;
   // A ring's stroke reaches past its circle: marks are measured from its outside.
-  const pad = shape === "ring" ? Math.max(1.5, r * 0.35) / 2 : 0;
+  const pad = !card && shape === "ring" ? Math.max(1.5, r * 0.35) / 2 : 0;
+  // A card's marks are sized by the card, not its icon.
+  const mr = card ? card.half : r;
   if (look.aura) {
     // Rings of falling strength, outermost first: a glow that fades out as it reaches away.
-    const reach = auraOf(r);
+    const reach = auraOf(mr);
     ctx.fillStyle = look.aura;
     ctx.globalAlpha = (alpha * AURA_ALPHA) / AURA_RINGS;
     for (let k = AURA_RINGS; k >= 1; k--) {
       ctx.beginPath();
-      haloPath(ctx, outer, x, y, r, pad + (reach * k) / AURA_RINGS);
+      haloPath(ctx, outer, x, y, r, pad + (reach * k) / AURA_RINGS, card);
       ctx.fill();
     }
   }
   if (look.stack) {
-    const shift = r * MARKS.stackShift;
+    const shift = mr * MARKS.stackShift;
     ctx.globalAlpha = alpha;
     ctx.fillStyle = mixHex(fill, background, STACK_FADE);
     ctx.beginPath();
-    haloPath(ctx, outer, x + shift, y - shift, r, pad);
+    haloPath(ctx, outer, x + shift, y - shift, r, pad, card);
     ctx.fill();
   }
   if (look.ring) {
-    const [gap, width] = ringOf(r);
+    const [gap, width] = ringOf(mr);
     ctx.globalAlpha = alpha;
     ctx.lineWidth = width;
     ctx.strokeStyle = look.ring;
     ctx.beginPath();
-    haloPath(ctx, outer, x, y, r, pad + gap + width / 2);
+    haloPath(ctx, outer, x, y, r, pad + gap + width / 2, card);
     ctx.stroke();
   }
+  if (card) drawCard(ctx, look);
   ctx.beginPath();
-  haloPath(ctx, outer, x, y, r, 0);
+  haloPath(ctx, shape === "ring" ? "circle" : shape, x, y, r, 0);
   if (shape === "ring") {
     ctx.globalAlpha = alpha;
     ctx.fillStyle = background;
@@ -1066,7 +1118,8 @@ function drawNode(ctx, look) {
     ctx.restore();
   }
   ctx.globalAlpha = alpha;
-  if (look.stroke && look.strokeWidth > 0) {
+  // A card wears the border on its face (drawCard), not round its icon.
+  if (look.stroke && look.strokeWidth > 0 && !card) {
     // Twice as wide, clipped to the shape: the inner half is the border.
     ctx.save();
     ctx.clip();
@@ -1082,6 +1135,36 @@ function drawNode(ctx, look) {
     ctx.stroke();
   }
   drawBadge(ctx, look);
+}
+
+/**
+ * A card's face, under its icon: the theme's card colour (at the node's `opacity`), a stripe in the node's colour
+ * down its left edge, and a border, dashed or dotted by the node's `strokeStyle` and in its `stroke` colour when
+ * it has one (the theme's card border when not).
+ */
+function drawCard(ctx, look) {
+  const { n, card, alpha, fill, theme } = look;
+  const x = n.x + card.x,
+    y = n.y + card.y;
+  ctx.globalAlpha = alpha * look.opacity;
+  ctx.fillStyle = theme.card;
+  ctx.beginPath();
+  ctx.roundRect(x, y, card.width, card.height, CARD.corner);
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, CARD.stripe, card.height);
+  ctx.restore();
+  ctx.globalAlpha = alpha;
+  const stroke = look.stroke && look.strokeWidth > 0;
+  ctx.lineWidth = stroke ? look.strokeWidth : CARD.border;
+  ctx.strokeStyle = stroke ? look.stroke : theme.cardBorder;
+  ctx.setLineDash(dashPattern(look.strokeStyle, "card", card.half, card));
+  ctx.beginPath();
+  ctx.roundRect(x, y, card.width, card.height, CARD.corner);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 /** How far a stacked copy's fill goes toward the background (so it reads as behind). */

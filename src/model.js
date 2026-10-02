@@ -14,9 +14,9 @@
 // Layout state (positions, velocities) is not here: a controller keeps that in its matrix (one model can be shown by
 // several controllers at once), and a snapshot (snapshot.js) records it by id.
 
-import { LINE, fitLabel } from "./boxes.js";
+import { LABEL_GAP, LINE, fitLabel } from "./boxes.js";
 import { closest, isHex, resolve } from "./schema.js";
-import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
+import { EDGE_OPTIONS, NODE_OPTIONS, labelPlace } from "./style.js";
 
 export const GRAPH_FORMAT = "prismatrix-graph";
 export const GRAPH_VERSION = 1;
@@ -31,6 +31,9 @@ const SIZE_KEYS = [
   "collisionRadius",
   "labelCollide",
   "labelMaxWidth",
+  "look",
+  "cardWidth",
+  "cardHeight",
 ];
 
 /** Text width without a browser: about right for a sans-serif face. Renderers measure for real. */
@@ -61,6 +64,13 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @property {string} [aura]   a soft glow round the shape, "#rrggbb"
  * @property {boolean} [stack] a second copy of the shape peeks out behind it: there's more folded away here
  * @property {boolean} [pinLabel] the label stays at any zoom, like a root's
+ * @property {CardText} [subtitle] a card's second line (cards only: the `look` node option)
+ * @property {CardText} [value]  a card's third line
+ * @property {string} [tag]      a card's tag: up to 24 characters in a pill on its top edge ("owned", "×3")
+ *
+ * @typedef {string | (string | { text: string, color?: string } | { mark: string } | { dot: string })[]} CardText A
+ *   line of a card: text, or runs of it: plain text, text in a colour of its own, a small square (`mark`) or a small
+ *   disc (`dot`) in a colour
  *
  * @typedef {object} EdgeStyle
  * @property {string} [color]  "#rrggbb"
@@ -205,6 +215,23 @@ const icon = (v) =>
       typeof v.width === "number" &&
       typeof v.height === "number";
 
+/** A card's line (CardText): text, or up to 24 runs of text, coloured text, marks and dots. */
+const cardText = (v) =>
+  typeof v === "string"
+    ? v.length <= 200
+    : Array.isArray(v) &&
+      v.length <= 24 &&
+      v.every((run) =>
+        typeof run === "string"
+          ? run.length <= 200
+          : run !== null &&
+            typeof run === "object" &&
+            (typeof run.text === "string"
+              ? run.text.length <= 200 &&
+                (run.color === undefined || isHex(run.color))
+              : isHex(run.mark) || isHex(run.dot)),
+      );
+
 /** What a node's `style` may set, and what each value must be. */
 export const NODE_STYLE = {
   color: isHex,
@@ -221,6 +248,9 @@ export const NODE_STYLE = {
   aura: isHex,
   stack: (v) => typeof v === "boolean",
   pinLabel: (v) => typeof v === "boolean",
+  subtitle: cardText,
+  value: cardText,
+  tag: (v) => typeof v === "string" && v.length <= 24,
 };
 /** What an edge's `style` may set. */
 export const EDGE_STYLE = {
@@ -698,8 +728,14 @@ export class GraphModel {
    * A label wider than the `labelMaxWidth` option is cut short with an ellipsis (fitLabel), as the painters draw it.
    */
   labelWidths() {
+    const node = this.opts.node;
+    if (node.look === "card") {
+      // A card's text has the card's room, whatever it says: every card is the same size.
+      const widths = new Float64Array(this.#nodeList.length);
+      return widths.fill(cardTextWidth(node));
+    }
     if (this.#widthsAt === this.#nodesStamp) return this.widths;
-    const { labelSize: size, labelMaxWidth: max } = this.opts.node;
+    const { labelSize: size, labelMaxWidth: max } = node;
     const measure = (text) => this.measure(text, size);
     // A new array (the old one may be in a layout job's hands); every label already measured comes from the cache.
     const widths = new Float64Array(this.#nodeList.length);
@@ -717,9 +753,10 @@ export class GraphModel {
     return widths;
   }
 
-  /** A label's height (one line) at the current label size, world px. */
+  /** A label's height (one line) at the current label size, world px; a card's text has the card's height. */
   get labelHeight() {
-    return this.opts.node.labelSize * LINE;
+    const node = this.opts.node;
+    return node.look === "card" ? node.cardHeight : node.labelSize * LINE;
   }
 
   /**
@@ -1011,7 +1048,7 @@ export class GraphModel {
    * `[before, after]` for edges, in order). A change of data (or meta) alone is `dataOnly`: nothing drawn changed.
    */
   #describe(change, nodePairs, edgePairs, structure, metaChanged = false) {
-    const labelled = this.opts.node.labels !== "off";
+    const labelled = labelPlace(this.opts.node) !== "off";
     let sizes = structure,
       drawn = structure;
     for (const [before, after] of nodePairs) {
@@ -1418,6 +1455,15 @@ export class GraphModel {
       })),
     };
   }
+}
+
+/**
+ * How wide a card's text is, for these node options: the card less its icon square (the card's height) and the gap
+ * after it. A card's footprint is its icon and this "label" to its right: its own box.
+ * @param {{ cardWidth: number, cardHeight: number }} node
+ */
+export function cardTextWidth(node) {
+  return Math.max(0, node.cardWidth - node.cardHeight - LABEL_GAP);
 }
 
 /**

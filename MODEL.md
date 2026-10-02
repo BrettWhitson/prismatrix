@@ -101,6 +101,9 @@ floats can only land on sixteenths of a pixel.
 | node    | `aura`        | A soft glow round the shape, `"#rrggbb"`.                                                        |
 | node    | `stack`       | `true`: a second copy of the shape peeks out behind it (more is folded away here).              |
 | node    | `pinLabel`    | `true`: the label stays at any zoom, like a root's.                                             |
+| node    | `subtitle`    | A card's second line (the `look` node option): text, or runs (see API.md).                       |
+| node    | `value`       | A card's third line, the same way.                                                             |
+| node    | `tag`         | Up to 24 characters in a pill on a card's top edge.                                            |
 | edge    | `color`       | `"#rrggbb"`                                                                                      |
 | edge    | `width`       | World px, 0.1–40.                                                                                |
 | edge    | `dash`        | `solid`, `dashed` or `dotted` (default: the `dash` edge option).                                 |

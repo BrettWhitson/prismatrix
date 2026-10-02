@@ -150,6 +150,9 @@ the style still applies.
 | `aura` | `string` | A soft glow round the shape, "#rrggbb" |
 | `stack` | `boolean` | A second copy of the shape peeks out behind it: there's more folded away here |
 | `pinLabel` | `boolean` | The label stays at any zoom, like a root's |
+| `subtitle` | `CardText` | A card's second line (cards only: the `look` node option) |
+| `value` | `CardText` | A card's third line |
+| `tag` | `string` | A card's tag: up to 24 characters in a pill on its top edge ("owned", "×3") |
 
 <!-- /generated:node-style -->
 
@@ -164,6 +167,13 @@ the style still applies.
   copy of the shape peeking out behind, up and to the right). `strokeStyle` dashes or dots the border evenly round
   the shape; `opacity` fades only the fill. Marks take no room in layouts.
 - **`pinLabel`** keeps a node's label at any zoom, like the roots' and the selection's.
+- **Cards** (the node option `look: "card"`): every node is a rounded box `cardWidth` × `cardHeight` holding
+  its icon (the node itself, a little smaller than the card) and, to its right, its label in bold over its style's
+  `subtitle` and `value`, with its `tag` in a pill on the top edge. A line is text or runs: plain text, `{ text,
+  color }`, `{ mark: colour }` (a small square) or `{ dot: colour }` (a small disc). Zoomed out, only the title shows.
+  Layouts space whole cards (the text is the label, so labels go inside: the `labels` option doesn't apply); marks,
+  halos and the border (`stroke`, `strokeStyle`) go round the card; edges meet it at its rim (past its text when
+  they leave through it); a tap anywhere on it is a tap on the node. The theme's `card` and `cardBorder` colour it.
 
 **Edge style** (`edges[].style`):
 
@@ -945,6 +955,9 @@ room a node takes (`shape`, `size`, `sizeBy`, `labels`, `labelSize`, `collisionR
 | `labelMaxWidth` | `160` | 0 – 400 | Longer labels are cut short with an ellipsis (shown whole on hover). 0: no limit. |
 | `collisionRadius` | `4` | 0 – 60 | Clearance kept around every node: layouts leave it, and colliding nodes keep it. |
 | `labelCollide` | `true` | true / false | Labels take up room too: layouts make space for them and collisions push them apart, so they never overlap and never need hiding. |
+| `look` | `"node"` | `node` (and label), `card` | Card: each node is a box holding its icon, its label in bold, and its style's subtitle, value and tag. Cards are all one size and labels go inside them. |
+| `cardWidth` | `220` | 120 – 400 | A card's width, world px |
+| `cardHeight` | `64` | 36 – 120 | A card's height, world px (its icon is a little smaller) |
 
 <!-- /generated:node-options -->
 
@@ -997,6 +1010,8 @@ its background).
 | `descendants` | `#62a4da` | `#2a6fb0` | A lit lineage's edges going down (what it goes into), with lineageColor on |
 | `highlight` | `#ffd166` | `#c98a00` | The halo round highlighted nodes (highlight) |
 | `focus` | `#62a4da` | `#2a6fb0` | The halo a flash lights (flash) |
+| `card` | `#181c26` | `#ffffff` | A card's face (the `look` node option) |
+| `cardBorder` | `#2e3546` | `#d3d8e2` | A card's border |
 | `palette` | `#f6c177` `#7aa2f7` `#9ece6a` `#e27e8d` `#bb9af7` `#5ccfe6` `#ff9e64` `#c0caf5` | `#b5650d` `#2f5fd0` `#3f7d20` `#c2364f` `#7a4fd6` `#0b7a91` `#c4520f` `#5a6378` | Colours by depth or branch, then wrapping |
 
 <!-- /generated:themes -->

@@ -1,5 +1,5 @@
-/** The font for text `px` high. */
-export declare const font: (px: any) => string;
+/** The font for text `px` high (bold, for a card's title). */
+export declare const font: (px: any, bold?: boolean) => string;
 /** How far a halo reaches past the glyphs, as a share of the font size (the stroke is twice this wide). */
 export declare const TEXT_HALO = 0.2;
 /** Pinned labels are never drawn smaller than this many CSS px. */
@@ -66,6 +66,10 @@ export type TextItem = {
    * a badge: the text on a pill, instead of a halo
    */
   pill: boolean;
+  /**
+   * a card's title
+   */
+  bold?: boolean;
 };
 /**
  * @typedef {object} TextItem
@@ -80,6 +84,7 @@ export type TextItem = {
  * @property {string} colour    the text's, "#rrggbb"
  * @property {string} under     the halo's (or the pill's), "#rrggbb"
  * @property {boolean} pill     a badge: the text on a pill, instead of a halo
+ * @property {boolean} [bold]   a card's title
  */
 /**
  * Real node `i`'s badges: the fold mark of a collapsed node (`scene.collapsed`, `scene.hidden`: "+N" for N nodes
@@ -178,6 +183,7 @@ export declare class Room {
  * labels on top). Only what's anchored in `near` (a world rectangle; everything without it), except pinned labels.
  * @param {import("./controller.js").Scene} scene
  * @param {{ fit: (text: string, size: number, max: number) => string,
+ *   measure?: (text: string, size: number) => number,
  *   near?: { x0: number, y0: number, x1: number, y1: number } | null }} options
  * @returns {TextItem[]}
  */
@@ -185,9 +191,11 @@ export declare function planText(
   scene: import("./controller.js").Scene,
   {
     fit,
+    measure,
     near,
   }: {
     fit: (text: string, size: number, max: number) => string;
+    measure?: (text: string, size: number) => number;
     near?: {
       x0: number;
       y0: number;

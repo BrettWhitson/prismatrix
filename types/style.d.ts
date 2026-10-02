@@ -51,6 +51,19 @@ export type NodeOptions = {
    * labels take room in layouts and collisions
    */
   labelCollide: boolean;
+  /**
+   * a node with its label beside it, or a card: its icon and its text (label,
+   * subtitle, value, tag) inside one rounded box
+   */
+  look: "node" | "card";
+  /**
+   * a card's width, world px
+   */
+  cardWidth: number;
+  /**
+   * a card's height, world px (its icon is a little smaller)
+   */
+  cardHeight: number;
 };
 export type EdgeOptions = {
   shape: "straight" | "step" | "fan" | "curve";
@@ -115,6 +128,10 @@ export type EdgeOptions = {
  * @property {number} labelMaxWidth     px; 0: no limit
  * @property {number} collisionRadius   clearance around every node, world px
  * @property {boolean} labelCollide     labels take room in layouts and collisions
+ * @property {"node" | "card"} look      a node with its label beside it, or a card: its icon and its text (label,
+ *   subtitle, value, tag) inside one rounded box
+ * @property {number} cardWidth         a card's width, world px
+ * @property {number} cardHeight        a card's height, world px (its icon is a little smaller)
  *
  * @typedef {object} EdgeOptions How edges look: the model's `edge` options (EDGE_OPTIONS), resolved. Each edge's own
  *   `style` wins over them.
@@ -134,5 +151,14 @@ export type EdgeOptions = {
  */
 /** @type {import("./schema.js").OptionSpec[]} */
 export declare const NODE_OPTIONS: import("./schema.js").OptionSpec[];
+/**
+ * Where node labels go for these node options: the `labels` option, except that a card's text is always inside it,
+ * to the right of its icon.
+ * @param {Record<string, any>} node the node options
+ * @returns {"off" | "below" | "right" | "outward"}
+ */
+export declare const labelPlace: (
+  node: Record<string, any>,
+) => "off" | "below" | "right" | "outward";
 /** @type {import("./schema.js").OptionSpec[]} */
 export declare const EDGE_OPTIONS: import("./schema.js").OptionSpec[];

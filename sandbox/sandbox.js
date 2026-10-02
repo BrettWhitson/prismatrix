@@ -225,7 +225,18 @@ function makeGraph(g) {
   }
   if (g.marks) {
     for (let i = 1; i < nodes.length; i++)
-      nodes[i].style = MARK_STYLES[(i - 1) % MARK_STYLES.length];
+      nodes[i].style = {
+        ...MARK_STYLES[(i - 1) % MARK_STYLES.length],
+        // Card text (shown with the Card look).
+        subtitle: [`×${1 + (i % 5)} `, { mark: "#d6a74a" }, " Crafted"],
+        value: [
+          { text: `${i % 9}`, color: "#e5b83b" },
+          { dot: "#e5b83b" },
+          { text: ` ${(i * 7) % 100}`, color: "#c0c0c0" },
+          { dot: "#c0c0c0" },
+        ],
+        ...(i % 4 === 0 && { tag: "owned" }),
+      };
     // Edges too: every few, a glow or dots.
     for (let i = 0; i < edges.length; i++)
       if (i % 6 === 0) edges[i].style = { glow: true };

@@ -20,6 +20,7 @@ export declare class LabelLayer {
   previous: any;
   data: Float32Array<ArrayBuffer>;
   fit: (text: string, size: number, max: number) => string;
+  measure: (text: any, size: any) => any;
   constructor(gl: any);
   /**
    * @returns {{ data: Float32Array, groups: { page: any, first: number, count: number }[], count: number,

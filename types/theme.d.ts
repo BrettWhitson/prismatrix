@@ -44,6 +44,14 @@ export type Theme = {
    */
   focus: string;
   /**
+   * a card's face (the `look` node option)
+   */
+  card: string;
+  /**
+   * a card's border
+   */
+  cardBorder: string;
+  /**
    * colours by depth or branch, then wrapping
    */
   palette: readonly string[];
@@ -67,6 +75,8 @@ export type ThemeInput =
  * @property {string} descendants a lit lineage's edges going down (what it goes into), with lineageColor on
  * @property {string} highlight   the halo round highlighted nodes (highlight)
  * @property {string} focus       the halo a flash lights (flash)
+ * @property {string} card        a card's face (the `look` node option)
+ * @property {string} cardBorder  a card's border
  * @property {readonly string[]} palette colours by depth or branch, then wrapping
  *
  * @typedef {"dark" | "light" | (Partial<Omit<Theme, "name">> & { base?: "dark" | "light" })} ThemeInput A preset's
