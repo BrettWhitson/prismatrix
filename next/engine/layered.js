@@ -28,8 +28,14 @@ import { networkSimplex } from "./simplex.js";
 import { globalSifting } from "./sifting.js";
 
 const ORDER_SWEEPS = 12;
+// Before global sifting, half as many sweeps give the same result: sifting does the rest.
+const SIFT_SWEEPS = 6;
+// Network simplex layering stops improving after this many ms: a few thousand nodes finish well within it; a huge
+// graph gets a good layering instead of a frozen page (each pivot costs more as the graph grows).
+const SIMPLEX_BUDGET = 50;
 const PLACE_PASSES = 8;
 const BALANCE_PASSES = 12;
+const BALANCE_MIN_PASSES = 4; // then stop as soon as nothing moves more than half a pixel
 const SIFT_ROUNDS = 4;
 // Layering keeps tree edges (an ingredient's first recipe) this much harder to stretch than cross-links, so depth
 // still reads as crafting steps and only shared ingredients' extra edges grow long.
@@ -105,7 +111,7 @@ export function layeredLayout(
       kept.map(to),
       kept.map(() => 1),
       kept.map((ei) => (edges[ei].tree ? TREE_RANK_WEIGHT : 1)),
-      { maxPivots: 20 * n + 100 },
+      { budget: SIMPLEX_BUDGET },
     ).rank;
   } else {
     const indegree = new Int32Array(n);
@@ -212,8 +218,9 @@ export function layeredLayout(
   const initialCrossings = countCrossings(layers, lower, pos);
   let best = layers.map((l) => l.slice());
   let bestCrossings = initialCrossings;
-  // Sifting does better from the depth-first order alone; barycenter sweeps are the cheaper alternative.
-  const sweeps = ORDER_SWEEPS;
+  // Barycenter sweeps from the depth-first start; with sifting after them, half as many are enough.
+  const sweeps = ordering === "sifting" ? SIFT_SWEEPS : ORDER_SWEEPS;
+  const key = new Float64Array(total); // each node's barycenter, for the sort
   for (let sweep = 0; sweep < sweeps && bestCrossings > 0; sweep++) {
     const downward = sweep % 2 === 0;
     const range = downward
@@ -221,18 +228,14 @@ export function layeredLayout(
       : [...Array(layerCount).keys()].reverse().slice(1);
     for (const k of range) {
       const list = layers[k];
-      const key = new Map();
       for (const v of list) {
         const near = downward ? upper[v] : lower[v];
-        key.set(
-          v,
-          near.length
-            ? near.reduce((sum, u) => sum + pos[u], 0) / near.length
-            : pos[v],
-        );
+        let sum = 0;
+        for (const u of near) sum += pos[u];
+        key[v] = near.length ? sum / near.length : pos[v];
       }
       // Stable: ties keep their current order.
-      list.sort((a, b) => key.get(a) - key.get(b) || pos[a] - pos[b]);
+      list.sort((a, b) => key[a] - key[b] || pos[a] - pos[b]);
       index(list);
     }
     if (ordering !== "sifting") transpose(layers, upper, lower, pos);
@@ -304,57 +307,8 @@ export function layeredLayout(
     const m = values.length >> 1;
     return values.length % 2 ? values[m] : (values[m - 1] + values[m]) / 2;
   };
-  /** The weighted median of neighbours' positions: where the weighted sum of distances to them is least. */
-  const weightedMedian = (list, weights) => {
-    const order = list.map((_, i) => i).sort((i, j) => x[list[i]] - x[list[j]]);
-    let total = 0;
-    for (const w of weights) total += w;
-    let run = 0;
-    for (let k = 0; k < order.length; k++) {
-      run += weights[order[k]];
-      if (run * 2 > total + 1e-9) return x[list[order[k]]];
-      if (Math.abs(run * 2 - total) <= 1e-9)
-        return (x[list[order[k]]] + x[list[order[k + 1]]]) / 2;
-    }
-    return x[list[order[order.length - 1]]];
-  };
-  if (placement === "balanced") {
-    // Minimise the weighted sideways travel of every segment, layer by layer: each node wants the weighted median
-    // of its neighbours; the projection keeps the layer in order with its gaps, giving way where the weight is
-    // least. The first passes pull from one side at a time (a quick start), the rest from both.
-    for (let pass = 0; pass < BALANCE_PASSES; pass++) {
-      const downward = pass % 2 === 0;
-      const both = pass >= 2;
-      const order = downward
-        ? [...Array(layerCount).keys()]
-        : [...Array(layerCount).keys()].reverse();
-      for (const k of order) {
-        const list = layers[k];
-        const pull = new Float64Array(list.length);
-        const desired = list.map((v, i) => {
-          const near = both
-            ? [...upper[v], ...lower[v]]
-            : downward
-              ? upper[v]
-              : lower[v];
-          const weights = both
-            ? [...upperWeight[v], ...lowerWeight[v]]
-            : downward
-              ? upperWeight[v]
-              : lowerWeight[v];
-          for (const w of weights) pull[i] += w;
-          if (!near.length) {
-            pull[i] = 0.01;
-            return x[v];
-          }
-          return weightedMedian(near, weights);
-        });
-        const seps = list.slice(1).map((v, i) => separation(list[i], v));
-        const placed = project(desired, seps, pull);
-        list.forEach((v, i) => (x[v] = placed[i]));
-      }
-    }
-  }
+  if (placement === "balanced")
+    balance(layers, upper, lower, upperWeight, lowerWeight, x, separation);
   for (let pass = 0; placement === "median" && pass < PLACE_PASSES; pass++) {
     const last = pass === PLACE_PASSES - 1;
     const downward = pass % 2 === 0;
@@ -497,31 +451,173 @@ function inversions(values) {
 }
 
 /**
+ * Minimise the weighted sideways travel of every segment, layer by layer: each node wants the weighted median of its
+ * neighbours (where the weighted sum of distances to them is least); the projection keeps the layer in order with
+ * its gaps, giving way where the weight is least. The first passes pull from one side at a time (a quick start),
+ * the rest from both, until nothing moves more than half a pixel.
+ *
+ * Everything runs on flat typed arrays made once (neighbours, scratch space for each layer): with tens of thousands
+ * of nodes, building little arrays per node per pass costs more than the arithmetic.
+ */
+function balance(
+  layers,
+  upper,
+  lower,
+  upperWeight,
+  lowerWeight,
+  x,
+  separation,
+) {
+  const flat = (lists, weights) => {
+    const start = new Int32Array(lists.length + 1);
+    for (let v = 0; v < lists.length; v++)
+      start[v + 1] = start[v] + lists[v].length;
+    const index = new Int32Array(start[lists.length]),
+      weight = new Float64Array(start[lists.length]);
+    for (let v = 0; v < lists.length; v++)
+      for (let k = 0; k < lists[v].length; k++) {
+        index[start[v] + k] = lists[v][k];
+        weight[start[v] + k] = weights[v][k];
+      }
+    return { start, index, weight };
+  };
+  const up = flat(upper, upperWeight),
+    down = flat(lower, lowerWeight);
+  let widest = 1,
+    busiest = 1;
+  for (const list of layers) widest = Math.max(widest, list.length);
+  for (let v = 0; v < upper.length; v++)
+    busiest = Math.max(busiest, upper[v].length + lower[v].length);
+  const desired = new Float64Array(widest),
+    pull = new Float64Array(widest),
+    seps = new Float64Array(widest),
+    placed = new Float64Array(widest);
+  const projector = makeProjector(widest);
+  const values = new Float64Array(busiest),
+    weights = new Float64Array(busiest);
+  const gather = (side, v, n) => {
+    for (let k = side.start[v]; k < side.start[v + 1]; k++) {
+      values[n] = x[side.index[k]];
+      weights[n] = side.weight[k];
+      n++;
+    }
+    return n;
+  };
+
+  for (let pass = 0; pass < BALANCE_PASSES; pass++) {
+    const downward = pass % 2 === 0;
+    const both = pass >= 2;
+    let moved = 0;
+    for (let step = 0; step < layers.length; step++) {
+      const list = layers[downward ? step : layers.length - 1 - step];
+      const count = list.length;
+      for (let i = 0; i < count; i++) {
+        const v = list[i];
+        let n = 0;
+        if (both || downward) n = gather(up, v, n);
+        if (both || !downward) n = gather(down, v, n);
+        if (n) {
+          desired[i] = weightedMedian(values, weights, n);
+          let sum = 0;
+          for (let k = 0; k < n; k++) sum += weights[k];
+          pull[i] = sum;
+        } else {
+          desired[i] = x[v];
+          pull[i] = 0.01;
+        }
+        if (i) seps[i - 1] = separation(list[i - 1], v);
+      }
+      projector(desired, seps, pull, count, placed);
+      for (let i = 0; i < count; i++) {
+        const v = list[i];
+        moved = Math.max(moved, Math.abs(placed[i] - x[v]));
+        x[v] = placed[i];
+      }
+    }
+    if (both && pass >= BALANCE_MIN_PASSES && moved < 0.5) break;
+  }
+}
+
+/**
+ * The weighted median of the first `n` values: where the weighted sum of distances to them is least (halfway
+ * between two when the weight splits evenly). Sorts the values (and their weights) in place.
+ */
+function weightedMedian(values, weights, n) {
+  if (n === 1) return values[0];
+  for (let i = 1; i < n; i++) {
+    const v = values[i],
+      w = weights[i];
+    let j = i - 1;
+    while (j >= 0 && values[j] > v) {
+      values[j + 1] = values[j];
+      weights[j + 1] = weights[j];
+      j--;
+    }
+    values[j + 1] = v;
+    weights[j + 1] = w;
+  }
+  let total = 0;
+  for (let k = 0; k < n; k++) total += weights[k];
+  let run = 0;
+  for (let k = 0; k < n; k++) {
+    run += weights[k];
+    if (run * 2 > total + 1e-9) return values[k];
+    if (Math.abs(run * 2 - total) <= 1e-9)
+      return (values[k] + values[k + 1]) / 2;
+  }
+  return values[n - 1];
+}
+
+/**
+ * A projection with its own scratch space for up to `capacity` positions: `(desired, seps, weights, count, out)`
+ * writes into `out` the positions closest to `desired` (weighted least squares) that keep the order and at least
+ * `seps[i]` between neighbours i and i + 1. Shifting each by the separations before it turns this into isotonic
+ * regression, solved by pool-adjacent-violators in linear time.
+ */
+function makeProjector(capacity) {
+  const offset = new Float64Array(capacity),
+    sum = new Float64Array(capacity),
+    weight = new Float64Array(capacity),
+    size = new Int32Array(capacity);
+  return (desired, seps, weights, count, out) => {
+    let top = -1;
+    for (let i = 0; i < count; i++) {
+      offset[i] = i ? offset[i - 1] + seps[i - 1] : 0;
+      top++;
+      sum[top] = (desired[i] - offset[i]) * weights[i];
+      weight[top] = weights[i];
+      size[top] = 1;
+      // Pool with the block before while that one wants to sit further right.
+      while (
+        top > 0 &&
+        sum[top - 1] / weight[top - 1] > sum[top] / weight[top]
+      ) {
+        sum[top - 1] += sum[top];
+        weight[top - 1] += weight[top];
+        size[top - 1] += size[top];
+        top--;
+      }
+    }
+    let i = 0;
+    for (let b = 0; b <= top; b++) {
+      const at = sum[b] / weight[b];
+      for (let k = 0; k < size[b]; k++, i++) out[i] = at + offset[i];
+    }
+    return out;
+  };
+}
+
+/**
  * The positions closest to `desired` (weighted least squares) that keep the order and at least `seps[i]` between
- * neighbours i and i + 1. Shifting each by the separations before it turns this into isotonic regression, solved
- * by pool-adjacent-violators in linear time.
+ * neighbours i and i + 1 (the projection on its own, for tests and other callers).
  */
 export function project(desired, seps, weights) {
   const count = desired.length;
-  const offset = new Float64Array(count);
-  for (let i = 1; i < count; i++) offset[i] = offset[i - 1] + seps[i - 1];
-  // Blocks of pooled values: [weighted sum, weight, size].
-  const blocks = [];
-  for (let i = 0; i < count; i++) {
-    blocks.push([(desired[i] - offset[i]) * weights[i], weights[i], 1]);
-    while (blocks.length > 1) {
-      const b = blocks[blocks.length - 1],
-        a = blocks[blocks.length - 2];
-      if (a[0] / a[1] <= b[0] / b[1]) break;
-      blocks.pop();
-      a[0] += b[0];
-      a[1] += b[1];
-      a[2] += b[2];
-    }
-  }
-  const out = new Float64Array(count);
-  let i = 0;
-  for (const [sum, w, size] of blocks)
-    for (let k = 0; k < size; k++, i++) out[i] = sum / w + offset[i];
-  return out;
+  return makeProjector(Math.max(count, 1))(
+    Float64Array.from(desired),
+    Float64Array.from(seps),
+    Float64Array.from(weights),
+    count,
+    new Float64Array(count),
+  );
 }

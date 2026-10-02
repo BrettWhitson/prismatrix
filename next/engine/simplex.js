@@ -20,7 +20,8 @@
  * @param {Int32Array | number[]} head  per edge, its end
  * @param {ArrayLike<number>} minLength per edge, ≥ 0
  * @param {ArrayLike<number>} weight    per edge, ≥ 0
- * @param {{ maxPivots?: number }} [options]
+ * @param {{ maxPivots?: number, budget?: number }} [options] budget: stop pivoting after this many ms (every pivot
+ *   leaves a feasible ranking, so stopping early gives a good one, just not the best)
  * @returns {{ rank: Int32Array, pivots: number, optimal: boolean }} ranks start at 0
  *
  * The edges must form a DAG; nodes in separate components are joined internally, so the graph needn't be connected.
@@ -31,10 +32,11 @@ export function networkSimplex(
   head,
   minLength,
   weight,
-  { maxPivots = Infinity } = {},
+  { maxPivots = Infinity, budget = Infinity } = {},
 ) {
   // A virtual node joined to every node by a weightless edge makes the graph connected without changing the
   // objective. Edges from it have minimum length 0 so it never forces anything.
+  const deadline = performance.now() + budget;
   const n = count + 1;
   const root = count;
   const m = tail.length + count;
@@ -193,7 +195,7 @@ export function networkSimplex(
       optimal = true;
       break;
     }
-    if (pivots >= maxPivots) break;
+    if (pivots >= maxPivots || performance.now() > deadline) break;
     const child = parentEdge[eu[leave]] === leave ? eu[leave] : ev[leave];
     const childIsTail = child === eu[leave];
     let enter = -1,
