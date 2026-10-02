@@ -181,10 +181,16 @@ function onTheSpot(input) {
   return runLayout(g, "tree", treeOptions, spec(g));
 }
 
-/** The homes a controller that never uses a worker gives `input`. */
-function homesHere(input) {
-  const c = new GraphController(new GraphModel(input), null, { worker: false });
+/**
+ * The homes a controller that never uses a worker gives the last of `inputs`, shown one after the other (each
+ * layout keeps the one before in place: its hint).
+ */
+function homesHere(...inputs) {
+  const c = new GraphController(new GraphModel(inputs[0]), null, {
+    worker: false,
+  });
   c.setViewport(800, 600);
+  for (const input of inputs.slice(1)) c.setGraph(input);
   const homes = [...c.graph.matrix.homeX];
   c.destroy();
   return homes;
@@ -253,7 +259,11 @@ test("quick updates while the worker is busy: only the job running and the newes
     assert.equal(jobs() - before, 2, "the first update's job, then the newest");
     assert.equal(c.graph.nodes.length, 60, "the newest graph is shown");
     assert.equal(c.layoutPending, false);
-    assert.deepEqual([...c.graph.matrix.homeX], homesHere(recipes(60, 5)));
+    // The newest was asked for while the first graph was on screen: laid out with that graph's homes as its hint.
+    assert.deepEqual(
+      [...c.graph.matrix.homeX],
+      homesHere(recipes(50, 5), recipes(60, 5)),
+    );
     c.destroy();
   });
 
@@ -386,7 +396,10 @@ for (const how of ["onerror", "onmessageerror"])
       assert.ok(workers[0].terminated);
       assert.equal(c.graph.nodes.length, 80, "the newest layout is in place");
       assert.equal(c.layoutPending, false);
-      assert.deepEqual([...c.graph.matrix.homeX], homesHere(recipes(80, 5)));
+      assert.deepEqual(
+        [...c.graph.matrix.homeX],
+        homesHere(recipes(50, 5), recipes(80, 5)),
+      );
       // From then on, on the spot.
       c.setGraph(recipes(90, 5));
       assert.equal(c.graph.nodes.length, 90);

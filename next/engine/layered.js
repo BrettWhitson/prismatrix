@@ -26,6 +26,9 @@
 // tangle, and even their short edges cross everything between their users; on the crafting fixtures references
 // remove 75–95% of crossings and over half the ink, and on real recipe data 96%.
 //
+// Stability (with a hint: the layout before a change): the old order, pulls towards old places, and the drawing
+// moved so kept nodes stay put. See layeredLayout.
+//
 // Pure: no DOM. Measured with `npm run bench:merged`.
 
 import { TREE_LABEL_ANGLE, DEFAULT_SIZING } from "./layouts.js";
@@ -42,11 +45,25 @@ const SIFT_ROUNDS = 4;
 // Layering keeps tree edges (an ingredient's first recipe) this much harder to stretch than cross-links, so depth
 // still reads as crafting steps and only shared ingredients' extra edges grow long.
 const TREE_RANK_WEIGHT = 8;
+// How much a layout given a hint (the layout before a change) keeps its place, 0 to 1: see layeredLayout.
+const STABILITY = 0.5;
+// The pull towards a kept node's old place at stability 0.5, against segments that weigh 1 (a short cross-link) to
+// 32 (the inside of a long tree edge): enough to hold most nodes exactly where they were.
+const PULL = 4;
 
 /**
+ * With a `hint` (the layout before a change, layout-job.js) and `stability` above 0, a change moves only what it
+ * has to (the mental map): the order starts from the old one, with only what's new sifted into place (orderFromHint);
+ * every kept node, reference and bend is pulled towards where it was in placement, with a weight that grows with
+ * `stability`; and the drawing is moved so that kept nodes move least in all. On the fixtures, adding or removing
+ * one leaf moves 0–2% of the other nodes (0–7% at stability 0.25), against 81–100% laid out afresh. With a hint
+ * and stability 0, it's laid out afresh and only moved into place.
+ *
  * @param {import("./graph.js").Graph} graph
- * @param {{ direction?: string, levelGap?: number, nodeGap?: number }} [options]
+ * @param {{ direction?: string, levelGap?: number, nodeGap?: number, ranking?: string, ordering?: string,
+ *   placement?: string, references?: string, shareMin?: number, stability?: number }} [options]
  * @param {import("./layouts.js").Sizing} [sizing]
+ * @param {import("./layout-job.js").LayoutHint | null} [hint]
  * @returns {{ kind: "layered", direction: string, bends: Map<object, number[][]>, references: Reference[],
  *   crossings: number, initialCrossings: number, layerOf: Int32Array,
  *   simplex?: { pivots: number, optimal: boolean } }} `simplex` (ranking "simplex" only): how many exchanges the
@@ -63,8 +80,10 @@ export function layeredLayout(
     placement = "balanced",
     references = "hubs",
     shareMin = 3,
+    stability = STABILITY,
   } = {},
   sizing = DEFAULT_SIZING,
+  hint = null,
 ) {
   const { nodes, edges } = graph;
   const n = nodes.length;
@@ -251,19 +270,38 @@ export function layeredLayout(
   const index = (list) => list.forEach((v, i) => (pos[v] = i));
   layers.forEach(index);
   const initialCrossings = countCrossings(layers, lower, pos);
-  const ordered = orderLayers(
-    layers,
-    initialCrossings,
-    {
-      layer: lay,
-      upper,
-      lower,
-      block: blockOf,
-      blocks: real + edges.length,
-      segments: total - real + edges.length,
-    },
-    ordering,
-  );
+  const structure = {
+    layer: lay,
+    upper,
+    lower,
+    block: blockOf,
+    blocks: real + edges.length,
+    segments: total - real + edges.length,
+  };
+  // ---- 4a. with a hint (the layout before a change): where each kept node was, along its layer and across them.
+  // With stability above 0, the order starts from the old one (seedFromHint, orderFromHint).
+  let was = null,
+    wasDepth = null;
+  if (hint) {
+    was = across ? hint.y : hint.x;
+    wasDepth = across ? hint.x : hint.y;
+  }
+  const keep = hint && stability > 0;
+  const seeded = keep
+    ? seedFromHint(was, wasDepth, layers, {
+        n,
+        refs,
+        chains,
+        upper,
+        lower,
+        reversed,
+        hint,
+        across,
+      })
+    : null;
+  const ordered = keep
+    ? orderFromHint(layers, seeded, structure, ordering, stability)
+    : orderLayers(layers, initialCrossings, structure, ordering);
   layers = ordered.layers;
   const bestCrossings = ordered.crossings;
   layers.forEach(index);
@@ -306,6 +344,29 @@ export function layeredLayout(
       x[v] = at;
     });
   }
+  // With a hint: start each layer as near the places the hint gives as its order and gaps allow, and pull every kept
+  // node towards where it was (an extra point for the exact L1 step, see balance), so a change moves only what it
+  // has to. The pull's weight grows with `stability`: at 1 a kept node gives way only to make room.
+  let pull = null;
+  if (keep) {
+    const { key, known } = seeded;
+    for (const list of layers) {
+      const seps = list.slice(1).map((v, i) => separation(list[i], v));
+      const placed = project(
+        list.map((v) => key[v]),
+        seps,
+        list.map(() => 1),
+      );
+      list.forEach((v, i) => (x[v] = placed[i]));
+    }
+    // Kept nodes towards where they were; references and long edges' bends too, where they were there before.
+    pull = {
+      at: Float64Array.from({ length: total }, (_, v) =>
+        v < n ? was[v] : known[v] ? key[v] : NaN,
+      ),
+      weight: pullWeight(stability),
+    };
+  }
   const median = (list) => {
     const values = list.map((u) => x[u]).sort((a, b) => a - b);
     const m = values.length >> 1;
@@ -321,6 +382,7 @@ export function layeredLayout(
       x,
       separation,
       chains,
+      pull,
     );
   for (let pass = 0; placement === "median" && pass < PLACE_PASSES; pass++) {
     const last = pass === PLACE_PASSES - 1;
@@ -344,14 +406,15 @@ export function layeredLayout(
       list.forEach((v, i) => (x[v] = placed[i]));
     }
   }
-  // Centre the drawing on 0.
+  // Centre the drawing on 0; or, with a hint, move it so kept nodes move least (the median of their moves).
   let lo = Infinity,
     hi = -Infinity;
   for (let v = 0; v < total; v++) {
     lo = Math.min(lo, x[v] - left[v]);
     hi = Math.max(hi, x[v] + right[v]);
   }
-  const middle = total ? (lo + hi) / 2 : 0;
+  let middle = total ? (lo + hi) / 2 : 0;
+  if (was) middle = medianShift(x, was, n, middle);
 
   // Layer positions along depth: at least levelGap apart, further where footprints need it.
   const farOf = new Array(layerCount).fill(0),
@@ -364,9 +427,21 @@ export function layeredLayout(
   for (let k = 1; k < layerCount; k++)
     level[k] =
       level[k - 1] + Math.max(levelGap, farOf[k - 1] - nearOf[k] + gap);
+  const depthOf = (v) => level[lay[v]] * (flip ? -1 : 1);
+  // Along depth, too, a hint keeps kept nodes where they were (when layers come or go above them).
+  let top = 0;
+  if (was) {
+    const d = new Float64Array(n),
+      wasDepth = new Float64Array(n);
+    for (let v = 0; v < n; v++) {
+      d[v] = depthOf(v);
+      wasDepth[v] = across ? hint.x[v] : hint.y[v];
+    }
+    top = medianShift(d, wasDepth, n, 0);
+  }
   const place = (v) => {
     const b = x[v] - middle;
-    const d = level[lay[v]] * (flip ? -1 : 1);
+    const d = depthOf(v) - top;
     return across ? [d, b] : [b, d];
   };
   for (const node of nodes) [node.homeX, node.homeY] = place(node.index);
@@ -504,6 +579,239 @@ function orderLayers(start, startCrossings, graph, ordering) {
     if (candidate.crossings < best.crossings) best = candidate;
   }
   return sift(best);
+}
+
+/**
+ * Where each layout node was along its layer, as far as a hint tells (`was`, `wasDepth`: per real node, along its
+ * layer and across them, NaN for a new one; `hint`'s edge parts for references and bends):
+ *
+ *   - a kept node where it was;
+ *   - a reference where its chip was, or else under its recipe;
+ *   - a long edge's dummies where its bends were, or else spaced along its old line (or the straight line between
+ *     its ends);
+ *   - anything else (a new node, and what hangs off it) at the mean of its neighbours' places, spreading out from
+ *     what's known in sweeps down and up; whatever's still unplaced (a new part with nothing kept around it) to the
+ *     right of everything, in the depth-first order.
+ *
+ * `key` is that place; `known` marks the layout nodes that had a place of their own before, on the same layer (a
+ * kept node whose layer changed, because what used it came or went, is new where it is now). The rest are free for
+ * the ordering to move (see orderFromHint).
+ */
+function seedFromHint(
+  was,
+  wasDepth,
+  layers,
+  { n, refs, chains, upper, lower, reversed, hint, across },
+) {
+  const total = upper.length;
+  const key = new Float64Array(total).fill(NaN);
+  const known = new Uint8Array(total);
+  for (let v = 0; v < n; v++)
+    if (!Number.isNaN(was[v])) {
+      key[v] = was[v];
+      known[v] = 1;
+    }
+  // A layer's old depth is where most of its kept nodes were; a kept node nearer another layer's has changed layer.
+  const depthOf = layers.map((list) => {
+    const depths = [];
+    for (const v of list) if (known[v]) depths.push(wasDepth[v]);
+    depths.sort((a, b) => a - b);
+    return depths.length ? depths[depths.length >> 1] : NaN;
+  });
+  layers.forEach((list, k) => {
+    for (const v of list) {
+      if (!known[v]) continue;
+      const d = Math.abs(wasDepth[v] - depthOf[k]);
+      for (let j = 0; j < layers.length; j++)
+        if (j !== k && Math.abs(wasDepth[v] - depthOf[j]) < d) {
+          known[v] = 0;
+          break;
+        }
+    }
+  });
+  const { refX, refY, bendStart, bendXY } = hint;
+  refs.forEach(({ edge, source }, k) => {
+    const at = refX ? (across ? refY[edge] : refX[edge]) : NaN;
+    key[n + k] = Number.isNaN(at) ? key[source] : at;
+    known[n + k] = Number.isNaN(at) ? 0 : 1;
+  });
+  const line = [];
+  chains.forEach((chain, ei) => {
+    const m = chain.length - 1;
+    if (m < 2) return;
+    const a = chain[0],
+      b = chain[m];
+    if (Number.isNaN(key[a]) || Number.isNaN(key[b])) return;
+    // Its old line, top to bottom: its ends and its old bends.
+    line.length = 0;
+    line.push(key[a]);
+    const from = bendStart ? bendStart[ei] : 0,
+      to = bendStart ? bendStart[ei + 1] : 0;
+    for (let p = 0; p < to - from; p++) {
+      const q = reversed[ei] ? to - 1 - p : from + p;
+      line.push(bendXY[q * 2 + (across ? 1 : 0)]);
+    }
+    line.push(key[b]);
+    const exact = line.length === m + 1; // as many bends as dummies: each where its bend was
+    for (let j = 1; j < m; j++) {
+      const t = (j / m) * (line.length - 1),
+        i = Math.min(Math.floor(t), line.length - 2);
+      key[chain[j]] = line[i] + (line[i + 1] - line[i]) * (t - i);
+      known[chain[j]] = exact ? 1 : 0;
+    }
+  });
+  for (let round = 0; round < 4; round++) {
+    let missing = 0;
+    for (let s = 0; s < 2 * layers.length; s++) {
+      const list = layers[s < layers.length ? s : 2 * layers.length - 1 - s];
+      for (const v of list) {
+        if (!Number.isNaN(key[v])) continue;
+        let sum = 0,
+          count = 0;
+        for (const near of [upper[v], lower[v]])
+          for (const u of near)
+            if (!Number.isNaN(key[u])) {
+              sum += key[u];
+              count++;
+            }
+        if (count) key[v] = sum / count;
+        else missing++;
+      }
+    }
+    if (!missing) break;
+  }
+  let right = -Infinity;
+  for (let v = 0; v < total; v++)
+    if (!Number.isNaN(key[v])) right = Math.max(right, key[v]);
+  if (right === -Infinity) right = 0;
+  for (const list of layers)
+    for (const v of list) if (Number.isNaN(key[v])) key[v] = ++right;
+  return { key, known };
+}
+
+// With a hint: restarts that shuffle only what's free (new nodes and what hangs off them), as many as RESTART_WORK
+// allows up to this many; and how much of the graph must be free, times the stability, before a fresh ordering is
+// worked out too, to compare (below that, as for one new or removed node or a small recipe expanded, the old order
+// is kept without asking: a fresh ordering costs as much as a layout without a hint).
+const FREE_RESTARTS = 8;
+const FRESH_SHARE = 0.4;
+
+/**
+ * Order each layer for a layout given a hint, keeping the old order (the mental map):
+ *
+ *   1. each layer in the order the hint gives (by `seeded.key`, ties in the depth-first order);
+ *   2. whatever's free (not `seeded.known`: new nodes, references and long edges, and nodes that changed layer)
+ *      sifted to where it crosses least, with everything else keeping its order; then transposition, which swaps
+ *      neighbours only where that removes crossings;
+ *   3. restarts that shuffle only the free part, for small graphs (as many as plain restarts would get);
+ *   4. when a good share is free (FRESH_SHARE · stability of the blocks: a big part of the graph is new), the
+ *      ordering a layout without a hint would choose too, taken only if it has clearly fewer crossings: more than
+ *      (1 + stability) times fewer, and 10 · stability / (1 - stability) besides. At stability 1, never.
+ */
+function orderFromHint(dfs, { key, known }, graph, ordering, stability) {
+  const { layer, upper, lower, block, blocks, segments } = graph;
+  const total = layer.length;
+  const pos = new Float64Array(total);
+  const index = (layers) =>
+    layers.forEach((list) => list.forEach((v, i) => (pos[v] = i)));
+  const movable = new Uint8Array(blocks);
+  const used = new Uint8Array(blocks);
+  let free = 0,
+    blocksUsed = 0;
+  for (let v = 0; v < total; v++) {
+    const b = block[v];
+    if (!used[b]) {
+      used[b] = 1;
+      blocksUsed++;
+    }
+    if (!known[v] && !movable[b]) {
+      movable[b] = 1;
+      free++;
+    }
+  }
+  /** The layers sorted by `keys` (ties in the depth-first order), then sifted and transposed. */
+  const refine = (keys) => {
+    index(dfs);
+    let layers = dfs.map((list) =>
+      list.slice().sort((a, b) => keys[a] - keys[b] || pos[a] - pos[b]),
+    );
+    index(layers);
+    let crossings = countCrossings(layers, lower, pos);
+    if (crossings && free) {
+      layers = globalSifting(
+        { layers, layer, upper, lower, block, blocks },
+        { rounds: SIFT_ROUNDS, work: free * SIFT_WORK_PER_BLOCK, movable },
+      ).layers;
+      index(layers);
+      crossings = countCrossings(layers, lower, pos);
+    }
+    if (crossings) {
+      transpose(layers, upper, lower, pos);
+      crossings = countCrossings(layers, lower, pos);
+    }
+    return { layers, crossings };
+  };
+  let best = refine(key);
+  const restarts = Math.min(
+    FREE_RESTARTS,
+    Math.floor(RESTART_WORK / (total + segments)),
+  );
+  const random = seeded(1);
+  const shuffled = new Float64Array(total);
+  for (let r = 0; r < restarts && best.crossings && free; r++) {
+    // The free part anywhere along its layer; the rest where it was.
+    shuffled.set(key);
+    for (const list of dfs) {
+      let lo = Infinity,
+        hi = -Infinity;
+      for (const v of list) {
+        lo = Math.min(lo, key[v]);
+        hi = Math.max(hi, key[v]);
+      }
+      for (const v of list)
+        if (movable[block[v]]) shuffled[v] = lo + random() * (hi - lo + 1);
+    }
+    const candidate = refine(shuffled);
+    if (candidate.crossings < best.crossings) best = candidate;
+  }
+  if (
+    stability < 1 &&
+    best.crossings &&
+    free >= FRESH_SHARE * stability * blocksUsed
+  ) {
+    index(dfs);
+    const fresh = orderLayers(
+      dfs,
+      countCrossings(dfs, lower, pos),
+      graph,
+      ordering,
+    );
+    if (
+      best.crossings >
+      fresh.crossings * (1 + stability) + (10 * stability) / (1 - stability)
+    )
+      best = fresh;
+  }
+  return best;
+}
+
+/** How hard a kept node is pulled towards where it was, for a stability from 0 to 1 (see layeredLayout). */
+function pullWeight(stability) {
+  return stability >= 1 ? 1e6 : (PULL * stability) / (1 - stability);
+}
+
+/**
+ * The shift that moves the first `count` positions least in all (L1) towards where they were: the median of
+ * `now[v] - was[v]` over those with a `was` (NaN: none). `fallback` when none has.
+ */
+function medianShift(now, was, count, fallback) {
+  const moves = [];
+  for (let v = 0; v < count; v++)
+    if (!Number.isNaN(was[v])) moves.push(now[v] - was[v]);
+  if (!moves.length) return fallback;
+  moves.sort((a, b) => a - b);
+  const m = moves.length >> 1;
+  return moves.length % 2 ? moves[m] : (moves[m - 1] + moves[m]) / 2;
 }
 
 /** A small seeded random number generator (mulberry32): the same seed gives the same numbers everywhere. */
@@ -660,6 +968,10 @@ const STRAIGHTEN_WORK = 200;
  * best try is kept if the total travel doesn't grow. On the crafting fixtures this lands within 1–10% of the exact
  * optimum (Gansner's auxiliary-graph LP) and draws about as many long edges straight.
  *
+ * With `pull` (a hint: see layeredLayout), each node with a place in `pull.at` is also pulled there with weight
+ * `pull.weight`: one more point in its exact step, and one more term in the travel that straightening keeps from
+ * growing.
+ *
  * Everything runs on flat typed arrays made once (neighbours, scratch space for each layer): with tens of thousands
  * of nodes, building little arrays per node per pass costs more than the arithmetic.
  */
@@ -672,6 +984,7 @@ function balance(
   x,
   separation,
   chains,
+  pull = null,
 ) {
   const flat = (lists, weights) => {
     const start = new Int32Array(lists.length + 1);
@@ -693,7 +1006,7 @@ function balance(
     busiest = 1;
   for (const list of layers) {
     widest = Math.max(widest, list.length);
-    let points = list.length;
+    let points = list.length * (pull ? 2 : 1);
     for (const v of list) points += upper[v].length + lower[v].length;
     busiest = Math.max(busiest, points);
   }
@@ -742,6 +1055,10 @@ function balance(
       } else {
         if (above) n = gather(up, v, n);
         if (below) n = gather(down, v, n);
+        if (pull && !Number.isNaN(pull.at[v])) {
+          values[n] = pull.at[v];
+          weights[n++] = pull.weight;
+        }
         if (n === start[i]) {
           // Nothing to pull it: it stays where it is unless its neighbours need the room.
           values[n] = x[v];
@@ -809,6 +1126,8 @@ function balance(
         for (let k = up.start[v]; k < up.start[v + 1]; k++)
           if (!inside[up.index[k]])
             sum += up.weight[k] * Math.abs(x[up.index[k]] - x[v]);
+        if (pull && !Number.isNaN(pull.at[v]))
+          sum += pull.weight * Math.abs(x[v] - pull.at[v]);
       }
     }
     return sum;

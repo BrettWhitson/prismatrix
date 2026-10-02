@@ -38,6 +38,7 @@ export const WORKER_MIN = 2000;
  * @property {string} layout
  * @property {object} options
  * @property {import("./layout-job.js").SizingSpec} sizing
+ * @property {import("./layout-job.js").LayoutHint | null} hint the previous layout's homes, if any
  * @property {(result: object | null) => void} resolve
  * @property {(error: Error) => void} reject
  * @property {boolean} live false once a newer request has replaced it (it has resolved to null)
@@ -79,9 +80,10 @@ export class Layouter {
   /**
    * Lay out `graph`. On the spot: the result, now. In the worker: a promise of it, which resolves to null instead if
    * a newer layout is asked for before it starts (or while it runs). The result's homes are arrays to copy in; the
-   * routing is packed (layout-job.js). The sizing spec is copied to the worker, never moved: it's still the caller's.
+   * routing is packed (layout-job.js). The sizing spec and the hint are copied to the worker, never moved: they're
+   * still the caller's (and still whole if the worker fails and the layout has to run here instead).
    */
-  run(graph, layout, options, sizing) {
+  run(graph, layout, options, sizing, hint = null) {
     this.#supersede();
     if (this.usesWorker(graph) && this.#worker())
       return new Promise((resolve, reject) => {
@@ -92,13 +94,14 @@ export class Layouter {
           layout,
           options,
           sizing,
+          hint,
           resolve,
           reject,
           live: true,
         };
         if (!this.running) this.#send();
       });
-    return runLayout(graph, layout, options, sizing);
+    return runLayout(graph, layout, options, sizing, hint);
   }
 
   /** A newer layout has been asked for: the ones before it resolve to null (the worker's current job runs on). */
@@ -123,6 +126,7 @@ export class Layouter {
       layout: request.layout,
       options: request.options,
       sizing: request.sizing,
+      hint: request.hint,
     };
     const transfer = [];
     if (
@@ -222,6 +226,7 @@ export class Layouter {
           request.layout,
           request.options,
           request.sizing,
+          request.hint,
         ),
       );
     } catch (error) {

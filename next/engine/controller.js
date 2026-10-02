@@ -29,7 +29,7 @@ import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
 import { looksOf } from "./render.js";
-import { runLayout, unpackRouting } from "./layout-job.js";
+import { hintFrom, runLayout, unpackRouting } from "./layout-job.js";
 import { Layouter } from "./layouter.js";
 import { resolve } from "./schema.js";
 import { HIT_SCALE, HitGrid, LineageCache, lineageMask } from "./picking.js";
@@ -781,10 +781,15 @@ export class GraphController {
       target,
       looksOf(target, this.node, this.edge),
     );
+    // A new structure keeps what stays where it was: the homes on screen, by id, as a hint (layout-job.js).
+    const hint =
+      rebuilding && this.graph.nodes.length
+        ? hintFrom(this.graph, target, this.routing)
+        : null;
     const job = { id: ++this.layoutRequest, target, rebuilding, fit, spec };
     const result = sync
-      ? runLayout(target, this.layout, this.layoutOpts, spec)
-      : this.layouter.run(target, this.layout, this.layoutOpts, spec);
+      ? runLayout(target, this.layout, this.layoutOpts, spec, hint)
+      : this.layouter.run(target, this.layout, this.layoutOpts, spec, hint);
     if (!(result instanceof Promise)) return this.#settle(job, result);
     this.layoutPending = true;
     this.#changed();

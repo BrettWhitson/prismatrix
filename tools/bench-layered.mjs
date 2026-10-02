@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { Graph } from "../next/engine/graph.js";
 import { GraphModel } from "../next/engine/model.js";
 import { layeredLayout } from "../next/engine/layered.js";
+import { hintFrom } from "../next/engine/layout-job.js";
 
 const FIXTURES = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -101,30 +102,71 @@ export function measure(model, layout = layeredLayout, options = {}) {
 }
 
 /**
- * How much a layout keeps its place under a small change (the mental map): add one new ingredient under an item a
- * quarter, half and three quarters of the way through the node list, lay out again, and compare every other
- * node's home with where it was. Returns the share of them that moved more than 2 px (%) and the mean distance (px).
+ * How much a layout keeps its place under a small change (the mental map). Six one-leaf changes: a new ingredient
+ * under an item a quarter, half and three quarters of the way through the node list, and the removal of the leaf
+ * nearest each of those places. Each is laid out again with the layout before as its hint (layout-job.js), and
+ * every kept node's home compared with where it was. Returns the share of kept nodes that moved more than 2 px (%),
+ * their mean move (px), and how many more crossings the hinted layout has than a fresh one of the same graph (%,
+ * over all six). `hint: false` lays out again without the hint (how it was before hints).
  */
-export function stability(model, layout = layeredLayout, options = {}) {
+export function stability(
+  model,
+  layout = layeredLayout,
+  options = {},
+  { hint = true } = {},
+) {
   const json = GraphModel.from(model).toJSON();
-  const homes = (data) => {
+  const lay = (data, previous) => {
     const g = new Graph(GraphModel.from(data));
-    layout(g, options, sizing);
-    return new Map(g.nodes.map((n) => [n.id, [n.homeX, n.homeY]]));
+    const start = performance.now();
+    const routing = layout(
+      g,
+      options,
+      sizing,
+      previous && hint ? hintFrom(previous.g, g, previous.routing) : null,
+    );
+    return { g, routing, ms: performance.now() - start };
   };
-  const before = homes(json);
-  let moved = 0,
-    shift = 0,
-    kept = 0;
+  const before = lay(json);
+  const changes = [];
+  const outgoing = new Map(json.nodes.map((n) => [n.id, 0]));
+  for (const e of json.edges) outgoing.set(e.source, outgoing.get(e.source) + 1);
   for (const at of [0.25, 0.5, 0.75]) {
     const parent = json.nodes[Math.floor(json.nodes.length * at)].id;
-    const after = homes({
+    changes.push({
       nodes: [...json.nodes, { id: "bench-new" }],
       edges: [...json.edges, { source: parent, target: "bench-new" }],
     });
-    for (const [id, [x, y]] of before) {
-      const [x2, y2] = after.get(id);
-      const d = Math.hypot(x2 - x, y2 - y);
+    // The leaf nearest that place (a node nothing comes out of), removed with its edges.
+    const from = Math.floor(json.nodes.length * at);
+    let leaf = null;
+    for (let d = 0; d < json.nodes.length && !leaf; d++)
+      for (const i of [from + d, from - d])
+        if (!leaf && json.nodes[i] && !outgoing.get(json.nodes[i].id))
+          leaf = json.nodes[i].id;
+    if (leaf && json.nodes.length > 2)
+      changes.push({
+        nodes: json.nodes.filter((n) => n.id !== leaf),
+        edges: json.edges.filter((e) => e.source !== leaf && e.target !== leaf),
+      });
+  }
+  let moved = 0,
+    shift = 0,
+    kept = 0,
+    crossings = 0,
+    fresh = 0,
+    ms = 0;
+  for (const data of changes) {
+    const after = lay(data, before);
+    ms += after.ms;
+    crossings += after.routing.crossings ?? 0;
+    fresh += hint
+      ? (lay(data).routing.crossings ?? 0)
+      : (after.routing.crossings ?? 0);
+    for (const n of after.g.nodes) {
+      const was = before.g.byId.get(n.id);
+      if (!was) continue;
+      const d = Math.hypot(n.homeX - was.homeX, n.homeY - was.homeY);
       if (d > 2) moved++;
       shift += d;
       kept++;
@@ -133,6 +175,10 @@ export function stability(model, layout = layeredLayout, options = {}) {
   return {
     moved: Math.round((moved / kept) * 100),
     shift: Math.round(shift / kept),
+    "+cross%": fresh
+      ? Math.round(((crossings - fresh) / fresh) * 1000) / 10
+      : crossings,
+    "hint ms": Math.round((ms / changes.length) * 10) / 10,
   };
 }
 

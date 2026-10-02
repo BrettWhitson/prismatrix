@@ -27,6 +27,7 @@ self.onmessage = ({ data }) => {
       data.layout,
       data.options,
       data.sizing,
+      data.hint,
     );
     const transfer = [result.homeX.buffer, result.homeY.buffer];
     if (result.routing.bends)
