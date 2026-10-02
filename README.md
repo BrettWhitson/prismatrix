@@ -2,67 +2,74 @@
 
 **Lightning fast and lightweight Graph Rendering and Physics Engine.**
 
-Give it nodes and edges. It lays them out, draws them on the GPU (WebGL2), moves them believably when you drag them,
-and morphs smoothly from one graph to the next. It holds 60 fps at 10,000 nodes, and has no runtime dependencies and
-no build step: plain ES modules, with TypeScript declarations.
+Give it nodes and edges. It lays them out, draws them on the GPU (WebGL2, with Canvas 2D as the fallback), moves them
+believably when you drag them, and morphs from one version of the graph to the next. It was built for crafting trees,
+where one ingredient feeds many recipes, and stays smooth at tens of thousands of nodes. No runtime dependencies and no
+build step: plain ES modules, with TypeScript declarations.
 
-Two layers, one package:
+An app works with three parts:
 
-- **The view and renderer** (`"prismatrix"`) knows what's in the graph and how to draw it:
-  - styles, from options, a theme, class rules and hooks;
-  - icons or cards;
-  - labels, edges and arrowheads;
-  - hover lineage, selection and highlights;
-  - panning, zooming and fitting;
-  - PNG export.
-- **The layout and physics layer** (`"prismatrix/layout"`) knows where every node is and how nodes move and push on
-  each other:
-  - tidy tree, layered (Sugiyama-style) and radial layouts;
-  - a Barnes–Hut force simulation;
-  - elastic and floating drag physics.
-
-  It has no DOM or WebGL, so it runs in workers, tools and tests on its own.
-
-Everything is described by a schema (type, range, default, label and hint) and checked: 93 options, 17 theme colours
-and 43 physics constants. There are plugins for node shapes (a polygon, or GLSL), arrowheads, edge
-routings, easings, layouts and forces. `view.on(…)` gives events and returns its own unsubscribe.
+- **`GraphModel`**: what the graph is (nodes, edges, labels, data) and how it looks. Built once, then changed in place
+  by deltas, so a change costs what it changes.
+- **`GraphController`**: the view. It listens to the model and does only what each change needs: nothing for new data,
+  a restyle for new colours, a layout and a morph for new nodes. It owns the layout, physics, animation, camera,
+  hover, selection, drags and what's collapsed.
+- **A renderer** (`glRenderer` or `canvasRenderer`): the screen. It owns the canvas, input and the frame loop.
 
 ```js
-import { GraphView } from "prismatrix";
+import { GraphModel, GraphController, glRenderer } from "prismatrix/next";
 
-const view = new GraphView({
-  container: document.getElementById("graph"),
-  options: { direction: "LR", physicsMode: "floating", nodeLook: "card" },
-});
-view.on("nodeTap", ({ id }) => view.select(id));
-view.render({
+const model = new GraphModel({
   nodes: [
-    { id: "a", label: "Start", color: "#62a4da", subtitle: "the root" },
-    { id: "b", label: "Next", value: "42" },
+    { id: "mjolnir", label: "Mjölnir", style: { icon: "/icons/mjolnir.png" } },
+    { id: "gift", label: "Gift of Mjölnir" },
+    { id: "ecto", label: "Glob of Ectoplasm" },
   ],
-  edges: [{ source: "a", target: "b" }],
-  fit: true,
+  edges: [
+    { source: "mjolnir", target: "gift" },
+    { source: "gift", target: "ecto", label: "×250" },
+  ],
 });
+const view = new GraphController(model, glRenderer(document.querySelector("canvas")), {
+  layout: "merged",
+  theme: "dark",
+});
+
+view.on("tap", ({ node }) => node && view.toggle(node));
+model.update({ addNodes: [{ id: "coin" }], addEdges: [{ source: "gift", target: "coin" }] }); // lays out, morphs
 ```
 
-Laying a graph out without drawing it:
+## What it does
 
-```js
-import { LayoutGraph, runLayout } from "prismatrix/layout";
+- **Layouts**, each spacing nodes by their real footprint (node and label), deterministic, and stable under change
+  (a new node moves only what it has to):
+  - `tree`: a tidy tree in any of four directions;
+  - `merged`: a layered (Sugiyama) drawing where each shared ingredient appears once, with global sifting, an exact
+    placement that keeps long edges straight, and reference chips in place of long edges into busy ingredients;
+  - `radial`: rings by depth, packed like a tidy tree.
+- **Physics:** `static`, `elastic` (springs back home) and `floating` (pushes apart, holds edges), with throws,
+  collision and a per-frame budget.
+- **Big graphs:** layouts of 2,000 nodes or more run in a worker while the page keeps drawing; edges are traced on the
+  GPU; one-node updates cost under a millisecond at 100k nodes.
+- **Exploring:** expand and collapse with progressive disclosure, selection, focus, lineage on hover, pinch and
+  trackpad zoom, tap, double tap and long press events.
+- **Looks:** node shapes, icons and tiles, badges, borders, edge shapes (straight, step, fan, curve), edge labels,
+  dark and light themes or your own.
+- **Everything checked:** every option is described by a schema (default, range, label, hint), so a settings UI can be
+  built from it; bad input is reported, never silently fixed.
+- **Headless:** with no renderer, a controller runs in tests or on a server; `prismatrix/next/layout` lays graphs out
+  with no DOM at all. Views save and restore as JSON snapshots.
 
-const graph = new LayoutGraph(nodes, edges); // nodes: { id, w, h }; edges: { source, target }
-runLayout(graph, { layout: "tree", direction: "TB" });
-graph.positionOf("a"); // { x, y }
-```
-
-The full reference, covering the view, cards, events, plugins, the layout layer, settings and tuning, is in
-[API.md](API.md).
+The full reference is [API.md](API.md); the graph and snapshot formats are in [next/MODEL.md](next/MODEL.md).
 
 ## Install
 
 ```sh
-npm install github:BrettWhitson/prismatrix#v0.4.0
+npm install github:BrettWhitson/prismatrix#vX.Y.Z
 ```
+
+Pin a release tag. The engine described here is at `prismatrix/next` until the next release makes it the main
+entry; `prismatrix` itself is still the 0.4 engine it replaces (see [CHANGELOG.md](CHANGELOG.md)).
 
 In a browser without a bundler, map the imports:
 
@@ -70,8 +77,8 @@ In a browser without a bundler, map the imports:
 <script type="importmap">
   {
     "imports": {
-      "prismatrix": "./node_modules/prismatrix/src/index.js",
-      "prismatrix/layout": "./node_modules/prismatrix/src/layout/index.js"
+      "prismatrix/next": "./node_modules/prismatrix/next/engine/index.js",
+      "prismatrix/next/layout": "./node_modules/prismatrix/next/engine/layout.js"
     }
   }
 </script>
@@ -81,24 +88,29 @@ In a browser without a bundler, map the imports:
 
 | Where | What |
 | --- | --- |
-| `src/index.js` | the public API: everything |
-| `src/graph-view.js` | `GraphView`: styles the graph, asks the layout layer for positions and motion, has the renderer draw them, emits the events |
-| `src/options.js`, `src/style.js` | the options and theme schemas, and options + theme + classes + hooks → what each node and edge looks like |
-| `src/render/` | the WebGL2 renderer (`WebGLGraph`) and its plugin registries. It imports nothing outside itself (a test checks). |
-| `src/layout/` | the layout and physics layer: `runLayout`, the layouts, `ForceSimulation`, `ElasticNetwork`, `LivePhysics`, the settings and tuning schemas. It imports nothing outside itself and uses no DOM (a test checks). |
-
-## History
-
-Prismatrix joins two engines: **Prism**, the renderer, and **Tether**, the layout and physics layer. Their full
-histories are in this repository (`git log`, `git blame`). The old tags keep their names: Prism's are `v0.2.0` to
-`v0.3.2`, and Tether's are prefixed `tether-v0.2.0` to `tether-v0.3.1`. See [CHANGELOG.md](CHANGELOG.md).
+| `next/engine/index.js` | the public surface; `layout.js` is layout without a screen |
+| `next/engine/model.js` | `GraphModel`: the graph, its options, deltas and change events |
+| `next/engine/controller.js` | `GraphController`: layouts, physics, animation, camera, input, disclosure, snapshots |
+| `next/engine/renderer.js` | the renderers; `webgl.js` and `gl-*.js` draw with WebGL2, `render.js` with Canvas 2D |
+| `next/engine/layouts.js` | the layouts; `tidy.js`, `layered.js`, `sifting.js`, `simplex.js` and `references.js` do the work |
+| `next/engine/physics.js` | the physics modes |
+| `next/engine/layouter.js` | where layouts run: on the page or in the worker (`layout-worker.js`) |
+| `next/sandbox/` | the sandbox: every option, live |
+| `src/` | the 0.4 engine, until it's removed |
 
 ## Development
 
 ```sh
 npm install
-npm run demo     # http://localhost:8650/demo/: every option, colour and constant, live
+npm run sandbox  # http://localhost:8651: every option, built from the schemas, with an engine log in logs/
 npm run verify   # lint, prettier, type check, declarations and docs up to date, all tests
 npm run types    # regenerate types/ after changing a JSDoc type
-npm run docs     # regenerate API.md's tables after changing a schema
+npm run docs     # regenerate API.md's tables after changing a schema or typedef
+npm run bench:merged  # merged-tree layout timings on the fixture graphs
 ```
+
+## History
+
+Prismatrix joins two engines, **Prism** (the renderer) and **Tether** (layout and physics), and then rebuilds them from
+the ground up. Both earlier histories are in this repository. Prism's tags are `v0.2.0` to `v0.3.2`, Tether's are
+`tether-v0.2.0` to `tether-v0.3.1`, and `v0.4.0` is the two combined. See [CHANGELOG.md](CHANGELOG.md).

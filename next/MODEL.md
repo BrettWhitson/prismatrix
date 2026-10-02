@@ -8,7 +8,7 @@ reports carry, and the shape the public API will hand around.
   exactly what was on screen again.
 
 In code: `GraphModel` (`next/engine/model.js`) and `controller.snapshot()` / `controller.restore()`
-(`next/engine/snapshot.js`, `next/engine/controller.js`). The full API reference is [API.md](API.md).
+(`next/engine/snapshot.js`, `next/engine/controller.js`). The full API reference is [API.md](../API.md).
 
 ## Model, controller, renderer
 
@@ -21,7 +21,7 @@ model.update({
   addNodes: [{ id: "coin" }],
   addEdges: [{ source: "gift", target: "coin" }],
 });
-model.update({ changeNodes: [{ id: "coin", data: { price: 12 } }] }); // a restyle: nothing moves
+model.update({ changeNodes: [{ id: "coin", data: { price: 12 } }] }); // data only: nothing is drawn differently
 model.replace(json); // a whole new version: unchanged nodes are reused, not rebuilt
 ```
 
@@ -32,7 +32,7 @@ model.replace(json); // a whole new version: unchanged nodes are reused, not reb
   change goes to its listeners (`onChange`) as a **Change**: what was added, removed and changed, and whether the
   structure (`structure`) or a node's room (`sizes`) changed.
 - **GraphController** (`controller.js`): the middle. It listens to the model and does as little as each change
-  needs: a new colour or price is a restyle (no layout, nothing moves), a new label or size lays out again, new or
+  needs: new data costs nothing on screen, a new colour is a restyle (no layout, nothing moves), a new label or size lays out again, new or
   removed nodes lay out again and morph. It owns everything that moves: the **matrix** (`matrix.js`: every node's
   position, velocity, home and footprint as typed-array columns), the layout, physics, animation, camera, hover and
   drags. No DOM: tests drive it headless (`tests/next/controller.test.js`).
@@ -76,7 +76,7 @@ floats can only land on sixteenths of a pixel.
 | `nodes[].id`                | yes      | Unique. Numbers are turned into strings.                                         |
 | `nodes[].label`             | no       | Shown on the node. Defaults to the id.                                           |
 | `nodes[].style`             | no       | How this node looks, over the view's node options: see below.                    |
-| `nodes[].data`              | no       | Anything else (icon, rarity, prices…). The engine keeps it and never reads it.   |
+| `nodes[].data`              | no       | Anything else (rarity, prices…). The engine keeps it and never reads it.   |
 | `edges[].source`, `.target` | yes      | Node ids. Direction matters: for recipes, from the thing made to its ingredient. |
 | `edges[].id`                | no       | Defaults to `source>target`, with `#2`, `#3`… for repeats of the same pair.      |
 | `edges[].label`             | no       | Drawn small beside the edge ("×2"), where the `labels` edge option says.         |
@@ -116,8 +116,8 @@ it as a `graphIssue` event. `new GraphModel(input, { strict: true })` throws on 
 | `bad-input`                     | A graph or delta that isn't an object, nodes or edges that aren't arrays, an unknown delta field.  |
 
 **Models change only through their own methods.** Records and the node and edge lists are frozen, and `data` is the
-model's own copy (the caller's objects are never frozen or shared). Flat data (a price, a rarity) is a quick
-shallow copy; nested data is cloned.
+model's own copy (the caller's objects are never frozen or shared). Data is cloned (`structuredClone`;
+a shallow copy when it can't be cloned).
 
 ### A delta
 
@@ -232,7 +232,7 @@ network simplex made and whether it reached the fewest long edges or stopped at 
 When nodes or edges come or go, the layout is given a **hint**: the layout before the change, by index into the new
 graph (`next/engine/layout-job.js`, `LayoutHint`). `x`, `y` are each node's previous home (NaN for a new node);
 for the merged tree, `refX`, `refY` are where each edge's reference chip was, and `bendStart`, `bendXY` its bends.
-Layouts use it to keep the mental map: a tree and a radial tree move as a whole so kept nodes stay put; the merged
+Layouts use it to keep the mental map: a tree moves as a whole so kept nodes stay put, and a full-circle radial turns to match; the merged
 tree also keeps its old order (only what's new is sifted in) and pulls kept nodes, chips and bends back towards where
 they were, as firmly as its `stability` option says (0: laid out afresh, then only moved into place). Hints are
 plain typed arrays, so they cross to the layout worker as cheaply as the sizing spec.

@@ -47,8 +47,8 @@
     "typecheck": "tsc -p . --noEmit && npm run typecheck:next",
     "typecheck:next": "tsc -p tsconfig.next.json --noEmit",
     "types:check": "node tools/check-types.mjs",
-    "docs": "node tools/docs.mjs && node tools/docs-next.mjs",
-    "docs:check": "node tools/docs.mjs --check && node tools/docs-next.mjs --check",
+    "docs": "node tools/docs.mjs",
+    "docs:check": "node tools/docs.mjs --check",
     "sandbox": "node tools/serve.mjs 8651 /next/sandbox/",
     "bench:merged": "node tools/bench-layered.mjs"
   },
@@ -64,7 +64,6 @@
     "src",
     "types",
     "next/engine",
-    "next/API.md",
     "next/MODEL.md",
     "README.md",
     "API.md",

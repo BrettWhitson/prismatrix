@@ -190,11 +190,11 @@ export type Change = {
   edgesAdded: string[];
   edgesRemoved: string[];
   /**
-   * every kept edge with a new record (style or data), in edge order
+   * every kept edge with a new record (label, style or data), in edge order
    */
   edgesChanged: string[];
   /**
-   * the part of edgesChanged whose style changed
+   * the part of edgesChanged whose label or style changed
    */
   edgesRestyled: string[];
   /**

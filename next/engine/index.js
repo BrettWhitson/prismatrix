@@ -1,6 +1,6 @@
 // Prismatrix, rebuilt from the ground up (work in progress: next/sandbox/ drives it). This is its public surface:
 // everything an app needs. The modules behind it stay importable by path (tests and tools use them), but only this
-// entry, and ./layout.js for layout without a screen, are the interface. The reference is next/API.md.
+// entry, and ./layout.js for layout without a screen, are the interface. The reference is API.md.
 //
 //   const renderer = glRenderer(canvas);
 //   const model = new GraphModel(json, { node, edge });

@@ -3,73 +3,61 @@
 Prismatrix: a lightning fast and lightweight graph rendering and physics engine. Versions follow `0.MINOR.PATCH`
 until the first stable release, continuing Prism's numbering.
 
-## Unreleased (branch `ground-up`)
+## Unreleased
 
-A ground-up rebuild of the engine, in `next/`, beside the current one (`src/`, untouched). Work in progress: it
-draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the package yet.
+The engine, rebuilt from the ground up in `next/engine/` and imported from `prismatrix/next`. It replaces the 0.4
+engine (`src/`), which stays the package's main entry until this is released. Nothing from 0.4 carries over: an app
+moves to the new API ([API.md](API.md)). The 0.4 reference is API.md at the `v0.4.0` tag.
 
-- **Layouts**, each placing nodes by their real footprint (node plus label), and each with its own physics modes:
-  - tree: contour-packed (Reingold–Tilford style) in any of four directions; static or elastic.
-  - radial: leaf-weighted wedges, rings that grow until their nodes fit; static, elastic or floating.
-  - merged tree: a layered (Sugiyama) drawing for shared ingredients. Global sifting orders nodes and whole long
-    edges together; a weighted placement keeps long edges straight; busy shared ingredients get a reference chip
-    under each far-away recipe instead of a long edge (pointing at one lights up the ingredient). On the 642-node
-    crafting fixture: 15,601 crossings down to 1,190. Network simplex layering is an option.
-- **Physics:** friction in every mode, so anything moving eases to a full stop; throws; elastic springs to home with
-  optional level or ring locks; floating with local repulsion, shape memory, drift and a settle time; node and
-  label collision; a per-frame time budget so big graphs slow down rather than lock up.
-- **Edges:** straight, step (right angles in a tree, ring arcs in a radial) and fan; corner radius, taper, colour,
-  opacity and ends, drawn as one layer so overlaps don't brighten.
-- **Nodes:** six shapes, sizing by subtree or depth, colouring by depth or branch, labels below, right or outward.
 - **Model, controller, renderer:** `new GraphController(new GraphModel(json, { node, edge }), glRenderer(canvas))`.
-  The model is the graph and how it looks, built once and changed in place by deltas (`update`) or whole versions
-  (`replace`), which reuse every unchanged node; it stores label widths (each label measured once) and reports
-  exactly what changed. The controller listens and does only what a change needs (a restyle, a layout, a morph);
-  node positions and velocities live in its matrix of typed-array columns. The renderer owns the screen (canvas,
-  input, frames, text measurement). `GraphView` is gone.
-- **Speed at 40k nodes:** edges are traced on the GPU from a positions texture (straight, step and curve, in every
-  layout), so a morph frame takes 8–12 ms instead of 105–199; the merged tree lays out in about 0.4 s instead of
-  0.65, and network-simplex layering has a time budget instead of running for minutes.
-- **Layouts in a worker** for graphs of 2,000 nodes or more: the page keeps drawing and taking input while a big
-  layout is worked out, then the new layout morphs in. A 30k → 40k update now blocks the page for about 0.13 s.
-- **Radial edges ease between step and curve** as a node is dragged off its ring and back, instead of snapping.
-- **Quality and robustness:**
-  - **Merged tree quality:** each ingredient's tree edge comes from a user one layer up; every cross-link into a
-    busy ingredient becomes a compact reference chip; several seeded orderings on small graphs, transposition on big
-    ones; an exact L1 placement that keeps long edges straight; curves by default. Crossings on the real recipe data
-    (3,294 items) 220,687 → 20,978; crafting-large 1,192 → 640; Mjölnir 2 → 0. Network simplex reaches its optimum
-    on the real data in 47 ms (was 2.4 s).
-  - **Deterministic:** no layout reads a clock any more (work budgets instead), so the same graph always gives the
-    same drawing, on the page or in the worker.
-  - **Stable under change:** layouts take the previous layout as a hint (`stability`, default 0.5). Adding or
-    removing a leaf in the merged tree moves 0–2% of the other nodes (was 81–100%).
-  - **Expand and collapse:** `collapse`, `expand`, `toggle`, `expandAll`, `collapseTo(depth)`, `reveal`, a `depth`
-    option to start with the top levels; children grow out of their parent and fold back into it; shared
-    ingredients stay while any recipe showing them is open.
-  - **Interaction:** pointers by id, pinch zoom, two-finger trackpad pan, wheel line/page modes; tap, double tap,
-    long press, hover enter/leave and selection events (`on(type, fn)`), `select`, `focus(id)`, `laidOut()` and
-    `settled()`; drags, hover and fades survive graph changes; Fit frames any graph; the camera holds its place
-    across relayouts and under a drag; selected nodes get a halo.
-  - **Looks:** dark and light themes (`theme`, `setTheme`); node icons from an atlas, `tile` nodes that are their
-    icon, per-node borders (`stroke`, `strokeWidth`); a restyle of a few nodes uploads only those bytes. Edges leave
-    below their node's label; text has a halo in the theme's background; long labels end in an ellipsis
-    (`labelMaxWidth`); edge labels (`label`, e.g. quantities) near the target; reference chips carry a link glyph,
-    show the ingredient's name on hover and fly to it on tap, and the shared node shows "×N"; collapsed nodes show
-    "+N"; a node `badge`.
-  - **Model:** one-node updates in the model cost what they change (0.01–0.6 ms at 100k nodes, was 140–630 ms;
-    removals 16–42 ms). The whole path is still heavier: a structural change rebuilds the working graph on the page,
-    184–242 ms at 100k even with the worker. Data-only and colour changes are free; a throwing listener or an update made from inside a listener can't break it; out-of-range options are
-    clamped and misspelt ones warned about.
-  - **Speed at 40k nodes:** bundled cross-links traced on the GPU too (tree morph frame 263 → 4.5 ms headless; merged-tree
-    morph frames are still 47–52 ms);
-    straight edges draw 6 vertices instead of 90; merged-tree pans rebuild nothing; hover 0.07 ms at 100k nodes
-    for the hit test (was 4.4), though the fade frames a hover starts still cost 16–40 ms; physics steps about 10× faster (a typed-array collision grid) and nothing at all while at rest.
-  - **Robustness:** no crash above 130k nodes; a second finger no longer leaves a node held for ever; the layout
-    worker falls back to the page when it can't start or stops answering, and quick updates coalesce (at most two
-    layouts run; the newest lands 1–3.7 s after ten quick updates on a 30k merged tree, was 6–10 s); busy ingredients get mass, so elastic physics settles around
-    hundreds of users; a released node always springs home.
-- **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
-  writes a rolling 30-second engine log to `logs/engine-stats.log`.
+  - `GraphModel` is the graph and how it looks: prismatrix-graph JSON in and out, changed in place by deltas
+    (`update`) or whole versions (`replace`, which reuses every unchanged node). Records are frozen; each change
+    reports exactly what changed; problems are listed as issues, never fixed silently. One-node updates cost
+    0.01–0.6 ms at 100k nodes; a change of data alone costs nothing on screen.
+  - `GraphController` does only what a change needs (nothing, a restyle, or a layout and a morph). Node positions and
+    velocities live in a matrix of typed-array columns. With no renderer it runs headless (`tick`, `run`).
+  - Renderers own the screen: `glRenderer` (WebGL2, falling back to Canvas 2D) and `canvasRenderer`.
+- **Layouts**, each spacing nodes by their real footprint (node plus label):
+  - `tree`: a tidy tree (Walker's algorithm, linear time) in any of four directions.
+  - `radial`: rings by depth, packed like a tidy tree in angle (`spacing: "tidy"`, the default) or in wedges by leaf
+    count.
+  - `merged`: a layered (Sugiyama) drawing where each shared ingredient appears once. Global sifting orders nodes and
+    long edges together; an exact L1 placement keeps long edges straight; a busy ingredient keeps one edge and every
+    other recipe using it gets a reference chip; network-simplex layering is an option. Crossings on real recipe data
+    (3,294 items) 220,687 → 20,978; on the crafting-large fixture 1,192 → 640.
+  - **Deterministic:** layouts count work, never time, so the same graph always gives the same drawing, on the page
+    or in the worker.
+  - **Stable under change:** each layout takes the previous one as a hint (`stability` in the merged tree, default
+    0.5). Adding or removing a leaf in the merged tree moves 0–2% of the other nodes.
+- **Layouts in a worker** for graphs of 2,000 nodes or more: the page keeps drawing and taking input, and the new
+  layout morphs in when it lands. Quick updates coalesce. If the worker can't start or stops answering, layouts run on
+  the page.
+- **Physics:** `static`, `elastic` (springs home, with optional level or ring locks) and `floating` (repulsion, shape
+  memory, drift and a settle time). Friction in every mode, throws, node and label collision, at most 10 ms a frame,
+  and nothing at all at rest.
+- **Exploring:** `collapse`, `expand`, `toggle`, `expandAll`, `collapseTo(depth)`, `reveal` and a `depth` option;
+  children grow out of their parent and fold back into it, and shared ingredients stay while any recipe showing them
+  is open. Selection (`select`, a halo, taps with shift/ctrl/cmd), `focus(id)`, hover lineage, `fit`, and a camera
+  that holds still on what you're looking at while the graph relays out.
+- **Input:** pointers tracked by id, pinch zoom, trackpad pan and pinch (Safari's gesture events too), wheel line and
+  page modes; tap, double tap, long press, hover, drag, pan and pinch events (`on(type, fn)`); `laidOut()` and
+  `settled()` promises.
+- **Looks:** seven node shapes (circle, square, rounded, diamond, hexagon, ring, tile), sizing by subtree or depth,
+  colouring by depth or branch; icons from an atlas, borders, badges, "+N" on collapsed nodes and "×N" on shared
+  ones; edges straight, step, fan or curve, with corner radius, taper, arrowheads and labels, drawn as one layer so
+  overlaps don't brighten; labels with a halo, cut to `labelMaxWidth` with an ellipsis; dark and light themes or
+  custom tokens.
+- **Speed at 40k nodes:** edges are traced on the GPU from a positions texture, so a tree morph frame takes a few ms
+  (105–199 ms when the CPU traced them; merged-tree morph frames are still 47–52 ms). Pans rebuild nothing;
+  hover hit tests take 0.07 ms at 100k nodes; a restyle uploads only the bytes that changed.
+- **Snapshots:** `snapshot()` and `restore()` save and show a view exactly (prismatrix-snapshot JSON, see
+  [next/MODEL.md](next/MODEL.md)).
+- **Schemas for everything:** every layout, physics, node, edge and animation option has a default, range, label and
+  hint; `resolve` checks values against them, clamping and warning about typos.
+- **Sandbox** (`npm run sandbox`, http://localhost:8651): every option, built from the schemas, with a rolling engine
+  log in `logs/engine-stats.log`.
+- **Docs:** API.md is now the new engine's reference; its tables are generated from the code and checked by
+  `npm run verify`.
 
 ## 0.4.0 (2026-09-30)
 

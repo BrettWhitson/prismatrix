@@ -127,8 +127,8 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @property {string[]} nodesRestyled the part of nodesChanged whose label or style changed (what's drawn)
  * @property {string[]} edgesAdded
  * @property {string[]} edgesRemoved
- * @property {string[]} edgesChanged  every kept edge with a new record (style or data), in edge order
- * @property {string[]} edgesRestyled the part of edgesChanged whose style changed
+ * @property {string[]} edgesChanged  every kept edge with a new record (label, style or data), in edge order
+ * @property {string[]} edgesRestyled the part of edgesChanged whose label or style changed
  * @property {{ node: Partial<import("./style.js").NodeOptions>, edge: Partial<import("./style.js").EdgeOptions> }}
  *   [options] for setOptions: the options that changed, with their new values
  * @property {Issue[]} issues      problems in this change (left out, never fixed silently)

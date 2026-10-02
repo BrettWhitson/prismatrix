@@ -195,9 +195,9 @@ export type LayoutSpec = {
  */
 /**
  * @typedef {import("./layout-job.js").LayoutHint} LayoutHint Where everything was before a change (layout-job.js).
- *   Every layout takes one as its fourth argument and keeps kept nodes near where they were: a tree and a radial
- *   tree move as a whole (their shape is fixed by the tree), the merged tree also keeps its order and pulls nodes
- *   back (layered.js).
+ *   Every layout takes one as its fourth argument and keeps kept nodes near where they were: a tree moves as a whole (its shape is fixed by the
+ *   tree), a full-circle radial turns (it stays centred), the merged tree also keeps its order and pulls nodes back
+ *   (layered.js).
  */
 /**
  * @typedef {object} TreeLayoutOptions The tree layout's options (LAYOUTS.tree.options).
