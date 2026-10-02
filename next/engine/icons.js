@@ -90,7 +90,7 @@ export const TILE_CORNER = 0.2;
  */
 
 /** Load an image by URL, for drawing on canvases and into textures (so it's asked for with CORS). */
-export function loadImage(url) {
+function loadImage(url) {
   const image = new Image();
   image.crossOrigin = "anonymous";
   image.decoding = "async";
@@ -229,7 +229,7 @@ export function iconStore() {
 // ---- atlas packing (pure: the GL side is gl-icons.js) ----------------------------------------------------------------
 
 /** Pixels an icon is kept at in an atlas (each way), and the border of repeated edge pixels around it. */
-export const ICON_CELL = 64;
+const ICON_CELL = 64;
 export const ICON_GUTTER = 4;
 /** A cell with its border. */
 export const ICON_SLOT = ICON_CELL + 2 * ICON_GUTTER;
