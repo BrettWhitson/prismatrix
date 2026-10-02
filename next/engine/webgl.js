@@ -13,7 +13,14 @@
 // Everything is drawn relative to an origin in the middle of the layout (nodes, labels, CPU segments and GPU
 // pieces alike), so 32-bit floats stay precise far from the world's 0, 0.
 
-import { clearTo, edgeAlpha, labelAlpha } from "./render.js";
+import {
+  HALO_GAP,
+  HALO_WIDTH,
+  clearTo,
+  edgeAlpha,
+  labelAlpha,
+  labelsShown,
+} from "./render.js";
 import { LABEL_STRIDE, LabelLayer } from "./gl-text.js";
 import {
   END_STRIDE,
@@ -21,6 +28,7 @@ import {
   SEGMENT_STRIDE,
   edgeBrightness,
   packEdges,
+  packHalos,
   packNodes,
   parseColour,
 } from "./gl-pack.js";
@@ -45,6 +53,8 @@ import {
   COMPOSITE_VERTEX,
   END_FRAGMENT,
   END_VERTEX,
+  HALO_FRAGMENT,
+  HALO_VERTEX,
   LABEL_FRAGMENT,
   LABEL_VERTEX,
   NODE_FRAGMENT,
@@ -235,6 +245,7 @@ class GLLayer {
     if (!gl) throw new Error("WebGL2 is not available");
     this.gl = gl;
     this.nodeProgram = program(gl, NODE_VERTEX, NODE_FRAGMENT);
+    this.haloProgram = program(gl, HALO_VERTEX, HALO_FRAGMENT);
     this.segmentProgram = program(gl, SEGMENT_VERTEX, SEGMENT_FRAGMENT);
     this.endProgram = program(gl, END_VERTEX, END_FRAGMENT);
     this.compositeProgram = program(gl, COMPOSITE_VERTEX, COMPOSITE_FRAGMENT);
@@ -250,12 +261,16 @@ class GLLayer {
       new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
       gl.STATIC_DRAW,
     );
-    this.nodes = new InstancedQuads(gl, corners, NODE_STRIDE, [
+    const nodeLayout = [
       [1, 2, 0], // centre
       [2, 1, 2], // radius
       [3, 4, 3], // colour
       [4, 1, 7], // shape
-    ]);
+    ];
+    this.nodes = new InstancedQuads(gl, corners, NODE_STRIDE, nodeLayout);
+    // Selection halos: the selected nodes, packed as nodes are.
+    this.halos = new InstancedQuads(gl, corners, NODE_STRIDE, nodeLayout);
+    this.haloData = { data: null, count: 0 };
     this.segments = new InstancedQuads(
       gl,
       corners,
@@ -480,7 +495,8 @@ class GLLayer {
     const shaded =
       fresh ||
       scene.shadeVersion === undefined ||
-      scene.shadeVersion !== built.shadeVersion;
+      scene.shadeVersion !== built.shadeVersion ||
+      scene.selectionVersion !== built.selectionVersion;
     if (fresh) {
       if (this.gpu) this.#uploadPositions(scene);
       // Only what the GPU doesn't trace goes as segments (everything, when it traces nothing).
@@ -521,10 +537,13 @@ class GLLayer {
       if (this.gpu && changed) this.#shadePieces(perEdge);
       this.nodeData = packNodes(scene, this.nodeData, this.origin);
       this.nodes.upload(this.nodeData, nodeCount);
+      this.haloData = packHalos(scene, this.haloData.data, this.origin);
+      this.halos.upload(this.haloData.data, this.haloData.count);
     }
     this.built = {
       version: scene.version,
       shadeVersion: scene.shadeVersion,
+      selectionVersion: scene.selectionVersion,
       base,
       nodes: nodeCount,
       edges: edgeCount,
@@ -569,6 +588,13 @@ class GLLayer {
     gl.uniform1f(u.u_outline, node.outline);
     gl.uniform3f(u.u_background, ...bg);
     this.nodes.draw(0, nodeCount);
+    if (this.haloData.count) {
+      // Selected nodes: a ring a few screen px outside each.
+      const h = this.#use(this.haloProgram, scene);
+      const k = scene.camera.k;
+      gl.uniform2f(h.u_halo, HALO_GAP / k, HALO_WIDTH / k);
+      this.halos.draw(0, this.haloData.count);
+    }
 
     this.#time("labels");
     this.#drawLabels(scene, shaded);
@@ -713,18 +739,14 @@ class GLLayer {
   }
 
   /**
-   * Labels with room kept for them (label collision) always show; otherwise they drop out when too small to read.
-   * They're rebuilt when anything moved, the zoom crossed a raster step, or some are still waiting for the atlas.
+   * Labels, when they show at this zoom (labelsShown, as Canvas 2D). They're rebuilt when anything moved, the zoom
+   * crossed a raster step, or some are still waiting for the atlas.
    */
   #drawLabels(scene, fresh) {
     const { gl } = this;
     const { node, camera } = scene;
     this.pending = false;
-    if (
-      node.labels === "off" ||
-      (!node.labelCollide && node.labelSize * camera.k < 6)
-    )
-      return;
+    if (!labelsShown(node, camera)) return;
     // Labels are built for the view plus half a view around it: rebuild when the zoom crosses a raster step or
     // the camera has moved about half a view (measured at the step's zoom, so zooming within a step doesn't).
     const step = Math.ceil(Math.log2(camera.k));

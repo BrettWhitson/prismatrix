@@ -83,6 +83,37 @@ export function packNodes(scene, out, origin = ORIGIN) {
 }
 
 /**
+ * The selected nodes (scene.selected), packed as nodes are, for the halo shader: a handful of instances, refilled
+ * when the selection, the shading or the positions change (nothing else is rebuilt for a selection).
+ * @returns {{ data: Float32Array, count: number }}
+ */
+export function packHalos(scene, out, origin = ORIGIN) {
+  const { graph, looks, selected } = scene;
+  let count = 0;
+  const total = selected ? Math.min(selected.length, graph.nodes.length) : 0;
+  for (let i = 0; i < total; i++) if (selected[i]) count++;
+  out = room(out, count * NODE_STRIDE);
+  if (!count) return { data: out, count };
+  const colour = palette();
+  let o = 0;
+  for (let i = 0; i < total; i++) {
+    if (!selected[i]) continue;
+    const n = graph.nodes[i];
+    const rgb = colour(looks.fill[i]);
+    out[o] = n.x - origin.x;
+    out[o + 1] = n.y - origin.y;
+    out[o + 2] = looks.radius[i];
+    out[o + 3] = rgb[0];
+    out[o + 4] = rgb[1];
+    out[o + 5] = rgb[2];
+    out[o + 6] = nodeAlpha(scene, i);
+    out[o + 7] = SHAPE_IDS[looks.shape[i]] ?? 0;
+    o += NODE_STRIDE;
+  }
+  return { data: out, count };
+}
+
+/**
  * Every edge as straight segments (curves and rounded corners already broken down) and every arrow or dot at an
  * edge's end, with the index of the edge each one belongs to (for edgeBrightness).
  * @param {object} scene
