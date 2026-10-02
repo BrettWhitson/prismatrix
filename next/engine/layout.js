@@ -16,7 +16,7 @@ import { runLayout, sizingSpec } from "./layout-job.js";
 export { GraphModel, GRAPH_FORMAT, GRAPH_VERSION } from "./model.js";
 export { LAYOUTS } from "./layouts.js";
 export { NODE_OPTIONS, EDGE_OPTIONS } from "./style.js";
-export { defaultsOf, resolve } from "./schema.js";
+export { resolve } from "./schema.js";
 
 /**
  * @typedef {object} LayoutGraphOptions

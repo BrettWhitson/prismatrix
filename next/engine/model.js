@@ -15,14 +15,14 @@
 // several controllers at once), and a snapshot (snapshot.js) records it by id.
 
 import { LINE, fitLabel } from "./boxes.js";
-import { closest, resolve } from "./schema.js";
+import { closest, isHex, resolve } from "./schema.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
 
 export const GRAPH_FORMAT = "prismatrix-graph";
 export const GRAPH_VERSION = 1;
 
 /** Node options that change how much room a node takes: changing one lays the graph out again. */
-export const SIZE_KEYS = [
+const SIZE_KEYS = [
   "shape",
   "size",
   "sizeBy",
@@ -180,7 +180,6 @@ const plain = (value) =>
 const SHAPES = NODE_OPTIONS.find((o) => o.key === "shape").choices.map(
   (c) => c.value,
 );
-const colour = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 const number = (lo, hi) => (v) =>
   typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
 
@@ -198,17 +197,17 @@ const icon = (v) =>
 
 /** What a node's `style` may set, and what each value must be. */
 export const NODE_STYLE = {
-  color: colour,
+  color: isHex,
   size: number(1, 400),
   shape: (v) => SHAPES.includes(v),
-  stroke: colour,
+  stroke: isHex,
   strokeWidth: number(0, 100),
   icon,
   badge: (v) => typeof v === "string" && v.length <= 12,
 };
 /** What an edge's `style` may set. */
 export const EDGE_STYLE = {
-  color: colour,
+  color: isHex,
   width: number(0.1, 40),
 };
 
@@ -244,23 +243,11 @@ function checkStyle(raw, rules, what, problem) {
 
 /**
  * The model's own frozen copy of a node's or edge's data (or the graph's meta), so freezing it never touches the
- * caller's objects. Flat data (the usual: a price, a rarity) is a quick shallow copy; nested data is cloned.
+ * caller's objects.
  */
 function copyData(value) {
   const data = plain(value);
-  if (data === EMPTY) return EMPTY;
-  let any = false,
-    flat = true;
-  for (const k in data) {
-    any = true;
-    const v = data[k];
-    if (v !== null && typeof v === "object") {
-      flat = false;
-      break;
-    }
-  }
-  if (!any) return EMPTY;
-  if (flat) return Object.freeze({ ...data });
+  if (data === EMPTY || Object.keys(data).length === 0) return EMPTY;
   try {
     return freeze(structuredClone(data));
   } catch {
@@ -277,9 +264,8 @@ function same(raw, copy) {
 }
 
 /**
- * Deep equality by value, as structuredClone sees values: NaN equals NaN, dates by time, regular expressions by
- * source and flags, arrays and typed arrays element by element, maps and sets by their entries, objects by their own
- * keys. Cycles are followed once.
+ * Deep equality by value, for JSON-like data: NaN equals NaN, arrays element by element, plain objects by their own
+ * keys. Anything else (a date, a map, an image) is only the same as itself. Cycles are followed once.
  * @param {any} a
  * @param {any} b
  * @param {Map<object, object>} [seen] pairs already being compared (for cycles)
@@ -287,63 +273,13 @@ function same(raw, copy) {
  */
 export function equal(a, b, seen) {
   if (a === b) return true;
-  if (typeof a !== typeof b) return false;
   if (typeof a === "number") return a !== a && b !== b; // both NaN
   if (typeof a !== "object" || a === null || b === null) return false;
   const tag = objectTag(a);
   if (tag !== objectTag(b)) return false;
+  if (tag !== "[object Array]" && tag !== "[object Object]") return false;
   if (seen?.get(a) === b) return true;
   (seen ??= new Map()).set(a, b);
-  if (ArrayBuffer.isView(a)) {
-    if (a.constructor !== b.constructor || a.byteLength !== b.byteLength)
-      return false;
-    if (a instanceof DataView) return sameBytes(a, b);
-    const items = /** @type {Uint8Array} */ (a); // a typed array, of any kind
-    for (let i = 0; i < items.length; i++)
-      if (items[i] !== b[i] && !(items[i] !== items[i] && b[i] !== b[i]))
-        return false;
-    return true;
-  }
-  switch (tag) {
-    case "[object Date]":
-      return equal(a.getTime(), b.getTime());
-    case "[object RegExp]":
-      return a.source === b.source && a.flags === b.flags;
-    case "[object Number]":
-    case "[object String]":
-    case "[object Boolean]":
-    case "[object BigInt]":
-      return equal(a.valueOf(), b.valueOf());
-    case "[object Error]":
-      return a.name === b.name && a.message === b.message;
-    case "[object ArrayBuffer]":
-      return a.byteLength === b.byteLength && sameBytes(a, b);
-    case "[object Array]":
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++)
-        if (!equal(a[i], b[i], seen)) return false;
-      return true;
-    case "[object Map]":
-      if (a.size !== b.size) return false;
-      for (const [k, v] of a)
-        if (!b.has(k) || !equal(v, b.get(k), seen)) return false;
-      return true;
-    case "[object Set]": {
-      if (a.size !== b.size) return false;
-      let loose = null; // b's object members not matched by identity, for a deep match
-      for (const v of a) {
-        if (b.has(v)) continue;
-        if (v === null || typeof v !== "object") return false;
-        loose ??= [...b].filter((w) => w !== null && typeof w === "object");
-        const at = loose.findIndex((w) => equal(v, w, seen));
-        if (at < 0) return false;
-        loose.splice(at, 1);
-      }
-      return true;
-    }
-  }
-  // Anything else the platform makes (an image, a canvas, a bitmap) is only the same as itself.
-  if (tag !== "[object Object]" && tag !== "[object Arguments]") return false;
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
   for (const k of keys)
@@ -351,23 +287,10 @@ export function equal(a, b, seen) {
   return true;
 }
 
-function sameBytes(a, b) {
-  const x = ArrayBuffer.isView(a)
-      ? new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
-      : new Uint8Array(a),
-    y = ArrayBuffer.isView(b)
-      ? new Uint8Array(b.buffer, b.byteOffset, b.byteLength)
-      : new Uint8Array(b);
-  if (x.length !== y.length) return false;
-  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
-  return true;
-}
-
 /** An id as the model keeps it: a non-empty string, or a number written as one. Anything else is no id. */
 function idOf(value) {
   if (typeof value === "string") return value === "" ? undefined : value;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value === "bigint") return String(value);
   return undefined;
 }
 
@@ -465,7 +388,6 @@ function checkEnds(source, target, has, id, problem) {
   return true;
 }
 
-/** The keys whose values differ, with their new values. */
 /**
  * The keys of `given` options that the schema knows and that have a value, added to `onto` (a new set either way).
  * @returns {Set<string>}
@@ -478,6 +400,7 @@ function givenKeys(schema, given, onto = null) {
   return out;
 }
 
+/** The keys whose values differ, with their new values. */
 function changes(before, after) {
   const out = {};
   for (const k of Object.keys(after))
@@ -569,14 +492,8 @@ export class GraphModel {
   #queue = [];
   /** Structure worked out from the edges, for the current structure: null until asked for. */
   #adj = null;
-  /** Edge ends as node indices, kept across appends: valid for edges [0, #endsValid). */
-  #source = new Int32Array(0);
-  #target = new Int32Array(0);
-  #endsValid = 0;
   /** The array-of-arrays views (ends, outgoing, incoming), built from #adj when first read. */
   #views = null;
-  /** Node indices whose label width must be measured again, or null when every width must be (see labelWidths). */
-  #widthsDirty = null;
   /** The nodes and edges, in order: the model's own working lists, changed in place. */
   #nodeList = [];
   #edgeList = [];
@@ -709,21 +626,13 @@ export class GraphModel {
     if (this.#adj) return this.#adj;
     const n = this.#nodeList.length,
       m = this.#edgeList.length;
-    // Edge ends: kept across appends (an appended edge or node moves nobody), worked out for the rest. New arrays
-    // each time: the old ones may still be in use by whoever read the old structure.
-    const valid = Math.min(this.#endsValid, m);
     const source = new Int32Array(m),
       target = new Int32Array(m);
-    source.set(this.#source.subarray(0, valid));
-    target.set(this.#target.subarray(0, valid));
-    for (let i = valid; i < m; i++) {
+    for (let i = 0; i < m; i++) {
       const e = this.#edgeList[i];
       source[i] = this.index.get(e.source);
       target[i] = this.index.get(e.target);
     }
-    this.#source = source;
-    this.#target = target;
-    this.#endsValid = m;
     this.#adj = compressedRows(n, source, target);
     return this.#adj;
   }
@@ -773,28 +682,19 @@ export class GraphModel {
     if (this.#widthsAt === this.#nodesStamp) return this.widths;
     const { labelSize: size, labelMaxWidth: max } = this.opts.node;
     const measure = (text) => this.measure(text, size);
-    const width = (label) => {
+    // A new array (the old one may be in a layout job's hands); every label already measured comes from the cache.
+    const widths = new Float64Array(this.#nodeList.length);
+    for (let i = 0; i < widths.length; i++) {
+      const label = this.#nodeList[i].label;
       let w = this.widthCache.get(label);
       if (w === undefined) {
         w = fitLabel(label, max, measure).width;
         this.widthCache.set(label, w);
       }
-      return w;
-    };
-    const count = this.#nodeList.length;
-    const widths = new Float64Array(count);
-    const dirty = this.#widthsDirty;
-    // A copy (the old array may be in a layout job's hands), with only the labels that changed measured again.
-    if (dirty && this.#widthsAt >= 0) {
-      widths.set(this.widths.subarray(0, Math.min(count, this.widths.length)));
-      for (const i of dirty)
-        if (i < count) widths[i] = width(this.#nodeList[i].label);
-    } else
-      for (let i = 0; i < count; i++)
-        widths[i] = width(this.#nodeList[i].label);
+      widths[i] = w;
+    }
     this.widths = widths;
     this.#widthsAt = this.#nodesStamp;
-    this.#widthsDirty = new Set();
     return widths;
   }
 
@@ -817,7 +717,6 @@ export class GraphModel {
   #forgetWidths() {
     this.widthCache.clear();
     this.#widthsAt = -1;
-    this.#widthsDirty = null;
   }
 
   /**
@@ -1082,9 +981,8 @@ export class GraphModel {
       for (let i = 0; i < nodes.length; i++) this.index.set(nodes[i].id, i);
       this.edgeIndex = new Map();
       for (let i = 0; i < edges.length; i++) this.edgeIndex.set(edges[i].id, i);
-      this.#endsValid = 0;
-      this.#newStructure(true);
-    } else this.#relabel(changedAt);
+      this.#newStructure();
+    }
     change.version = ++this.version;
     return change;
   }
@@ -1134,19 +1032,11 @@ export class GraphModel {
   }
 
   /** Nodes or edges came, went or moved: what was worked out from the old structure is dropped. */
-  #newStructure(renumbered) {
+  #newStructure() {
     this.structureVersion++;
     this.#adj = null;
     this.#views = null;
     this.cache = new Map();
-    if (renumbered) this.#widthsDirty = null;
-  }
-
-  /** Labels changed in place (same nodes, same order): only those need measuring again. */
-  #relabel(nodePairs) {
-    if (!this.#widthsDirty) return;
-    for (const [before, after, i] of nodePairs)
-      if (before.label !== after.label) this.#widthsDirty.add(i);
   }
 
   #update(delta) {
@@ -1310,8 +1200,6 @@ export class GraphModel {
 
     // Nodes: removed ones compacted out (the ones after them renumbered), changed ones swapped, added ones appended.
     // The lists change in place; the frozen copies already handed out keep the old ones.
-    const oldNodeCount = oldNodes.length,
-      oldEdgeCount = oldEdges.length;
     const nodes = this.#nodeList,
       edges = this.#edgeList;
     if (goneNodeAt.length) {
@@ -1342,19 +1230,7 @@ export class GraphModel {
       goneEdgeAt.length > 0 || changedEdges.size > 0 || addedEdges.size > 0,
     );
 
-    if (structure) {
-      // Edge ends stay right for the edges before the first removed one, unless nodes were renumbered.
-      const firstEdge = goneEdgeAt.length ? goneEdgeAt[0] : oldEdgeCount;
-      this.#endsValid = goneNodeAt.length
-        ? 0
-        : Math.min(this.#endsValid, firstEdge);
-      this.#newStructure(goneNodeAt.length > 0);
-      // Appended nodes are measured when widths are next asked for (after a removal, every node is).
-      if (this.#widthsDirty)
-        for (let i = oldNodeCount; i < nodes.length; i++)
-          this.#widthsDirty.add(i);
-    }
-    this.#relabel(nodePairs); // their indices are still right: without a removal nothing was renumbered
+    if (structure) this.#newStructure();
     change.version = ++this.version;
     return change;
   }
@@ -1448,74 +1324,9 @@ export class GraphModel {
    * @returns {{ back: Uint8Array, order: number[], longest: Int32Array, sources: number[], sinks: number[] }}
    */
   dag() {
-    return this.#cached("dag", () => {
-      const { source, target, outStart, outEdges } = this.adjacency();
-      const count = this.#nodeList.length,
-        m = this.#edgeList.length;
-      const back = new Uint8Array(m);
-      const state = new Uint8Array(count); // 0 new, 1 on the stack, 2 done
-      // Depth first without recursion: a stack of nodes and, per node, how far through its edges it is.
-      const stack = new Int32Array(count),
-        next = new Int32Array(count);
-      const visit = (start) => {
-        let top = 0;
-        stack[0] = start;
-        next[start] = outStart[start];
-        state[start] = 1;
-        while (top >= 0) {
-          const v = stack[top];
-          if (next[v] < outStart[v + 1]) {
-            const ei = outEdges[next[v]++];
-            const w = target[ei];
-            if (state[w] === 1) back[ei] = 1;
-            else if (!state[w]) {
-              state[w] = 1;
-              next[w] = outStart[w];
-              stack[++top] = w;
-            }
-          } else {
-            state[v] = 2;
-            top--;
-          }
-        }
-      };
-      for (const r of this.forest().roots) if (!state[r]) visit(r);
-      for (let v = 0; v < count; v++) if (!state[v]) visit(v);
-
-      // With back edges reversed: each node's edges down, in edge order (a counting sort again).
-      const indegree = new Int32Array(count),
-        downStart = new Int32Array(count + 1);
-      for (let ei = 0; ei < m; ei++) {
-        const from = back[ei] ? target[ei] : source[ei],
-          to = back[ei] ? source[ei] : target[ei];
-        indegree[to]++;
-        downStart[from + 1]++;
-      }
-      for (let v = 0; v < count; v++) downStart[v + 1] += downStart[v];
-      const down = new Int32Array(m),
-        at = downStart.slice(0, count);
-      for (let ei = 0; ei < m; ei++) {
-        const from = back[ei] ? target[ei] : source[ei],
-          to = back[ei] ? source[ei] : target[ei];
-        down[at[from]++] = to;
-      }
-      const sources = [];
-      for (let v = 0; v < count; v++) if (!indegree[v]) sources.push(v);
-      const order = sources.slice(),
-        longest = new Int32Array(count);
-      for (let head = 0; head < order.length; head++) {
-        const v = order[head];
-        for (let k = downStart[v]; k < downStart[v + 1]; k++) {
-          const w = down[k];
-          if (longest[v] + 1 > longest[w]) longest[w] = longest[v] + 1;
-          if (--indegree[w] === 0) order.push(w);
-        }
-      }
-      const sinks = [];
-      for (let v = 0; v < count; v++)
-        if (downStart[v] === downStart[v + 1]) sinks.push(v);
-      return { back, order, longest, sources, sinks };
-    });
+    return this.#cached("dag", () =>
+      dagOf(this.#nodeList.length, this.adjacency(), this.forest().roots),
+    );
   }
 
   /**
@@ -1561,50 +1372,6 @@ export class GraphModel {
         backEdges,
       });
     });
-  }
-
-  /**
-   * What differs from `previous` (another model, or JSON) to this model, by id: nodes and edges added, removed,
-   * kept, and kept nodes whose label, style or data differ.
-   * @param {GraphModel | GraphJSON} previous
-   * @returns {{ nodesAdded: string[], nodesRemoved: string[], nodesKept: string[], nodesChanged: string[],
-   *   edgesAdded: string[], edgesRemoved: string[] }}
-   */
-  diff(previous) {
-    const before = GraphModel.from(previous);
-    const nodesAdded = [],
-      nodesKept = [],
-      nodesChanged = [];
-    for (const n of this.#nodeList) {
-      const old = before.node(n.id);
-      if (!old) nodesAdded.push(n.id);
-      else {
-        nodesKept.push(n.id);
-        if (
-          old.label !== n.label ||
-          !equal(old.style, n.style) ||
-          !equal(old.data, n.data)
-        )
-          nodesChanged.push(n.id);
-      }
-    }
-    const nodesRemoved = before.nodes
-      .filter((n) => !this.index.has(n.id))
-      .map((n) => n.id);
-    const edgesAdded = this.#edgeList
-      .filter((e) => !before.edgeIndex.has(e.id))
-      .map((e) => e.id);
-    const edgesRemoved = before.edges
-      .filter((e) => !this.edgeIndex.has(e.id))
-      .map((e) => e.id);
-    return {
-      nodesAdded,
-      nodesRemoved,
-      nodesKept,
-      nodesChanged,
-      edgesAdded,
-      edgesRemoved,
-    };
   }
 
   /**
@@ -1739,6 +1506,82 @@ export function forestOf(count, { target, outStart, outEdges, inStart }) {
     tree,
     maxDepth,
   };
+}
+
+/**
+ * A structure read as a DAG (see GraphModel.dag): edges that close a cycle, found depth-first from `roots` (then from
+ * any node still unvisited), are back edges; with them reversed, a topological order and each node's longest path
+ * from a source. For a model, and for a merged layout of a working graph (layered.js).
+ * @param {number} count nodes
+ * @param {Adjacency} adjacency
+ * @param {Iterable<number>} roots where the search starts, in order (the forest's roots)
+ * @returns {{ back: Uint8Array, order: number[], longest: Int32Array, sources: number[], sinks: number[] }}
+ */
+export function dagOf(count, { source, target, outStart, outEdges }, roots) {
+  const m = source.length;
+  const back = new Uint8Array(m);
+  const state = new Uint8Array(count); // 0 new, 1 on the stack, 2 done
+  // Depth first without recursion: a stack of nodes and, per node, how far through its edges it is.
+  const stack = new Int32Array(count),
+    next = new Int32Array(count);
+  const visit = (start) => {
+    let top = 0;
+    stack[0] = start;
+    next[start] = outStart[start];
+    state[start] = 1;
+    while (top >= 0) {
+      const v = stack[top];
+      if (next[v] < outStart[v + 1]) {
+        const ei = outEdges[next[v]++];
+        const w = target[ei];
+        if (state[w] === 1) back[ei] = 1;
+        else if (!state[w]) {
+          state[w] = 1;
+          next[w] = outStart[w];
+          stack[++top] = w;
+        }
+      } else {
+        state[v] = 2;
+        top--;
+      }
+    }
+  };
+  for (const r of roots) if (!state[r]) visit(r);
+  for (let v = 0; v < count; v++) if (!state[v]) visit(v);
+
+  // With back edges reversed: each node's edges down, in edge order (a counting sort again).
+  const indegree = new Int32Array(count),
+    downStart = new Int32Array(count + 1);
+  for (let ei = 0; ei < m; ei++) {
+    const from = back[ei] ? target[ei] : source[ei],
+      to = back[ei] ? source[ei] : target[ei];
+    indegree[to]++;
+    downStart[from + 1]++;
+  }
+  for (let v = 0; v < count; v++) downStart[v + 1] += downStart[v];
+  const down = new Int32Array(m),
+    at = downStart.slice(0, count);
+  for (let ei = 0; ei < m; ei++) {
+    const from = back[ei] ? target[ei] : source[ei],
+      to = back[ei] ? source[ei] : target[ei];
+    down[at[from]++] = to;
+  }
+  const sources = [];
+  for (let v = 0; v < count; v++) if (!indegree[v]) sources.push(v);
+  const order = sources.slice(),
+    longest = new Int32Array(count);
+  for (let head = 0; head < order.length; head++) {
+    const v = order[head];
+    for (let k = downStart[v]; k < downStart[v + 1]; k++) {
+      const w = down[k];
+      if (longest[v] + 1 > longest[w]) longest[w] = longest[v] + 1;
+      if (--indegree[w] === 0) order.push(w);
+    }
+  }
+  const sinks = [];
+  for (let v = 0; v < count; v++)
+    if (downStart[v] === downStart[v + 1]) sinks.push(v);
+  return { back, order, longest, sources, sinks };
 }
 
 /** Take the items at `gone` (ascending indices) out of `list`, in place, keeping the others in order. */

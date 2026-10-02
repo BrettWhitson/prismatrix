@@ -140,10 +140,12 @@ export function lineageMask(graph, index, into = null) {
   return mask;
 }
 
+/** How many lineages LineageCache keeps. */
+const LINEAGES_KEPT = 32;
+
 /** The last few lineages worked out, for one working graph (hovering back and forth costs nothing). */
 export class LineageCache {
-  constructor(size = 32) {
-    this.size = size;
+  constructor() {
     this.graph = null;
     /** @type {Map<number, Uint8Array>} newest last */
     this.masks = new Map();
@@ -158,7 +160,7 @@ export class LineageCache {
     if (mask) this.masks.delete(index);
     else mask = lineageMask(graph, index);
     this.masks.set(index, mask);
-    if (this.masks.size > this.size)
+    if (this.masks.size > LINEAGES_KEPT)
       this.masks.delete(this.masks.keys().next().value);
     return mask;
   }

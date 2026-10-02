@@ -89,17 +89,35 @@ function curve(routing, s, t) {
       c1 = [s.x, mid];
       c2 = [t.x, mid];
     }
-  } else {
-    const { cx, cy } = routing;
-    const rs = Math.hypot(s.x - cx, s.y - cy);
-    const rt = Math.hypot(t.x - cx, t.y - cy);
-    const at = Math.atan2(t.y - cy, t.x - cx);
-    const as = centred(s, rs, cx, cy) ? at : Math.atan2(s.y - cy, s.x - cx);
-    const rm = (rs + rt) / 2;
-    c1 = [cx + Math.cos(as) * rm, cy + Math.sin(as) * rm];
-    c2 = [cx + Math.cos(at) * rm, cy + Math.sin(at) * rm];
-  }
+  } else [c1, c2] = radialControls(routing, s, t);
   return cubic([s.x, s.y], c1, c2, [t.x, t.y]);
+}
+
+/** A radial curve's controls: on the ring halfway between its ends, on the source's spoke and on the target's. */
+function radialControls({ cx, cy }, s, t) {
+  const rs = Math.hypot(s.x - cx, s.y - cy);
+  const rt = Math.hypot(t.x - cx, t.y - cy);
+  const at = Math.atan2(t.y - cy, t.x - cx);
+  // A node at the centre has no angle of its own: leave it towards the child.
+  const as = centred(s, rs, cx, cy) ? at : Math.atan2(s.y - cy, s.x - cx);
+  const rm = (rs + rt) / 2;
+  return [
+    [cx + Math.cos(as) * rm, cy + Math.sin(as) * rm],
+    [cx + Math.cos(at) * rm, cy + Math.sin(at) * rm],
+  ];
+}
+
+/** The point at `t` (0–1) of a cubic Bézier from p0 to p3, controls p1 and p2. */
+function bezierAt(p0, p1, p2, p3, t) {
+  const u = 1 - t;
+  const a = u * u * u,
+    b = 3 * u * u * t,
+    c = 3 * u * t * t,
+    d = t * t * t;
+  return [
+    a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
+    a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1],
+  ];
 }
 
 /** Points along a cubic Bézier, enough for its length to look smooth (about one per 6 world px, 8 to 48). */
@@ -110,18 +128,8 @@ export function cubic(p0, p1, p2, p3) {
     Math.hypot(p3[0] - p2[0], p3[1] - p2[1]);
   const count = Math.min(48, Math.max(8, Math.ceil(hull / 6)));
   const out = [];
-  for (let i = 0; i <= count; i++) {
-    const t = i / count,
-      u = 1 - t;
-    const a = u * u * u,
-      b = 3 * u * u * t,
-      c = 3 * u * t * t,
-      d = t * t * t;
-    out.push(
-      a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
-      a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1],
-    );
-  }
+  for (let i = 0; i <= count; i++)
+    out.push(...bezierAt(p0, p1, p2, p3, i / count));
   return out;
 }
 
@@ -225,19 +233,24 @@ export function bundlePath(graph, e) {
 
 /**
  * The route of a cross-link (an edge that isn't a parent → child link in the forest): along the tree path between
- * its ends (bundlePath), as a B-spline pulled towards that path by `strength` (hierarchical edge bundling, Holten
- * 2006). Cross-links that share an ancestor bundle together along the tree instead of cutting across it. Ends in
- * different trees, or a path with nothing between them, go straight.
+ * its ends (bundlePath), as a B-spline pulled towards that path by BUNDLE_STRENGTH (hierarchical edge bundling,
+ * Holten 2006). Cross-links that share an ancestor bundle together along the tree instead of cutting across it. Ends
+ * in different trees, or a path with nothing between them, go straight.
  * @returns {number[]} flat x, y pairs
  */
-export function bundledPoints(graph, e, strength = BUNDLE_STRENGTH) {
+export function bundledPoints(graph, e) {
   const nodes = graph.nodes;
   const path = bundlePath(graph, e);
-  if (!path) return straight(nodes, e);
+  if (!path) {
+    const s = nodes[e.source],
+      t = nodes[e.target];
+    return [s.x, s.y, t.x, t.y];
+  }
   const first = nodes[path[0]],
     last = nodes[path.at(-1)];
+  const strength = BUNDLE_STRENGTH;
   const control = path.map((i, k) => {
-    // Pull towards the straight line between the ends by (1 − strength): 1 follows the tree, 0 goes straight.
+    // Pull towards the straight line between the ends by (1 − strength).
     const t = k / (path.length - 1);
     const lx = first.x + (last.x - first.x) * t,
       ly = first.y + (last.y - first.y) * t;
@@ -247,12 +260,6 @@ export function bundledPoints(graph, e, strength = BUNDLE_STRENGTH) {
     ];
   });
   return bspline(control);
-}
-
-function straight(nodes, e) {
-  const s = nodes[e.source],
-    t = nodes[e.target];
-  return [s.x, s.y, t.x, t.y];
 }
 
 /** A uniform cubic B-spline through `control`, clamped (the first and last points repeated) so it starts and ends on them. */
@@ -266,19 +273,10 @@ export function bspline(control) {
   ];
   const out = [];
   for (let i = 0; i + 3 < p.length; i++) {
-    for (let k = i === 0 ? 0 : 1; k <= BUNDLE_STEPS; k++) {
-      const t = k / BUNDLE_STEPS,
-        t2 = t * t,
-        t3 = t2 * t;
-      const w0 = (1 - 3 * t + 3 * t2 - t3) / 6,
-        w1 = (4 - 6 * t2 + 3 * t3) / 6,
-        w2 = (1 + 3 * t + 3 * t2 - 3 * t3) / 6,
-        w3 = t3 / 6;
+    for (let k = i === 0 ? 0 : 1; k <= BUNDLE_STEPS; k++)
       out.push(
-        w0 * p[i][0] + w1 * p[i + 1][0] + w2 * p[i + 2][0] + w3 * p[i + 3][0],
-        w0 * p[i][1] + w1 * p[i + 1][1] + w2 * p[i + 2][1] + w3 * p[i + 3][1],
+        ...splineAt(k / BUNDLE_STEPS, p[i], p[i + 1], p[i + 2], p[i + 3]),
       );
-    }
   }
   // Exactly on the ends (the sums above can be a hair off), since trimming measures from them.
   out[0] = control[0][0];
@@ -286,6 +284,23 @@ export function bspline(control) {
   out[out.length - 2] = control.at(-1)[0];
   out[out.length - 1] = control.at(-1)[1];
   return out;
+}
+
+/**
+ * A point of a uniform cubic B-spline span with control points p0–p3 (each [x, y]), at t (0–1): the same sum as the
+ * bundle shader's.
+ */
+export function splineAt(t, p0, p1, p2, p3) {
+  const t2 = t * t,
+    t3 = t2 * t;
+  const w0 = (1 - 3 * t + 3 * t2 - t3) / 6,
+    w1 = (4 - 6 * t2 + 3 * t3) / 6,
+    w2 = (1 + 3 * t + 3 * t2 - 3 * t3) / 6,
+    w3 = t3 / 6;
+  return [
+    w0 * p0[0] + w1 * p1[0] + w2 * p2[0] + w3 * p3[0],
+    w0 * p0[1] + w1 * p1[1] + w2 * p2[1] + w3 * p3[1],
+  ];
 }
 
 /**
@@ -316,7 +331,7 @@ export function edgeRoute(graph, routing, shape, e, junction = null) {
  * homes; when the ends move (a drag, physics), the bends move with them, each in proportion to how far along the
  * edge it is. Straight and fan draw a polyline; step and curve repeat the tree's step or curve between each pair.
  */
-export function layeredPoints(routing, shape, e, s, t) {
+function layeredPoints(routing, shape, e, s, t) {
   const bends = routing.bends.get(e) ?? [];
   const k = bends.length;
   const dsx = s.x - (s.homeX ?? s.x),
@@ -372,8 +387,7 @@ function radialStep(routing, s, t) {
   if (centred(s, rs, cx, cy)) return [s.x, s.y, t.x, t.y];
   const rt = Math.hypot(t.x - cx, t.y - cy);
   const at = Math.atan2(t.y - cy, t.x - cx);
-  // A node at the centre has no angle of its own: leave it towards the child.
-  const as = centred(s, rs, cx, cy) ? at : Math.atan2(s.y - cy, s.x - cx);
+  const as = Math.atan2(s.y - cy, s.x - cx);
   // Out along the source's spoke to the ring halfway between, round that ring, then in along the target's spoke.
   const rm = (rs + rt) / 2;
   let delta = at - as;
@@ -402,8 +416,7 @@ function radialStep(routing, s, t) {
   pts.push(t.x, t.y);
   if (w <= 0) return pts;
   // Partway: each point of the step slides towards the curve, matched by how far along the edge it is.
-  const c1 = [cx + Math.cos(as) * rm, cy + Math.sin(as) * rm],
-    c2 = [cx + Math.cos(at) * rm, cy + Math.sin(at) * rm];
+  const [c1, c2] = radialControls(routing, s, t);
   return blendTowardsCubic(pts, [s.x, s.y], c1, c2, [t.x, t.y], w);
 }
 
@@ -441,7 +454,7 @@ export function stepCurveWeight(rs, rt, hs, ht, arc, chord, morphing = false) {
  * Points `pts` (flat x, y) slid `w` of the way towards a cubic from p0 to p3 (controls p1, p2): each point to the
  * curve's point as far along it as the point is along `pts`.
  */
-export function blendTowardsCubic(pts, p0, p1, p2, p3, w) {
+function blendTowardsCubic(pts, p0, p1, p2, p3, w) {
   let total = 0;
   const along = [0];
   for (let i = 2; i < pts.length; i += 2) {
@@ -450,14 +463,7 @@ export function blendTowardsCubic(pts, p0, p1, p2, p3, w) {
   }
   const out = [];
   for (let i = 0; i < pts.length; i += 2) {
-    const u = total ? along[i / 2] / total : 0,
-      v = 1 - u;
-    const a = v * v * v,
-      b = 3 * v * v * u,
-      c = 3 * v * u * u,
-      d = u * u * u;
-    const cx = a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
-      cy = a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1];
+    const [cx, cy] = bezierAt(p0, p1, p2, p3, total ? along[i / 2] / total : 0);
     out.push(pts[i] + (cx - pts[i]) * w, pts[i + 1] + (cy - pts[i + 1]) * w);
   }
   return out;
@@ -468,11 +474,37 @@ export function blendTowardsCubic(pts, p0, p1, p2, p3, w) {
  * meet (the nodes overlap).
  */
 export function trim(pts, from, to) {
+  const total = pathLength(pts);
+  if (from + to >= total) return null;
+  return slice(pts, from, total - to);
+}
+
+/** A polyline's length (flat x, y pairs). */
+export function pathLength(pts) {
   let total = 0;
   for (let i = 2; i < pts.length; i += 2)
     total += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
-  if (from + to >= total) return null;
-  return slice(pts, from, total - to);
+  return total;
+}
+
+/**
+ * Edge `ei` of the scene's graph as painters draw it: its route (through its parent's fan junction when `junctions`,
+ * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target and of its
+ * end (an arrow or a dot). Null when nothing is left.
+ */
+export function trimmedRoute(scene, ei, junctions, starts) {
+  const { graph, edge, looks } = scene;
+  const e = graph.edges[ei];
+  const jx = junctions && e.tree ? junctions[e.source * 2] : NaN;
+  const junction = Number.isNaN(jx)
+    ? null
+    : { x: jx, y: junctions[e.source * 2 + 1] };
+  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
+  return trim(
+    edgeRoute(graph, scene.routing, edge.shape, e, junction),
+    starts[ei],
+    looks.radius[e.target] + end,
+  );
 }
 
 /** The last startTrims worked out, and what for: painters ask every frame, and it changes only with the layout. */

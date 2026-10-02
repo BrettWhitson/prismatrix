@@ -21,14 +21,13 @@
 
 import { fitLabel, labelAnchor, reach } from "./boxes.js";
 import {
-  END_ROOM,
-  edgeRoute,
   fanJunctions,
+  pathLength,
   startTrims,
-  trim,
+  trimmedRoute,
 } from "./geometry.js";
 import { ringStroke } from "./references.js";
-import { edgeAlpha, labelAlpha, labelsShown, nodeAlpha } from "./render.js";
+import { edgeAlpha, labelAlpha, nodeAlpha } from "./render.js";
 import { DEFAULT_THEME } from "./theme.js";
 
 /** The font for text `px` high. */
@@ -39,17 +38,19 @@ export const TEXT_HALO = 0.2;
 /** Pinned labels are never drawn smaller than this many CSS px. */
 export const PINNED_PX = 10;
 /** Roots are pinned only when there are at most this many (a forest of recipes would bury the view). */
-export const PINNED_ROOTS = 12;
+const PINNED_ROOTS = 12;
+/** Text smaller than this many CSS px is never drawn. */
+const LABEL_MIN_PX = 2;
 /** Edge labels' size as a share of the node label size; hidden when smaller than EDGE_LABEL_MIN_PX on screen. */
 export const EDGE_LABEL_SCALE = 0.85;
-export const EDGE_LABEL_MIN_PX = 6;
+const EDGE_LABEL_MIN_PX = 6;
 /** Room between an edge and its label, world px (past the edge's half-width). */
-export const EDGE_LABEL_GAP = 3;
+const EDGE_LABEL_GAP = 3;
 /** How far back from its end an edge's label sits, in its font sizes (clear of the target's badge). */
 export const EDGE_LABEL_BACK = 1.6;
 /** Badges' and usage counts' size as a share of the label size; hidden when smaller than SMALL_MIN_PX on screen. */
-export const SMALL_SCALE = 0.8;
-export const SMALL_MIN_PX = 5;
+const SMALL_SCALE = 0.8;
+const SMALL_MIN_PX = 5;
 /** A badge's pill: padding either side of the text and height, as shares of its font size. */
 export const PILL = { pad: 0.45, height: 1.35 };
 /** How far quieter text (edge labels, counts) is taken from the text colour towards the background. */
@@ -68,27 +69,19 @@ function mix(a, b, f) {
   return `#${out.toString(16).padStart(6, "0")}`;
 }
 
-const coloursOf = new WeakMap();
-
 /**
- * The colours text is drawn in, from the scene's theme (theme.js): `label` (the theme's text), `quiet` (edge labels
- * and counts: the text a little towards the background), `halo` (the theme's textHalo), `pillText` (a badge's text,
- * the background), `pill` (an app badge's pill: the text colour). Kept per theme.
- * @returns {{ label: string, quiet: string, halo: string, pillText: string, pill: string }}
+ * The colours text is drawn in, from the scene's theme (theme.js): `label` (the theme's text; an app badge's pill
+ * too), `quiet` (edge labels and counts: the text a little towards the background), `halo` (the theme's textHalo),
+ * `pillText` (a badge's text, the background).
+ * @returns {{ label: string, quiet: string, halo: string, pillText: string }}
  */
 export function textColours(theme = DEFAULT_THEME) {
-  let c = coloursOf.get(theme);
-  if (!c) {
-    c = {
-      label: theme.text,
-      quiet: mix(theme.text, theme.background, QUIET),
-      halo: theme.textHalo ?? theme.background,
-      pillText: theme.background,
-      pill: theme.text,
-    };
-    coloursOf.set(theme, c);
-  }
-  return c;
+  return {
+    label: theme.text,
+    quiet: mix(theme.text, theme.background, QUIET),
+    halo: theme.textHalo ?? theme.background,
+    pillText: theme.background,
+  };
 }
 
 /**
@@ -151,9 +144,7 @@ export function textBox(item, width) {
  * @returns {{ x: number, y: number, align: string, baseline: string } | null}
  */
 export function edgeLabelAt(pts, place, back, gap) {
-  let total = 0;
-  for (let i = 2; i < pts.length; i += 2)
-    total += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
+  const total = pathLength(pts);
   if (!(total > 0)) return null;
   const at = place === "middle" ? total / 2 : Math.max(total / 2, total - back);
   let walked = 0,
@@ -189,6 +180,16 @@ export function edgeLabelAt(pts, place, back, gap) {
     align: nx > 0.35 ? "left" : nx < -0.35 ? "right" : "center",
     baseline: ny > 0.35 ? "top" : ny < -0.35 ? "bottom" : "middle",
   };
+}
+
+/**
+ * Whether labels show at this zoom. Labels with room kept for them (label collision) show until their text is
+ * smaller than LABEL_MIN_PX (a smudge, and with a whole big graph in view, tens of thousands of them to rasterise);
+ * others drop out when too small to read (6 px).
+ */
+export function labelsShown(node, camera) {
+  if (node.labels === "off") return false;
+  return node.labelSize * camera.k >= (node.labelCollide ? LABEL_MIN_PX : 6);
 }
 
 /** What text shows at this zoom: node labels, edge labels, small text (badges, counts), pinned at world size. */
@@ -250,8 +251,28 @@ export function textFitter(measure) {
   };
 }
 
+/**
+ * Text measurement on 2D context `ctx`: `measure(text, size)`, each width kept, and a label fitter on it
+ * (textFitter).
+ */
+export function textMeasurer(ctx) {
+  const widths = new Map();
+  const measure = (text, size) => {
+    const key = `${size}|${text}`;
+    let w = widths.get(key);
+    if (w === undefined) {
+      if (widths.size > 50000) widths.clear();
+      ctx.font = font(size);
+      w = ctx.measureText(text).width;
+      widths.set(key, w);
+    }
+    return w;
+  };
+  return { measure, fit: textFitter(measure) };
+}
+
 /** About the box an item takes (world px), with text estimated at 0.6 font sizes a character: for keeping clear. */
-export function roughBox(item) {
+function roughBox(item) {
   const box = textBox(item, Array.from(item.text).length * 0.6 * item.size);
   const x0 = item.x + box.left,
     y0 = item.y + box.middle - box.height / 2;
@@ -356,7 +377,7 @@ export function planText(scene, { fit, near = null }) {
           baseline: "bottom",
           alpha: b.fold && b.text === "+" ? alpha * 0.6 : alpha,
           colour: colours.pillText,
-          under: b.fold ? looks.fill[i] : colours.pill,
+          under: b.fold ? looks.fill[i] : colours.label,
           pill: true,
         });
       }
@@ -366,7 +387,6 @@ export function planText(scene, { fit, near = null }) {
   if (show.edges) {
     const size = node.labelSize * EDGE_LABEL_SCALE;
     const place = edge.labels === "middle" ? "middle" : "target";
-    const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
     const taken = new Room(size * 4);
     for (const item of small) taken.take(roughBox(item));
     let starts = null,
@@ -387,15 +407,7 @@ export function planText(scene, { fit, near = null }) {
         into = new Uint32Array(graph.nodes.length);
         for (const f of graph.edges) into[f.target]++;
       }
-      const jx = junctions && e.tree ? junctions[e.source * 2] : NaN;
-      const junction = Number.isNaN(jx)
-        ? null
-        : { x: jx, y: junctions[e.source * 2 + 1] };
-      const pts = trim(
-        edgeRoute(graph, scene.routing, edge.shape, e, junction),
-        starts[ei],
-        looks.radius[e.target] + end,
-      );
+      const pts = trimmedRoute(scene, ei, junctions, starts);
       if (!pts) continue;
       const gap = EDGE_LABEL_GAP + looks.edgeWidth[ei] / 2;
       const where = into[e.target] > 1 ? "middle" : place;
@@ -421,27 +433,32 @@ export function planText(scene, { fit, near = null }) {
     }
   }
 
+  // A label `r` from node `i`'s centre, in its direction.
+  const add = (i, text, r, size, screen) => {
+    const n = graph.nodes[i];
+    const alpha = labelAlpha(scene, i);
+    if (alpha <= 0 || !text) return;
+    const a = labelAnchor(n.labelAngle, r);
+    items.push({
+      text,
+      size,
+      screen,
+      x: n.x + a.x,
+      y: n.y + a.y,
+      align: a.align,
+      baseline: a.baseline,
+      alpha,
+      colour: colours.label,
+      under,
+      pill: false,
+    });
+  };
+
   if (labelled && show.labels) {
     const size = node.labelSize;
-    for (const n of graph.nodes) {
-      if (!n.label || pinned.has(n.index) || !inside(n)) continue;
-      const alpha = labelAlpha(scene, n.index);
-      if (alpha <= 0) continue;
-      const a = labelAnchor(n.labelAngle, reachOf(n.index));
-      items.push({
-        text: fit(n.label, size, max),
-        size,
-        screen: false,
-        x: n.x + a.x,
-        y: n.y + a.y,
-        align: a.align,
-        baseline: a.baseline,
-        alpha,
-        colour: colours.label,
-        under,
-        pill: false,
-      });
-    }
+    for (const n of graph.nodes)
+      if (n.label && !pinned.has(n.index) && inside(n))
+        add(n.index, fit(n.label, size, max), reachOf(n.index), size, false);
   }
 
   items.push(...small);
@@ -449,36 +466,18 @@ export function planText(scene, { fit, near = null }) {
   if (labelled) {
     const world = show.pinnedWorld;
     const size = world ? node.labelSize : PINNED_PX;
-    const add = (i, text, r) => {
-      const n = graph.nodes[i];
-      const alpha = labelAlpha(scene, i);
-      if (alpha <= 0 || !text) return;
-      const a = labelAnchor(n.labelAngle, r);
-      items.push({
-        text,
-        size,
-        screen: !world,
-        x: n.x + a.x,
-        y: n.y + a.y,
-        align: a.align,
-        baseline: a.baseline,
-        alpha,
-        colour: colours.label,
-        under,
-        pill: false,
-      });
-    };
     // The hovered ingredient's name on each of its chips.
     const hover = scene.hover ?? -1;
     if (hover >= 0 && hover < real)
       for (let i = real; i < graph.nodes.length; i++) {
         if (graph.nodes[i].reference !== hover) continue;
         const r = looks.radius[i];
-        add(i, graph.nodes[hover].label, r + ringStroke(r) / 2);
+        add(i, graph.nodes[hover].label, r + ringStroke(r) / 2, size, !world);
       }
     for (const [i, whole] of pinned) {
       const label = graph.nodes[i].label;
-      add(i, whole ? label : fit(label, node.labelSize, max), reachOf(i));
+      const text = whole ? label : fit(label, node.labelSize, max);
+      add(i, text, reachOf(i), size, !world);
     }
   }
   return items;

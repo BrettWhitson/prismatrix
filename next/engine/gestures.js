@@ -31,7 +31,6 @@ const WHEEL_BURST = 150; // ms: wheel events closer than this are one gesture (o
  * @property {boolean} [shiftKey]
  * @property {boolean} [ctrlKey]
  * @property {boolean} [metaKey]
- * @property {boolean} [altKey]
  *
  * @typedef {object} WheelInput
  * @property {number} x
@@ -176,9 +175,7 @@ export class Gestures {
     if (ptr.role === "pan") {
       const dx = -(x - last.x) / c.camera.k;
       const dy = -(y - last.y) / c.camera.k;
-      this.host.userCamera();
-      c.camera.x += dx;
-      c.camera.y += dy;
+      this.#panBy(dx, dy);
       this.#track(ptr, dx, dy, time);
       if (!ptr.tap && !ptr.started) {
         ptr.started = true;
@@ -480,11 +477,16 @@ export class Gestures {
     }
     if (zoom) c.zoomBy(Math.exp(-dy * (ctrlKey ? 0.01 : 0.0015)), x, y);
     else {
-      this.host.userCamera();
-      c.camera.x += dx / c.camera.k;
-      c.camera.y += dy / c.camera.k;
+      this.#panBy(dx / c.camera.k, dy / c.camera.k);
       this.host.changed();
     }
+  }
+
+  /** The user moves the camera by (dx, dy) world px. */
+  #panBy(dx, dy) {
+    this.host.userCamera();
+    this.c.camera.x += dx;
+    this.c.camera.y += dy;
   }
 }
 
@@ -494,7 +496,7 @@ export class Gestures {
  * legacy `wheelDeltaY` as multiples of 120, and a trackpad's as exactly -3 × deltaY; Firefox's mouse wheel scrolls
  * by lines. With nothing to tell by, it's a wheel (zoom, as before).
  */
-export function looksLikeTrackpad(dx, dy, deltaMode, wheelDeltaY) {
+function looksLikeTrackpad(dx, dy, deltaMode, wheelDeltaY) {
   if (deltaMode !== 0) return false;
   if (dx !== 0 && Math.abs(dx) >= Math.abs(dy)) return true;
   if (wheelDeltaY) return Math.abs(wheelDeltaY + 3 * dy) < 1;

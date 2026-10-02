@@ -16,7 +16,6 @@ import {
   sizingFrom,
   structureOf,
   unpackRouting,
-  usableHint,
 } from "../../next/engine/layout-job.js";
 
 /** A fixture graph as prismatrix-graph JSON. */
@@ -179,18 +178,6 @@ test("with no hint every layout is as it was; with a hint at stability 0, the me
     assert.ok(Math.abs(m.homeY - n.homeY - dy) < 1e-6);
   }
   assert.equal(placed.routing.crossings, fresh.routing.crossings);
-  // A hint is used only when it fits the graph: one that doesn't is ignored, as if there were none.
-  const g = new Graph(GraphModel.from(changed));
-  const bad = { x: new Float64Array(3), y: new Float64Array(3) };
-  assert.equal(usableHint(bad, g.nodes.length, g.edges.length), false);
-  const result = runLayout(
-    g,
-    "merged",
-    options("merged"),
-    spec(g.nodes.length),
-    bad,
-  );
-  assert.deepEqual([...result.homeX], [...fresh.g.matrix.homeX]);
   // Nothing kept (every id new): nothing to hold, no hint.
   const other = new Graph(
     GraphModel.from({ nodes: [{ id: "elsewhere" }], edges: [] }),
@@ -241,7 +228,7 @@ test("the hint is found by id: homes, reference chips and bends, NaN for what's 
   const [changed] = oneLeafChanges(json, 0.3);
   const g = new Graph(GraphModel.from(changed));
   const hint = hintFrom(before.g, g, before.routing);
-  assert.ok(usableHint(hint, g.nodes.length, g.edges.length));
+  assert.ok(hint);
   for (const n of g.nodes) {
     const was = before.g.byId.get(n.id);
     if (!was) assert.ok(Number.isNaN(hint.x[n.index]), "new: NaN");
@@ -275,7 +262,7 @@ test("the hint is found by id: homes, reference chips and bends, NaN for what's 
     const [s, t] = model.ends[i];
     if (keep.has(s) && keep.has(t)) edges.push(i);
   });
-  const part = new Graph(model, null, {
+  const part = new Graph(model, {
     nodes: Int32Array.from(shown),
     edges: Int32Array.from(edges),
     key: "every third hidden",

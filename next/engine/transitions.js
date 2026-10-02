@@ -38,17 +38,7 @@ export function alongRings({ cx, cy }, x0, y0, x1, y1, f) {
  */
 export function progress(now, start, ms, easing) {
   const t = ms > 0 ? Math.min(Math.max((now - start) / ms, 0), 1) : 1;
-  return { t, f: (EASINGS[easing] ?? EASINGS.smooth)(t) };
-}
-
-/**
- * The positions a morph starts from (every node where it is now). Velocities are cleared: the morph moves them.
- * @param {import("./matrix.js").Matrix} m
- */
-export function morphFrom(m) {
-  m.vx.fill(0);
-  m.vy.fill(0);
-  return { x: m.x.slice(), y: m.y.slice() };
+  return { t, f: EASINGS[easing](t) };
 }
 
 /**

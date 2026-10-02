@@ -13,6 +13,17 @@ import {
 import { GraphController } from "../../next/engine/controller.js";
 import { GraphModel } from "../../next/engine/model.js";
 
+const graphOf = (nodes, edges = []) =>
+  new Graph(GraphModel.from({ nodes, edges }));
+
+/** Node `i`'s footprint relative to its centre, in the matrix. */
+function setBox(m, i, x0, y0, x1, y1) {
+  m.boxX0[i] = x0;
+  m.boxY0[i] = y0;
+  m.boxX1[i] = x1;
+  m.boxY1[i] = y1;
+}
+
 function rng(seed) {
   let s = seed >>> 0;
   return () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
@@ -21,7 +32,7 @@ function rng(seed) {
 /** One busy ingredient used by `degree` recipes. */
 function star(degree) {
   const ids = ["hub", ...Array.from({ length: degree }, (_, i) => `r${i}`)];
-  return new Graph(
+  return graphOf(
     ids.map((id) => ({ id })),
     ids.slice(1).map((source) => ({ source, target: "hub" })),
   );
@@ -170,7 +181,7 @@ test("floating keeps a busy hub stable too", () => {
 
 test("edges drawn as references have no spring: dragging a recipe doesn't tug its far-away ingredient", () => {
   // a uses c directly and b, which also uses c; a → c is drawn as a reference.
-  const g = new Graph(
+  const g = graphOf(
     ["a", "b", "c"].map((id) => ({ id })),
     [
       { source: "a", target: "b" },
@@ -289,7 +300,7 @@ test("elastic: a node dragged through a packed layer and let go gets all the way
 });
 
 test("a step where nothing goes anywhere counts as still, whatever the speeds say", () => {
-  const g = new Graph([{ id: "a" }], []);
+  const g = graphOf([{ id: "a" }], []);
   const sim = new Simulation(g);
   // A lock that holds the node where it is, against a speed that never runs out.
   sim.configure(
@@ -352,14 +363,14 @@ test("a big graph shaken in every mode falls asleep, and asleep costs nothing un
 });
 
 test("physics allocates nothing per step: its grids and columns are kept and reused", () => {
-  const g = new Graph(recipes(500, 50).nodes, recipes(500, 50).edges);
+  const g = graphOf(recipes(500, 50).nodes, recipes(500, 50).edges);
   radialLayout(g, {});
   const r = rng(5);
   for (const n of g.nodes) {
     [n.x, n.y] = [n.homeX + r() * 20, n.homeY + r() * 20];
-    n.box = { x0: -8, y0: -8, x1: 30 + r() * 60, y1: 8 };
+    setBox(g.matrix, n.index, -8, -8, 30 + r() * 60, 8);
   }
-  g.nodes[7].box = { x0: -8, y0: -8, x1: 5000, y1: 8 }; // one huge label
+  setBox(g.matrix, 7, -8, -8, 5000, 8); // one huge label
   const sim = new Simulation(g);
   sim.configure("floating", physicsOptions("radial", "floating"), null, {
     boxes: true,
@@ -481,29 +492,24 @@ test("collision tries every overlapping pair exactly once, huge labels included,
   const r = rng(17);
   for (const boxes of [true, false]) {
     const count = 600;
-    const g = new Graph(
+    const g = graphOf(
       Array.from({ length: count }, (_, i) => ({ id: `n${i}` })),
       [],
     );
     for (const n of g.nodes) {
       [n.x, n.y] = [r() * 1500, r() * 1500];
-      n.radius = 4 + r() * 10;
+      const radius = (g.matrix.radius[n.index] = 4 + r() * 10);
       // Every tenth label long, the rest short: footprints of every size class.
       const long = r() < 0.1 ? 150 + r() * 400 : r() * 80;
-      n.box = {
-        x0: -n.radius,
-        y0: -n.radius,
-        x1: n.radius + long,
-        y1: n.radius,
-      };
+      setBox(g.matrix, n.index, -radius, -radius, radius + long, radius);
     }
     // A label as wide as the whole graph, two far wider still, and big circles.
-    g.nodes[13].box = { x0: -10, y0: -10, x1: 20000, y1: 10 };
-    g.nodes[15].box = { x0: -10, y0: -10, x1: 1e6, y1: 10 };
-    g.nodes[16].box = { x0: -1e6, y0: -10, x1: 10, y1: 10 };
+    setBox(g.matrix, 13, -10, -10, 20000, 10);
+    setBox(g.matrix, 15, -10, -10, 1e6, 10);
+    setBox(g.matrix, 16, -1e6, -10, 10, 10);
     g.nodes[16].y = g.nodes[15].y + 5;
-    g.nodes[14].radius = 400;
-    g.nodes[17].radius = 3e5;
+    g.matrix.radius[14] = 400;
+    g.matrix.radius[17] = 3e5;
     const sim = new Simulation(g);
     const padding = 4;
     sim.configure(
@@ -575,16 +581,16 @@ test("collision tries every overlapping pair exactly once, huge labels included,
 
 test("collision with a huge label and many long ones still pushes the nodes under it out, in about linear work", () => {
   const run = (count) => {
-    const g = new Graph(
+    const g = graphOf(
       Array.from({ length: count }, (_, i) => ({ id: `n${i}` })),
       [],
     );
     g.nodes.forEach((n, i) => {
       [n.x, n.y] = [(i % 200) * 30, Math.floor(i / 200) * 30];
       // Every tenth label is long: footprints well over the typical size, but far too many to try against each other.
-      n.box = { x0: -8, y0: -8, x1: i % 10 === 5 ? 200 : 8, y1: 8 };
+      setBox(g.matrix, i, -8, -8, i % 10 === 5 ? 200 : 8, 8);
     });
-    g.nodes[0].box = { x0: -8, y0: -8, x1: 1e6, y1: 8 }; // reaches across everything
+    setBox(g.matrix, 0, -8, -8, 1e6, 8); // reaches across everything
     const sim = new Simulation(g);
     sim.configure(
       "floating",

@@ -18,7 +18,7 @@
 // Pure: no DOM, no GL.
 
 /** How big a reference is drawn, relative to its ingredient (and never bigger than the room the layout kept). */
-export const REFERENCE_SCALE = 0.7;
+const REFERENCE_SCALE = 0.7;
 
 /** A reference's chip radius: its ingredient's, scaled down, within the room the layout kept for it. */
 export function referenceRadius(ref, ingredientRadius) {
