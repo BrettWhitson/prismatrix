@@ -4,6 +4,7 @@ import {
   END_ROOM,
   fanJunctions,
   pathLength,
+  rounded,
   startTrims,
   trimmedRoute,
 } from "./geometry.js";
@@ -593,7 +594,8 @@ function drawEdge(ctx, pts, edge, looks, ei) {
   } else {
     ctx.lineWidth = width;
     ctx.beginPath();
-    roundedPolyline(ctx, pts, edge.corner);
+    const line = rounded(pts, edge.corner);
+    for (let i = 0; i < line.length; i += 2) ctx.lineTo(line[i], line[i + 1]);
     ctx.stroke();
   }
 
@@ -629,19 +631,6 @@ function drawEdge(ctx, pts, edge, looks, ei) {
     }
     ctx.fill();
   }
-}
-
-/** A polyline whose corners are rounded by up to `radius` (never more than half the shorter neighbour). */
-function roundedPolyline(ctx, pts, radius) {
-  ctx.moveTo(pts[0], pts[1]);
-  for (let i = 2; i < pts.length - 2; i += 2) {
-    const before = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
-    const after = Math.hypot(pts[i + 2] - pts[i], pts[i + 3] - pts[i + 1]);
-    const r = Math.min(radius, before / 2, after / 2);
-    if (r > 0.5) ctx.arcTo(pts[i], pts[i + 1], pts[i + 2], pts[i + 3], r);
-    else ctx.lineTo(pts[i], pts[i + 1]);
-  }
-  ctx.lineTo(pts.at(-2), pts.at(-1));
 }
 
 /**
