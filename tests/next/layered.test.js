@@ -679,14 +679,12 @@ function withSlowClock(fn) {
   }
 }
 
-test("the same input always gives the same layout: run twice, with a slow clock, and through a worker's job", () => {
-  // Network simplex on the real-data twin is thousands of exchanges; a clock-based budget would have cut it short.
-  // (Ordering "barycenter": global sifting still stops on a clock of its own.)
+test("simplex layering gives the same layout every time: run twice, with a slow clock, and through a worker's job", () => {
+  // Network simplex on the real-data twin is a thousand and more exchanges; a clock-based budget would cut it short.
   const model = fixture("recipes-twin");
   const options = {
     ...resolve(LAYOUTS.merged.options),
     ranking: "simplex",
-    ordering: "barycenter",
   };
   const spec = {
     widths: new Float64Array(model.nodes.length).fill(40),
