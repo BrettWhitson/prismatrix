@@ -26,7 +26,7 @@ import { warnOnce } from "./schema.js";
  */
 
 /**
- * The theme presets. Every palette colour has at least 4:1 contrast with its background (see contrast).
+ * The theme presets. Every palette colour has at least 4:1 contrast (WCAG 2) with its background.
  * @type {Readonly<{ dark: Readonly<Theme>, light: Readonly<Theme> }>}
  */
 export const THEMES = Object.freeze({
@@ -115,25 +115,4 @@ export function resolveTheme(theme, warn = warnOnce) {
     else out[key] = value;
   }
   return Object.freeze(out);
-}
-
-/** A colour's relative luminance (WCAG 2), 0 for black to 1 for white. */
-export function luminance(colour) {
-  const n = parseInt(colour.slice(1), 16);
-  const linear = (c) => {
-    c /= 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return (
-    0.2126 * linear((n >> 16) & 255) +
-    0.7152 * linear((n >> 8) & 255) +
-    0.0722 * linear(n & 255)
-  );
-}
-
-/** The contrast ratio between two colours (WCAG 2): 1 for the same, 21 for black on white. */
-export function contrast(a, b) {
-  const x = luminance(a),
-    y = luminance(b);
-  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }

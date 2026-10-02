@@ -87,7 +87,7 @@ What `prismatrix/next` exports:
 | `NODE_OPTIONS`, `EDGE_OPTIONS`                  | How nodes and edges look: the option schemas.                                    |
 | `ANIMATION_OPTIONS`, `EASINGS`                  | How the view moves between states, and the easing curves.                        |
 | `resolve`, `defaultsOf`                         | Checking options against a schema; a schema's defaults.                          |
-| `THEMES`, `resolveTheme`, `contrast`            | The theme presets, a theme from a name or tokens, and WCAG contrast.             |
+| `THEMES`, `resolveTheme`                        | The theme presets, and a theme from a name or tokens.                            |
 | `SNAPSHOT_FORMAT`, `SNAPSHOT_VERSION`, `snapshotModel` | The snapshot format's name and version, and a snapshot's graph as a model. |
 | `WORKER_MIN`                                    | Graphs with at least this many nodes lay out in a worker (2,000).                |
 
@@ -925,8 +925,8 @@ at their defaults follow it.
 `theme` (the controller option) and `setTheme(theme)` take `"dark"` (the default), `"light"`, or an object of tokens
 over a preset: `{ base: "light", background: "#ffffff", palette: [...] }` (`base` defaults to dark). Unknown names,
 unknown tokens and colours that aren't `"#rrggbb"` are left out with a console warning. `resolveTheme(input)` gives
-the complete theme; `THEMES` holds the presets; `contrast(a, b)` is the WCAG 2 contrast ratio between two colours
-(every preset palette colour has at least 4:1 against its background).
+the complete theme; `THEMES` holds the presets (every preset palette colour has at least 4:1 WCAG 2 contrast against
+its background).
 
 <!-- generated:themes -->
 

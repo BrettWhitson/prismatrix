@@ -32,7 +32,6 @@ test("the index exports what an app needs, and no internals", () => {
     "THEMES",
     "WORKER_MIN",
     "canvasRenderer",
-    "contrast",
     "defaultsOf",
     "glRenderer",
     "physicsSchema",
