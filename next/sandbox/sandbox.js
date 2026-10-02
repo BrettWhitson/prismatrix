@@ -117,6 +117,9 @@ const settings = {
   layouts: stored.layouts ?? {}, // per layout: { options, mode, physics: { [mode]: options } }
   node: resolve(NODE_OPTIONS, stored.node),
   edge: resolve(EDGE_OPTIONS, stored.edge),
+  // The edge options changed in the panel. Only these go to the model, so a layout's own edge defaults (curves in
+  // the merged tree) apply to the rest.
+  edgeSet: Array.isArray(stored.edgeSet) ? stored.edgeSet : [],
   animation: resolve(ANIMATION_OPTIONS, stored.animation),
 };
 
@@ -209,9 +212,12 @@ const makeRenderer = (name) =>
 let controller = null;
 const log = startTelemetry(() => controller);
 const renderer = makeRenderer(settings.renderer);
+/** The edge options set in the panel (see `settings.edgeSet`). */
+const edgesSet = () =>
+  Object.fromEntries(settings.edgeSet.map((k) => [k, settings.edge[k]]));
 const model = new GraphModel(makeGraph(settings.graph), {
   node: settings.node,
-  edge: settings.edge,
+  edge: edgesSet(),
 });
 {
   const s = layoutState();
@@ -239,7 +245,7 @@ function applyAll() {
   const s = layoutState();
   controller.setAnimation(settings.animation);
   controller.setNodeStyle(settings.node);
-  controller.setEdgeStyle(settings.edge);
+  controller.model.setOptions({ edge: edgesSet() }, { reset: true });
   controller.setLayout(settings.layout, s.options);
   controller.setPhysics(s.mode, s.physics[s.mode]);
   controller.setGraph(makeGraph(settings.graph));
@@ -566,9 +572,11 @@ function render() {
       ),
     ),
     section("Edges", (body) =>
-      controls(body, EDGE_OPTIONS, settings.edge, () =>
-        controller.setEdgeStyle(settings.edge),
-      ),
+      controls(body, EDGE_OPTIONS, settings.edge, (key) => {
+        if (!settings.edgeSet.includes(key)) settings.edgeSet.push(key);
+        save();
+        controller.setEdgeStyle({ [key]: settings.edge[key] });
+      }),
     ),
     section("Animation", (body) =>
       controls(body, ANIMATION_OPTIONS, settings.animation, () =>
