@@ -9,7 +9,27 @@ import {
 } from "../../next/engine/picking.js";
 import { Graph } from "../../next/engine/graph.js";
 import { GraphModel } from "../../next/engine/model.js";
-import { lineage } from "../../next/engine/render.js";
+
+/** Node `index`'s lineage the slow way: whatever reaches it and whatever it reaches, edge by edge until nothing grows. */
+function lineage(graph, index) {
+  const set = new Set([index]);
+  for (const [from, to] of [
+    ["target", "source"],
+    ["source", "target"],
+  ]) {
+    const seen = new Set([index]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const e of graph.edges)
+        if (seen.has(e[from]) && !seen.has(e[to])) {
+          seen.add(e[to]);
+          set.add(e[to]);
+          grew = true;
+        }
+    }
+  }
+  return set;
+}
 
 function rng(seed) {
   let s = seed >>> 0;

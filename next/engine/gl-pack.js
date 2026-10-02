@@ -2,11 +2,10 @@
 
 import {
   END_ROOM,
-  edgeRoute,
   fanJunctions,
   rounded,
   startTrims,
-  trim,
+  trimmedRoute,
 } from "./geometry.js";
 import { linkGlyphs } from "./references.js";
 import { edgeAlpha, nodeAlpha } from "./render.js";
@@ -223,18 +222,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
   for (let k = 0; k < count; k++) {
     const edgeIndex = only ? only[k] : k;
     const e = graph.edges[edgeIndex];
-    const t = graph.nodes[e.target];
-    let junction = null;
-    if (junctions && e.tree) {
-      const jx = junctions[e.source * 2];
-      if (!Number.isNaN(jx))
-        junction = { x: jx, y: junctions[e.source * 2 + 1] };
-    }
-    let pts = trim(
-      edgeRoute(graph, routing, edge.shape, e, junction),
-      starts[edgeIndex],
-      looks.radius[t.index] + end,
-    );
+    let pts = trimmedRoute(scene, edgeIndex, junctions, starts);
     if (!pts) continue;
     // Bundled cross-links are already smooth; layered edges follow their bends, tree edge or not.
     if (corner > 0 && (e.tree || routing.kind === "layered"))

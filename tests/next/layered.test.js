@@ -10,7 +10,7 @@ import {
   project,
 } from "../../next/engine/layered.js";
 import { edgeRoute } from "../../next/engine/geometry.js";
-import { lineage } from "../../next/engine/render.js";
+import { lineageMask } from "../../next/engine/picking.js";
 import { networkSimplex } from "../../next/engine/simplex.js";
 import { globalSifting } from "../../next/engine/sifting.js";
 import { LAYOUTS } from "../../next/engine/layouts.js";
@@ -190,9 +190,9 @@ test("hovering a shared ingredient lights up every recipe that uses it", () => {
       ["ingot", "ore"],
     ].map(([source, target]) => ({ source, target })),
   );
-  const lit = lineage(g, g.byId.get("ingot").index);
+  const lit = lineageMask(g, g.byId.get("ingot").index);
   for (const id of ["sword", "shield", "ingot", "ore"])
-    assert.ok(lit.has(g.byId.get(id).index), id);
+    assert.ok(lit[g.byId.get(id).index], id);
 });
 
 test("crossings and the order-keeping projection, on their own", () => {

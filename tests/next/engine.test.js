@@ -837,13 +837,14 @@ test("a cross-link bundles along the tree: from one end to the other via their c
   const g = sharedIngredient();
   const cross = g.edges.find((e) => !e.tree);
   assert.ok(cross, "the second way into b1 is a cross-link");
-  const pts = bundledPoints(g, cross, 1);
+  const pts = bundledPoints(g, cross);
   const s = g.byId.get("a1"),
     t = g.byId.get("b1"),
     root = g.byId.get("root");
-  assert.deepEqual(pts.slice(0, 2), [s.x, s.y]);
-  assert.deepEqual(pts.slice(-2), [t.x, t.y]);
-  // Fully bundled, it bends in towards the root (the common ancestor), well off the straight line.
+  const at = (i, n) =>
+    Math.abs(pts.at(i) - n.x) + Math.abs(pts.at(i + 1) - n.y) < 1e-9;
+  assert.ok(at(0, s) && at(-2, t), "from one end to the other");
+  // Bundled, it bends in towards the root (the common ancestor), well off the straight line.
   let nearest = Infinity;
   for (let i = 0; i < pts.length; i += 2)
     nearest = Math.min(
@@ -855,13 +856,6 @@ test("a cross-link bundles along the tree: from one end to the other via their c
     (s.y + t.y) / 2 - root.y,
   );
   assert.ok(nearest < chordMid * 0.7, `${nearest} vs ${chordMid}`);
-  // Strength 0 is the straight line (sampled).
-  const flat = bundledPoints(g, cross, 0);
-  for (let i = 0; i < flat.length; i += 2) {
-    const cross2 =
-      (t.x - s.x) * (flat[i + 1] - s.y) - (t.y - s.y) * (flat[i] - s.x);
-    assert.ok(Math.abs(cross2) / Math.hypot(t.x - s.x, t.y - s.y) < 1e-6);
-  }
 });
 
 test("cross-links between separate trees go straight; straight edges stay straight; tree edges keep their shape", () => {

@@ -655,7 +655,7 @@ test("a selection change redraws halos without rebuilding the edge pieces", () =
   });
 });
 
-import { labelsShown } from "../../next/engine/render.js";
+import { labelsShown } from "../../next/engine/labels.js";
 
 test("labels: kept-room labels show until they're a smudge, others until they're too small to read", () => {
   const node = { labels: "on", labelSize: 12, labelCollide: true };

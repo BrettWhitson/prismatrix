@@ -20,7 +20,7 @@ import {
   font,
   planText,
   textBox,
-  textFitter,
+  textMeasurer,
   textVisibility,
 } from "./labels.js";
 
@@ -207,19 +207,9 @@ export class LabelLayer {
     this.previous = null;
     this.data = new Float32Array(0);
     this.pending = false; // text still waiting to be drawn into the atlas
-    const measuring = document.createElement("canvas").getContext("2d");
-    const widths = new Map();
-    this.fit = textFitter((text, size) => {
-      const key = `${size}|${text}`;
-      let w = widths.get(key);
-      if (w === undefined) {
-        if (widths.size > 50000) widths.clear();
-        measuring.font = font(size);
-        w = measuring.measureText(text).width;
-        widths.set(key, w);
-      }
-      return w;
-    });
+    this.fit = textMeasurer(
+      document.createElement("canvas").getContext("2d"),
+    ).fit;
   }
 
   /**

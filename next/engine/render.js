@@ -2,12 +2,12 @@
 
 import {
   END_ROOM,
-  edgeRoute,
   fanJunctions,
+  pathLength,
   startTrims,
-  trim,
+  trimmedRoute,
 } from "./geometry.js";
-import { TEXT_HALO, font, planText, textBox, textFitter } from "./labels.js";
+import { TEXT_HALO, font, planText, textBox, textMeasurer } from "./labels.js";
 import { LINK, linkGlyphs } from "./references.js";
 import {
   ROUNDED_CORNER,
@@ -179,15 +179,6 @@ function edgeLook(looks, e, i, edge) {
   looks.edgeWidth[i] = e.style?.width ?? edge.width;
 }
 
-/** Node looks only (radius, fill, shape), for callers that don't draw edges. */
-export function nodeLooks(graph, node) {
-  return looksOf(graph, node, {
-    colorBy: "single",
-    color: "#000000",
-    width: 1,
-  });
-}
-
 /** Which of its root's children each node descends from (roots get their own number). */
 function branches(graph) {
   const out = new Int32Array(graph.nodes.length);
@@ -200,33 +191,8 @@ function branches(graph) {
 }
 
 /**
- * The node and everything above and below it: every node it can be reached from and every node it reaches, along
- * any edge (so in a merged tree a shared ingredient lights up with every recipe that uses it).
- */
-export function lineage(graph, index) {
-  const set = new Set([index]);
-  for (const [lists, end] of [
-    [graph.incoming, "source"],
-    [graph.outgoing, "target"],
-  ]) {
-    const stack = [index];
-    const seen = new Set([index]);
-    while (stack.length) {
-      for (const ei of lists[stack.pop()]) {
-        const next = graph.edges[ei][end];
-        if (seen.has(next)) continue;
-        seen.add(next);
-        set.add(next);
-        stack.push(next);
-      }
-    }
-  }
-  return set;
-}
-
-/**
- * Draw one whole frame on one 2D canvas: background, edges, nodes, labels. Renderers that split the scene across
- * layers (see webgl.js) call the parts below themselves.
+ * Draw one whole frame on one 2D canvas (the Canvas 2D painter's): background, edges, nodes, selection halos, the
+ * reference chips' link glyphs, text.
  * @param {CanvasRenderingContext2D} ctx
  * @param {import("./controller.js").Scene} scene
  */
@@ -242,11 +208,6 @@ export function drawScene(ctx, scene, icons = iconStore()) {
 /** A selected node's halo: a ring this many CSS px outside its shape, this many wide, in the node's colour. */
 export const HALO_GAP = 3;
 export const HALO_WIDTH = 2;
-
-/** Whether node `i` is selected (display-only nodes past the real ones never are). */
-export function isSelected(scene, i) {
-  return !!scene.selected?.[i];
-}
 
 /**
  * A halo round each selected node: the exact outline of its shape pushed out by the gap (so corners come out
@@ -273,7 +234,7 @@ export function drawHalos(ctx, scene) {
   ctx.globalAlpha = 1;
 }
 
-/** The outline of a node's shape (centre x, y, radius r), pushed out by `o`. */
+/** The outline of a node's shape (centre x, y, radius r), pushed out by `o` (0: the shape itself). */
 function haloPath(ctx, shape, x, y, r, o) {
   const polygon = (corners) => {
     // A convex polygon pushed out: each side moves out along its normal, each corner becomes an arc of radius o.
@@ -360,30 +321,23 @@ function worldTransform({ camera, width, height, dpr }) {
  * little further than nodes so the lit lineage stands out. Either array may be missing (everything 1).
  */
 export function nodeAlpha(scene, i) {
-  const appear = scene.appear ? scene.appear[i] : 1;
-  const shade = scene.shade ? scene.shade[i] : 1;
-  return appear * (1 - (scene.dim ?? 0.75) * (1 - shade));
+  return fade(scene, i, i, scene.dim ?? 0.75);
 }
 
 export function labelAlpha(scene, i) {
-  const appear = scene.appear ? scene.appear[i] : 1;
-  const shade = scene.shade ? scene.shade[i] : 1;
-  return (
-    appear * (1 - Math.min(1, ((scene.dim ?? 0.75) * 0.8) / 0.75) * (1 - shade))
-  );
+  return fade(scene, i, i, Math.min(1, ((scene.dim ?? 0.75) * 0.8) / 0.75));
 }
 
 export function edgeAlpha(scene, e) {
-  const appear = scene.appear
-    ? Math.min(scene.appear[e.source], scene.appear[e.target])
-    : 1;
-  const shade = scene.shade
-    ? Math.min(scene.shade[e.source], scene.shade[e.target])
-    : 1;
-  return (
-    appear *
-    (1 - Math.min(1, ((scene.dim ?? 0.75) * 0.85) / 0.75) * (1 - shade))
-  );
+  const dim = Math.min(1, ((scene.dim ?? 0.75) * 0.85) / 0.75);
+  return fade(scene, e.source, e.target, dim);
+}
+
+/** Between nodes `i` and `j` (the later to appear, the less lit), faded in, and `dim` of the way down when unlit. */
+function fade({ appear, shade }, i, j, dim) {
+  const a = appear ? Math.min(appear[i], appear[j]) : 1;
+  const s = shade ? Math.min(shade[i], shade[j]) : 1;
+  return a * (1 - dim * (1 - s));
 }
 
 /** Edge brightness is drawn in steps of this, so edges at the same step can share a layer. */
@@ -395,45 +349,35 @@ const ALPHA_STEPS = 16;
  * at different brightnesses (dimmed by hover, fading in) get a layer pass per brightness step. Fully opaque edges at
  * full brightness skip the layer.
  */
-export function drawEdges(ctx, scene) {
+function drawEdges(ctx, scene) {
   const { graph, routing, edge, looks } = scene;
   const world = worldTransform(scene);
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
-  const index = new Map(graph.edges.map((e, i) => [e, i]));
   const starts = startTrims(scene); // past each source's own label
-  const draw = (target, e) =>
+  const draw = (target, ei) =>
     drawEdge(
       target,
-      edgeRoute(
-        graph,
-        routing,
-        edge.shape,
-        e,
-        junctions && e.tree ? junctionAt(junctions, e.source) : null,
-      ),
+      trimmedRoute(scene, ei, junctions, starts),
       edge,
       looks,
-      graph.nodes[e.source],
-      graph.nodes[e.target],
-      index.get(e),
-      starts[index.get(e)],
+      ei,
     );
   const style = (target) => {
     target.setTransform(...world);
     target.lineCap = "round";
     target.lineJoin = "round";
   };
-  const groups = new Map();
-  for (const e of graph.edges) {
-    const step = Math.round(edgeAlpha(scene, e) * ALPHA_STEPS);
+  const groups = new Map(); // edge indices by brightness step
+  for (let ei = 0; ei < graph.edges.length; ei++) {
+    const step = Math.round(edgeAlpha(scene, graph.edges[ei]) * ALPHA_STEPS);
     if (!step) continue;
     const group = groups.get(step);
-    if (group) group.push(e);
-    else groups.set(step, [e]);
+    if (group) group.push(ei);
+    else groups.set(step, [ei]);
   }
   if (edge.opacity >= 1 && groups.size === 1 && groups.has(ALPHA_STEPS)) {
     style(ctx);
-    for (const e of graph.edges) draw(ctx, e);
+    for (let ei = 0; ei < graph.edges.length; ei++) draw(ctx, ei);
     return;
   }
   const layer = edgeLayer(ctx.canvas);
@@ -441,7 +385,7 @@ export function drawEdges(ctx, scene) {
     layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     style(layer.ctx);
-    for (const e of groups.get(step)) draw(layer.ctx, e);
+    for (const ei of groups.get(step)) draw(layer.ctx, ei);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = (edge.opacity * step) / ALPHA_STEPS;
     ctx.drawImage(layer.canvas, 0, 0);
@@ -522,19 +466,6 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
 /** Layers for drawing faded nodes whole (see drawNodes), one per canvas. */
 const nodeLayers = new WeakMap();
 
-/**
- * Whether labels show at this zoom. Labels with room kept for them (label collision) show until their text is
- * smaller than LABEL_MIN_PX (a smudge, and with a whole big graph in view, tens of thousands of them to rasterise);
- * others drop out when too small to read (6 px).
- */
-export function labelsShown(node, camera) {
-  if (node.labels === "off") return false;
-  return node.labelSize * camera.k >= (node.labelCollide ? LABEL_MIN_PX : 6);
-}
-
-/** Text smaller than this many CSS px is never drawn. */
-export const LABEL_MIN_PX = 2;
-
 /** Each canvas's text measurement (and label fitting), kept with it. */
 const fitters = new WeakMap();
 
@@ -542,25 +473,10 @@ const fitters = new WeakMap();
  * All the text (labels.js plans it: node and edge labels, counts, badges, pinned labels), each piece with its halo
  * (or pill) under it, for what's on or near the screen.
  */
-export function drawLabels(ctx, scene) {
+function drawLabels(ctx, scene) {
   const { node, camera, width, height } = scene;
   let fitter = fitters.get(ctx);
-  if (!fitter) {
-    const widths = new Map();
-    const measure = (text, size) => {
-      const key = `${size}|${text}`;
-      let w = widths.get(key);
-      if (w === undefined) {
-        if (widths.size > 50000) widths.clear();
-        ctx.font = font(size);
-        w = ctx.measureText(text).width;
-        widths.set(key, w);
-      }
-      return w;
-    };
-    fitter = { measure, fit: textFitter(measure) };
-    fitters.set(ctx, fitter);
-  }
+  if (!fitter) fitters.set(ctx, (fitter = textMeasurer(ctx)));
   const k = camera.k;
   // The view, and room round it for text reaching in from nodes just outside.
   const margin = (node.labelMaxWidth || 400) + 40;
@@ -609,7 +525,7 @@ export function drawLabels(ctx, scene) {
  * The link glyph inside each reference chip big enough to show one: two interlocked links, turned 45°, in the
  * chip's colour (references.js, LINK). The WebGL painter draws the same as a distance field.
  */
-export function drawGlyphs(ctx, scene) {
+function drawGlyphs(ctx, scene) {
   const glyphs = linkGlyphs(scene);
   if (!glyphs.length) return;
   const world = worldTransform(scene);
@@ -637,11 +553,6 @@ export function drawGlyphs(ctx, scene) {
   ctx.globalAlpha = 1;
 }
 
-function junctionAt(junctions, index) {
-  const x = junctions[index * 2];
-  return Number.isNaN(x) ? null : { x, y: junctions[index * 2 + 1] };
-}
-
 /** An offscreen canvas the size of `canvas`, kept with it. */
 const layers = new WeakMap();
 function edgeLayer(canvas, kept = layers) {
@@ -657,9 +568,8 @@ function edgeLayer(canvas, kept = layers) {
   return layer;
 }
 
-function drawEdge(ctx, route, edge, looks, s, t, ei, from) {
-  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
-  const pts = trim(route, from, looks.radius[t.index] + end);
+/** Edge `ei` along `pts` (trimmedRoute), with its end. */
+function drawEdge(ctx, pts, edge, looks, ei) {
   if (!pts) return;
   const colour = looks.edgeColour[ei];
   const width = looks.edgeWidth[ei];
@@ -668,9 +578,7 @@ function drawEdge(ctx, route, edge, looks, s, t, ei, from) {
 
   if (edge.taper) {
     // Segment by segment, narrowing along the length.
-    let total = 0;
-    for (let i = 2; i < pts.length; i += 2)
-      total += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
+    const total = pathLength(pts);
     let walked = 0;
     for (let i = 2; i < pts.length; i += 2) {
       const len = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
@@ -705,6 +613,7 @@ function drawEdge(ctx, route, edge, looks, s, t, ei, from) {
         Math.PI * 2,
       );
     } else {
+      const end = size * END_ROOM;
       const tipX = x + Math.cos(a) * end,
         tipY = y + Math.sin(a) * end;
       ctx.moveTo(tipX, tipY);
@@ -744,7 +653,7 @@ function drawNode(ctx, look) {
   const { shape, outline, n, r, fill, background, alpha, icon, shown } = look;
   const { x, y } = n;
   ctx.beginPath();
-  nodePath(ctx, shape, x, y, r);
+  haloPath(ctx, shape === "ring" ? "circle" : shape, x, y, r, 0);
   if (shape === "ring") {
     ctx.globalAlpha = alpha;
     ctx.fillStyle = background;
@@ -788,41 +697,6 @@ function drawNode(ctx, look) {
     ctx.lineWidth = outline;
     ctx.strokeStyle = background;
     ctx.stroke();
-  }
-}
-
-/** A node's outline as a path (centre x, y, radius r). */
-function nodePath(ctx, shape, x, y, r) {
-  switch (shape) {
-    case "square":
-      ctx.rect(x - r, y - r, r * 2, r * 2);
-      break;
-    case "rounded":
-    case "tile":
-      ctx.roundRect(
-        x - r,
-        y - r,
-        r * 2,
-        r * 2,
-        r * (shape === "tile" ? TILE_CORNER : ROUNDED_CORNER),
-      );
-      break;
-    case "diamond":
-      ctx.moveTo(x, y - r * 1.25);
-      ctx.lineTo(x + r * 1.25, y);
-      ctx.lineTo(x, y + r * 1.25);
-      ctx.lineTo(x - r * 1.25, y);
-      ctx.closePath();
-      break;
-    case "hexagon":
-      for (let i = 0; i < 6; i++) {
-        const a = (Math.PI / 3) * i + Math.PI / 6;
-        ctx.lineTo(x + Math.cos(a) * r * 1.1, y + Math.sin(a) * r * 1.1);
-      }
-      ctx.closePath();
-      break;
-    default:
-      ctx.arc(x, y, r, 0, Math.PI * 2);
   }
 }
 
