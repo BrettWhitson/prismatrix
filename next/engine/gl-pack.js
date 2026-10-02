@@ -68,7 +68,10 @@ function palette() {
   };
 }
 
-/** World 0, 0: where positions are measured from unless a renderer asks for an origin of its own. */
+/**
+ * World 0, 0: where positions are measured from unless a renderer asks for an origin of its own.
+ * @type {Readonly<{ x: number, y: number }>}
+ */
 const ORIGIN = Object.freeze({ x: 0, y: 0 });
 
 /**
@@ -93,7 +96,7 @@ export function packNodes(scene, out, origin = ORIGIN, iconAt = null) {
 
 /**
  * Nodes `indices` only, into `out` as packNodes packed it (a restyle of a few nodes).
- * @param {ArrayLike<number>} indices
+ * @param {Iterable<number> & ArrayLike<number>} indices
  * @param {IconAt | null} [iconAt]
  */
 export function patchNodes(
@@ -191,7 +194,7 @@ export function packHalos(scene, out, origin = ORIGIN) {
 /**
  * Every edge as straight segments (curves and rounded corners already broken down) and every arrow or dot at an
  * edge's end, with the index of the edge each one belongs to (for edgeBrightness).
- * @param {object} scene
+ * @param {import("./controller.js").Scene} scene
  * @param {{ segments?: Float32Array, ends?: Float32Array, segmentEdge?: Int32Array, endEdge?: Int32Array }} [reuse]
  *   buffers from the last frame
  * @param {number[] | null} [only] just these edges (by index); all of them when null
@@ -300,7 +303,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
 /**
  * How bright each packed segment and end is: its edge's brightness (edgeAlpha: hover, fading in). Cheap enough to
  * redo every frame of a fade. `bright` is true when every edge is at full brightness.
- * @param {object} scene
+ * @param {import("./controller.js").Scene} scene
  * @param {ReturnType<typeof packEdges>} packed
  * @param {{ segmentAlpha?: Float32Array, endAlpha?: Float32Array }} [reuse]
  * @returns {{ segmentAlpha: Float32Array, endAlpha: Float32Array, bright: boolean }}
@@ -370,9 +373,9 @@ export function runsOf(sorted, gap = 16) {
  * Edges `edges` (ascending indices) packed again into `packed` (from packEdges, for the same layout: only their looks
  * changed, so each keeps its segments and ends), in place. Edges `packed` doesn't hold (drawn by the GPU, or trimmed
  * away) are skipped. Returns the runs of segments and ends that changed, for uploading just those.
- * @param {object} scene
+ * @param {import("./controller.js").Scene} scene
  * @param {ReturnType<typeof packEdges>} packed
- * @param {ArrayLike<number>} edges
+ * @param {Iterable<number> & ArrayLike<number>} edges
  * @returns {{ segments: [number, number][], ends: [number, number][] }}
  */
 export function patchEdges(scene, packed, edges, origin = ORIGIN) {

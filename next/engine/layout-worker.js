@@ -10,9 +10,15 @@ import { graphFromStructure, runLayout } from "./layout-job.js";
 
 let current = null; // { version, graph }: the structure the layouts are for
 
-self.onmessage = ({ data }) => {
+/**
+ * The worker's own scope (typed here by hand: the DOM's types make `self` a window).
+ * @type {{ onmessage: ((event: MessageEvent) => void) | null, postMessage(message: any, transfer?: Transferable[]): void }}
+ */
+const scope = /** @type {any} */ (self);
+
+scope.onmessage = ({ data }) => {
   if (data.type !== "layout") return;
-  self.postMessage({ id: data.id, started: true });
+  scope.postMessage({ id: data.id, started: true });
   try {
     if (data.structure)
       current = {
@@ -36,8 +42,8 @@ self.onmessage = ({ data }) => {
         result.routing.bends.start.buffer,
         result.routing.bends.xy.buffer,
       );
-    self.postMessage({ id: data.id, result }, transfer);
+    scope.postMessage({ id: data.id, result }, transfer);
   } catch (error) {
-    self.postMessage({ id: data.id, error: error.message });
+    scope.postMessage({ id: data.id, error: error.message });
   }
 };

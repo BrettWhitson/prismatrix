@@ -2,6 +2,38 @@
 
 import { bool, color, range, select } from "./schema.js";
 
+/**
+ * @typedef {object} NodeOptions How nodes look: the model's `node` options (NODE_OPTIONS), resolved. Each node's own
+ *   `style` wins over them.
+ * @property {"circle" | "square" | "rounded" | "diamond" | "hexagon" | "ring" | "tile"} shape
+ * @property {number} size              diameter, world px
+ * @property {"uniform" | "descendants" | "depth"} sizeBy
+ * @property {"depth" | "branch" | "single"} colorBy
+ * @property {string} color             "#rrggbb", when colouring by one colour
+ * @property {number} outline
+ * @property {number} strokeWidth       a border's width, for nodes whose style gives a `stroke` colour
+ * @property {"cover" | "contain"} iconFit
+ * @property {"off" | "below" | "right" | "outward"} labels
+ * @property {number} labelSize         px
+ * @property {number} labelMaxWidth     px; 0: no limit
+ * @property {number} collisionRadius   clearance around every node, world px
+ * @property {boolean} labelCollide     labels take room in layouts and collisions
+ *
+ * @typedef {object} EdgeOptions How edges look: the model's `edge` options (EDGE_OPTIONS), resolved. Each edge's own
+ *   `style` wins over them.
+ * @property {"straight" | "step" | "fan" | "curve"} shape
+ * @property {number} corner            a step edge's corner radius
+ * @property {number} width             world px
+ * @property {boolean} taper
+ * @property {"single" | "target"} colorBy
+ * @property {string} color             "#rrggbb"
+ * @property {number} opacity
+ * @property {"none" | "arrow" | "dot"} arrow
+ * @property {number} arrowSize
+ * @property {"off" | "target" | "middle"} labels where an edge's own label is drawn
+ */
+
+/** @type {import("./schema.js").OptionSpec[]} */
 export const NODE_OPTIONS = [
   select(
     "shape",
@@ -99,6 +131,7 @@ export const NODE_OPTIONS = [
   ),
 ];
 
+/** @type {import("./schema.js").OptionSpec[]} */
 export const EDGE_OPTIONS = [
   select(
     "shape",

@@ -263,7 +263,8 @@ class GLLayer {
     this.canvas = canvas;
     this.icons = icons;
     this.lost = false;
-    this.edgeData = {};
+    // The CPU's edge segments and ends, from the last frame (empty until the first).
+    this.edgeData = /** @type {ReturnType<typeof packEdges>} */ ({});
     this.nodeData = null;
     this.scene = null; // the last scene drawn, drawn again when a lost context comes back
     this.timing = false; // measure the GPU's time per pass (EXT_disjoint_timer_query_webgl2), see gpuTimes

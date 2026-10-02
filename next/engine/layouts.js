@@ -6,11 +6,19 @@ import { tidy } from "./tidy.js";
 import { layeredLayout } from "./layered.js";
 
 /**
- * @typedef {object} Routing How edges bend for this layout.
- * @property {"tree" | "radial"} kind
- * @property {string} [direction] tree: TB, BT, LR or RL
+ * @typedef {object} Routing How edges bend for this layout (what a layout returns, with edges by object).
+ * @property {"tree" | "radial" | "layered"} kind
+ * @property {string} [direction] tree and layered: TB, BT, LR or RL
  * @property {number} [cx]        radial: the centre
  * @property {number} [cy]
+ * @property {Map<object, number[][]>} [bends] layered: the bends of edges that cross layers (by edge object)
+ * @property {import("./layered.js").Reference[]} [references] layered: edges drawn to a chip under their source
+ * @property {number} [crossings] layered: edge crossings left
+ * @property {number} [initialCrossings] layered: crossings before ordering
+ * @property {Int32Array} [layerOf] layered: each node's layer
+ * @property {{ pivots: number, optimal: boolean }} [simplex] layered with ranking "simplex": the exchanges the
+ *   layering made, and whether it reached the fewest long edges or stopped at its work budget
+ * @property {boolean} [morphing] set by the controller while a layout morph runs
  */
 
 /**
@@ -27,7 +35,49 @@ import { layeredLayout } from "./layered.js";
  *   back (layered.js).
  */
 
-/** Nodes of radius 8 with no labels. */
+/**
+ * @typedef {object} TreeLayoutOptions The tree layout's options (LAYOUTS.tree.options).
+ * @property {"TB" | "BT" | "LR" | "RL"} direction
+ * @property {number} levelGap   at least this far between levels, world px
+ * @property {number} siblingGap between neighbours with the same parent
+ * @property {number} subtreeGap between neighbours with different parents (separate trees get twice this)
+ * @property {"centres" | "edges"} parentAlign a parent over its children's centres, or their whole span
+ *
+ * @typedef {object} MergedLayoutOptions The merged tree's options (LAYOUTS.merged.options).
+ * @property {"TB" | "BT" | "LR" | "RL"} direction
+ * @property {number} levelGap   at least this far between layers, world px
+ * @property {number} nodeGap    between neighbours on a layer
+ * @property {"longest" | "simplex"} ranking layers by depth from the top, or fewest long edges
+ * @property {"sifting" | "barycenter"} ordering how each layer is ordered to cut crossings
+ * @property {"balanced" | "median"} placement
+ * @property {"hubs" | "off"} references busy shared ingredients get reference chips, or long edges
+ * @property {number} shareMin   how many users make an ingredient busy
+ * @property {number} stability  0–1: how firmly a change keeps everything else in its place
+ *
+ * @typedef {object} RadialLayoutOptions The radial layout's options (LAYOUTS.radial.options).
+ * @property {number} ringGap    at least this far between rings, world px
+ * @property {number} sweep      degrees of the circle the tree fans over
+ * @property {number} rotation   degrees
+ * @property {"tidy" | "leaves"} spacing
+ *
+ * @typedef {Partial<TreeLayoutOptions> | Partial<MergedLayoutOptions> | Partial<RadialLayoutOptions>} LayoutOptions
+ *   Options for one of the layouts (all or some)
+ *
+ * @typedef {object} LayoutSpec A layout, as LAYOUTS lists it.
+ * @property {string} label
+ * @property {(graph: import("./graph.js").Graph, options?: any, sizing?: Sizing, hint?: LayoutHint | null) => Routing} run
+ *   places every node's home (`graph`'s homeX and homeY) and says how edges bend
+ * @property {import("./schema.js").OptionSpec[]} options
+ * @property {Record<string, { options?: import("./schema.js").OptionSpec[], defaults?: Record<string, any> }>} physics
+ *   the physics modes it offers: for each, options only this layout has, and its own defaults for the mode's options
+ * @property {Partial<import("./style.js").EdgeOptions>} [edgeDefaults] edge options it shows by default (in place of
+ *   EDGE_OPTIONS' defaults) where they weren't set on purpose
+ */
+
+/**
+ * Nodes of radius 8 with no labels.
+ * @type {Sizing}
+ */
 export const DEFAULT_SIZING = {
   box: () => ({ x0: -8, y0: -8, x1: 8, y1: 8 }),
   gap: 0,
@@ -46,6 +96,11 @@ export const TREE_LABEL_ANGLE = {
  * footprint (node and label). Subtrees pack as tightly as their outlines allow, small ones between big ones are
  * spread out evenly, and every parent sits centred over its children. Levels are at least `levelGap` apart, and
  * further when their footprints need it.
+ * @param {import("./graph.js").Graph} graph
+ * @param {Partial<TreeLayoutOptions>} [options]
+ * @param {Sizing} [sizing]
+ * @param {LayoutHint | null} [hint]
+ * @returns {Routing}
  */
 export function treeLayout(
   graph,
@@ -132,6 +187,11 @@ const RADIAL_ROUNDS = 6;
  *
  * Spacing "leaves" is the classic rule: each subtree gets a wedge of its parent's in proportion to its leaf count,
  * and each ring moves out until every node fits across its wedge.
+ * @param {import("./graph.js").Graph} graph
+ * @param {Partial<RadialLayoutOptions>} [options]
+ * @param {Sizing} [sizing]
+ * @param {LayoutHint | null} [hint]
+ * @returns {Routing}
  */
 export function radialLayout(
   graph,
@@ -426,6 +486,7 @@ export function constrainer(routing, opts) {
  * The layouts. `physics` lists the modes each one supports; for each mode, `options` are extra knobs only this
  * layout has and `defaults` override the mode's general defaults. `edgeDefaults`, where a layout has them, replace
  * EDGE_OPTIONS' defaults while it's shown, for any edge option that wasn't set on purpose (the controller's `edge`).
+ * @type {{ tree: LayoutSpec, merged: LayoutSpec, radial: LayoutSpec }}
  */
 export const LAYOUTS = {
   tree: {

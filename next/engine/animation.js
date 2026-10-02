@@ -3,6 +3,17 @@
 
 import { range, select } from "./schema.js";
 
+/**
+ * @typedef {object} AnimationOptions How the view moves between states (ANIMATION_OPTIONS), resolved.
+ * @property {number} transition  ms a morph to a new layout takes
+ * @property {"smooth" | "out" | "back" | "linear"} easing
+ * @property {number} camera      ms the camera takes to frame or focus
+ * @property {"grow" | "fade" | "none"} enter how new nodes arrive
+ * @property {number} hoverFade   ms the hover's emphasis takes to change
+ * @property {number} hoverDim    0–1: how far everything outside the hovered lineage fades
+ */
+
+/** @type {import("./schema.js").OptionSpec[]} */
 export const ANIMATION_OPTIONS = [
   range(
     "transition",
@@ -63,7 +74,10 @@ export const ANIMATION_OPTIONS = [
   ),
 ];
 
-/** Easing curves: progress 0–1 in, eased progress out. */
+/**
+ * Easing curves: progress 0–1 in, eased progress out.
+ * @type {Record<AnimationOptions["easing"], (t: number) => number>}
+ */
 export const EASINGS = {
   smooth: (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2),
   out: (t) => 1 - (1 - t) ** 3,

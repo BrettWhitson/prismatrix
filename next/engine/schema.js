@@ -24,7 +24,11 @@
  * @param {OptionWarning} warning
  */
 
-/** The defaults of a schema as a plain object. */
+/**
+ * The defaults of a schema as a plain object.
+ * @param {readonly OptionSpec[]} schema
+ * @returns {Record<string, any>}
+ */
 export function defaultsOf(schema) {
   return Object.fromEntries(schema.map((o) => [o.key, o.default]));
 }
@@ -45,10 +49,11 @@ export function warnOnce(message) {
  * that isn't one) takes the default. Unknown keys are dropped. Each of those (not a missing value) is reported to
  * `warn`, by default once per message on the console, with the closest known key or choice when one is close (a
  * typo).
- * @param {OptionSpec[]} schema
+ * @template {Record<string, any>} [T=Record<string, any>] the resolved options' type (NodeOptions, say)
+ * @param {readonly OptionSpec[]} schema
  * @param {object} [values]
  * @param {WarnOption} [warn]
- * @returns {object}
+ * @returns {T}
  */
 export function resolve(schema, values = {}, warn = warnOnce) {
   const given =
@@ -71,7 +76,7 @@ export function resolve(schema, values = {}, warn = warnOnce) {
         ...(suggestion && { suggestion }),
       });
     }
-  return out;
+  return /** @type {T} */ (out);
 }
 
 /** One option's value: `v` when it's usable, a number clamped into range, or the default. */
@@ -164,7 +169,17 @@ function distance(a, b) {
   return rows[a.length][b.length];
 }
 
-/** Shorthands for writing schemas. */
+/**
+ * Shorthands for writing schemas.
+ * @param {string} key
+ * @param {string} label
+ * @param {number} min
+ * @param {number} max
+ * @param {number} step
+ * @param {number} value
+ * @param {string} [hint]
+ * @returns {OptionSpec}
+ */
 export const range = (key, label, min, max, step, value, hint) => ({
   key,
   label,
@@ -175,6 +190,14 @@ export const range = (key, label, min, max, step, value, hint) => ({
   default: value,
   hint,
 });
+/**
+ * @param {string} key
+ * @param {string} label
+ * @param {(string | { value: string, label: string })[]} choices
+ * @param {string} value
+ * @param {string} [hint]
+ * @returns {OptionSpec}
+ */
 export const select = (key, label, choices, value, hint) => ({
   key,
   label,
@@ -185,6 +208,13 @@ export const select = (key, label, choices, value, hint) => ({
   default: value,
   hint,
 });
+/**
+ * @param {string} key
+ * @param {string} label
+ * @param {boolean} value
+ * @param {string} [hint]
+ * @returns {OptionSpec}
+ */
 export const bool = (key, label, value, hint) => ({
   key,
   label,
@@ -192,6 +222,13 @@ export const bool = (key, label, value, hint) => ({
   default: value,
   hint,
 });
+/**
+ * @param {string} key
+ * @param {string} label
+ * @param {string} value "#rrggbb"
+ * @param {string} [hint]
+ * @returns {OptionSpec}
+ */
 export const color = (key, label, value, hint) => ({
   key,
   label,

@@ -124,6 +124,7 @@ export function layeredLayout(
   const to = (ei) => (reversed[ei] ? edges[ei].source : edges[ei].target);
 
   // ---- 2. layers: network simplex (fewest layers crossed in all), or longest path from the sources
+  /** @type {Int32Array} */
   let layerOf = new Int32Array(n);
   let simplex;
   if (ranking === "simplex") {
@@ -826,7 +827,7 @@ function seeded(seed) {
 
 /**
  * @typedef {object} Reference A cross-link drawn to a chip under its source instead of to its ingredient.
- * @property {object} edge   the edge it stands in for
+ * @property {import("./graph.js").Edge} edge the edge it stands in for
  * @property {number} source the edge's source (node index)
  * @property {number} target the ingredient (node index)
  * @property {number} x      where the chip sits
@@ -1353,10 +1354,12 @@ export function project(desired, seps, weights) {
   const values = [],
     pulls = [];
   for (let i = 0; i < count; i++) {
-    const many = Array.isArray(desired[i]);
-    for (let k = 0; k < (many ? desired[i].length : 1); k++) {
-      values.push(many ? desired[i][k] : desired[i]);
-      pulls.push(many ? weights[i][k] : weights[i]);
+    const want = desired[i],
+      weight = weights[i];
+    const many = Array.isArray(want);
+    for (let k = 0; k < (many ? want.length : 1); k++) {
+      values.push(many ? want[k] : want);
+      pulls.push(many ? /** @type {number[]} */ (weight)[k] : weight);
     }
     start[i + 1] = values.length;
   }

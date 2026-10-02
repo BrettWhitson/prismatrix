@@ -142,6 +142,7 @@ export class IconStore {
     if (!byUrl && typeof source !== "object") return null;
     const known = byUrl ? this.byUrl.get(source) : this.byObject.get(source);
     if (known) return known;
+    /** @type {IconEntry} */
     const entry = {
       id: this.count++,
       state: "loading",

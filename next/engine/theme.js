@@ -19,10 +19,16 @@ import { warnOnce } from "./schema.js";
  * @property {string} edge        edges, when the edge `color` option is left at its default
  * @property {string} node        nodes coloured by one colour, when the node `color` option is left at its default
  * @property {string} root        a root's colour when colouring by branch
- * @property {string[]} palette   colours by depth or branch, then wrapping
+ * @property {readonly string[]} palette colours by depth or branch, then wrapping
+ *
+ * @typedef {"dark" | "light" | (Partial<Omit<Theme, "name">> & { base?: "dark" | "light" })} ThemeInput A preset's
+ *   name, or colours over a preset (`base`, "dark" by default)
  */
 
-/** The theme presets. Every palette colour has at least 4:1 contrast with its background (see contrast). */
+/**
+ * The theme presets. Every palette colour has at least 4:1 contrast with its background (see contrast).
+ * @type {Readonly<{ dark: Readonly<Theme>, light: Readonly<Theme> }>}
+ */
 export const THEMES = Object.freeze({
   dark: Object.freeze({
     name: "dark",
@@ -56,7 +62,10 @@ export const THEMES = Object.freeze({
   }),
 });
 
-/** The theme used when none is given. */
+/**
+ * The theme used when none is given.
+ * @type {Readonly<Theme>}
+ */
 export const DEFAULT_THEME = THEMES.dark;
 
 /** The edge and node `color` options' defaults: left at these, the theme's `edge` and `node` colours are used. */
@@ -73,9 +82,9 @@ const TOKENS = ["background", "text", "textHalo", "edge", "node", "root"];
 /**
  * A complete theme from a preset name or an object of tokens over a preset (`base`, "dark" by default). Unknown
  * names, unknown tokens and colours that aren't "#rrggbb" are reported to `warn` and left out.
- * @param {"dark" | "light" | Partial<Theme> & { base?: "dark" | "light" } | null | undefined} theme
+ * @param {ThemeInput | null | undefined} theme
  * @param {(message: string) => void} [warn]
- * @returns {Theme}
+ * @returns {Readonly<Theme>}
  */
 export function resolveTheme(theme, warn = warnOnce) {
   if (theme === undefined || theme === null) return DEFAULT_THEME;

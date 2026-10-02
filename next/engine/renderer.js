@@ -232,6 +232,7 @@ export class Renderer {
       );
       scale = e.scale;
     };
+    /** @type {[string, (event: any) => void, AddEventListenerOptions?][]} */
     const listeners = [
       ["pointerdown", down],
       ["pointermove", move],

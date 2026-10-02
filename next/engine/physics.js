@@ -42,6 +42,41 @@ const collide = bool(
   "Nodes (and, with label collision on, their labels) push each other out of the way.",
 );
 
+/**
+ * @typedef {object} StaticPhysicsOptions
+ * @property {boolean} dragSubtree dragging a node carries everything below it
+ * @property {boolean} fling       a released node keeps the speed it was thrown with
+ * @property {number} friction     how quickly anything moving eases to a stop
+ *
+ * @typedef {object} ElasticPhysicsOptions
+ * @property {number} anchor       how hard each node is pulled back to its home
+ * @property {number} links        how hard edges hold their laid-out length
+ * @property {number} friction
+ * @property {boolean} collide     nodes (and their labels, with label collision) push each other out of the way
+ * @property {boolean} fling
+ * @property {boolean} [levelLock] tree and merged: nodes only slide along their level
+ * @property {boolean} [ringLock]  radial: nodes only slide around their ring
+ *
+ * @typedef {object} FloatingPhysicsOptions
+ * @property {number} repulsion    how hard nodes push each other apart
+ * @property {number} links
+ * @property {number} linkLength   edge length relative to the layout's
+ * @property {number} memory       a faint pull back to the layout (0 forgets it)
+ * @property {number} friction
+ * @property {number} settle       seconds the graph keeps rearranging after it's disturbed
+ * @property {number} drift        gentle wandering (above 0 it never quite stops)
+ * @property {boolean} collide
+ * @property {boolean} fling
+ *
+ * @typedef {Partial<StaticPhysicsOptions> | Partial<ElasticPhysicsOptions> | Partial<FloatingPhysicsOptions>}
+ *   PhysicsOptions Options for one of the physics modes (all or some)
+ */
+
+/**
+ * The physics modes and their options. A layout offers some of them, with its own extra options and defaults
+ * (LAYOUTS[layout].physics); physicsSchema gives a mode's full schema within a layout.
+ * @type {Record<"static" | "elastic" | "floating", { label: string, options: import("./schema.js").OptionSpec[] }>}
+ */
 export const PHYSICS = {
   static: {
     label: "Static",
@@ -181,7 +216,7 @@ const AT_HOME = 0.5; // within this of its home on both axes (world px), an elas
  * ingredient), for `Simulation.configure`: those edges get no spring, so dragging a recipe doesn't tug an ingredient
  * that's drawn far away. Null when there are no references.
  * @param {import("./graph.js").Graph} graph
- * @param {{ edge: object }[] | undefined} references the layout's (`routing.references`)
+ * @param {import("./layered.js").Reference[] | undefined} references the layout's (`routing.references`)
  * @returns {Uint8Array | null}
  */
 export function referencedEdges(graph, references) {
@@ -260,6 +295,7 @@ export class Simulation {
     /** @type {Set<number>} nodes held by the pointer: forces don't move them */
     this.held = new Set();
     this.mode = "static";
+    /** @type {Record<string, any>} the mode's options */
     this.opts = {};
     /** @type {((m: import("./matrix.js").Matrix, i: number) => void) | null} keeps row i on its level or ring */
     this.constrain = null;
@@ -269,7 +305,7 @@ export class Simulation {
 
   /**
    * @param {string} mode
-   * @param {object} opts
+   * @param {Record<string, any>} opts
    * @param {((m: import("./matrix.js").Matrix, i: number) => void) | null} [constrain]
    * @param {Collision | null} [collision] how nodes collide, when the mode's `collide` option is on
    * @param {Uint8Array | null} [loose] per edge, 1 for an edge with no spring (see referencedEdges)

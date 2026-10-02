@@ -14,6 +14,19 @@
       "types": "./types/layout/index.d.ts",
       "default": "./src/layout/index.js"
     },
+    "./next": {
+      "types": "./types/next/index.d.ts",
+      "default": "./next/engine/index.js"
+    },
+    "./next/layout": {
+      "types": "./types/next/layout.d.ts",
+      "default": "./next/engine/layout.js"
+    },
+    "./next/*.js": {
+      "types": "./types/next/*.d.ts",
+      "default": "./next/engine/*.js"
+    },
+    "./next/*": "./next/engine/*",
     "./*.js": {
       "types": "./types/*.d.ts",
       "default": "./src/*.js"
@@ -30,11 +43,12 @@
     "format": "prettier --write \"**/*.{js,mjs}\"",
     "format:check": "prettier --check \"**/*.{js,mjs}\"",
     "verify": "npm run lint && npm run format:check && npm run typecheck && npm run types:check && npm run docs:check && npm test",
-    "types": "tsc -p . && prettier --write types --log-level warn",
-    "typecheck": "tsc -p . --noEmit",
+    "types": "tsc -p . && tsc -p tsconfig.next.json && prettier --write types --log-level warn",
+    "typecheck": "tsc -p . --noEmit && npm run typecheck:next",
+    "typecheck:next": "tsc -p tsconfig.next.json --noEmit",
     "types:check": "node tools/check-types.mjs",
-    "docs": "node tools/docs.mjs",
-    "docs:check": "node tools/docs.mjs --check",
+    "docs": "node tools/docs.mjs && node tools/docs-next.mjs",
+    "docs:check": "node tools/docs.mjs --check && node tools/docs-next.mjs --check",
     "sandbox": "node tools/serve.mjs 8651 /next/sandbox/",
     "bench:merged": "node tools/bench-layered.mjs"
   },
@@ -49,6 +63,9 @@
   "files": [
     "src",
     "types",
+    "next/engine",
+    "next/API.md",
+    "next/MODEL.md",
     "README.md",
     "API.md",
     "LICENSE",

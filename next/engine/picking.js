@@ -53,7 +53,11 @@ export class HitGrid {
       if (cols * rows <= count * 2 + 64) break;
       cell *= 1.5;
     }
-    Object.assign(this, { minX, minY, cell, cols, rows });
+    this.minX = minX;
+    this.minY = minY;
+    this.cell = cell;
+    this.cols = cols;
+    this.rows = rows;
     const cellOf = new Int32Array(count).fill(-1);
     const start = new Int32Array(cols * rows + 1);
     for (let i = 0; i < count; i++) {
@@ -115,10 +119,12 @@ export function lineageMask(graph, index, into = null) {
   const mask = into ?? new Uint8Array(n);
   const stack = new Int32Array(n);
   // Bit 1: in the lineage; bit 2: reached going up; bit 4: reached going down.
-  for (const [lists, end, bit] of [
+  /** @type {[ReadonlyArray<ReadonlyArray<number>>, "source" | "target", number][]} */
+  const walks = [
     [graph.incoming, "source", 2],
     [graph.outgoing, "target", 4],
-  ]) {
+  ];
+  for (const [lists, end, bit] of walks) {
     let top = 0;
     stack[top++] = index;
     mask[index] |= 1 | bit;

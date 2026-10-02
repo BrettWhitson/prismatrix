@@ -285,7 +285,7 @@ export class Room {
 /**
  * Every piece of text to draw this frame, in drawing order (edge labels, node labels, counts and badges, pinned
  * labels on top). Only what's anchored in `near` (a world rectangle; everything without it), except pinned labels.
- * @param {object} scene
+ * @param {import("./controller.js").Scene} scene
  * @param {{ fit: (text: string, size: number, max: number) => string,
  *   near?: { x0: number, y0: number, x1: number, y1: number } | null }} options
  * @returns {TextItem[]}

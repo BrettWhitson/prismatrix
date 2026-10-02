@@ -20,7 +20,7 @@
 // model and the layouts.
 
 import { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
-import { footprint, labelAngle, reach } from "./boxes.js";
+import { footprint, labelAngle } from "./boxes.js";
 import { departures, withGhosts } from "./ghosts.js";
 import {
   collapsedAt,
@@ -37,7 +37,12 @@ import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions, referencedEdges } from "./physics.js";
 import { looksOf, patchLooks } from "./render.js";
 import { THEMES, resolveTheme } from "./theme.js";
-import { hintFrom, runLayout, unpackRouting } from "./layout-job.js";
+import {
+  hintFrom,
+  runLayout,
+  sizingSpec,
+  unpackRouting,
+} from "./layout-job.js";
 import { Layouter } from "./layouter.js";
 import { resolve } from "./schema.js";
 import { HIT_SCALE, HitGrid, LineageCache, lineageMask } from "./picking.js";
@@ -66,14 +71,55 @@ const sameInts = (a, b) =>
  * @property {number} energy  mean squared node speed
  * @property {string} state   "laying out", "moving to layout", "dragging", "zooming", "moving" or "at rest"
  *
+ * @typedef {object} Restyle A restyle of a few nodes and edges, for painters to patch their buffers by.
+ * @property {number} version            styleVersion after it
+ * @property {Int32Array | null} nodes   the nodes restyled (indices into the graph on screen); null: every one
+ * @property {Int32Array | null} edges   the edges restyled; null: every one
+ *
+ * @typedef {object} Scene What to draw (`controller.scene`, made by every `tick`): all a painter reads.
+ * @property {import("./render.js").DisplayGraph} graph the graph on screen, with reference chips and ghosts after
+ *   its own nodes
+ * @property {import("./layouts.js").Routing} routing how edges bend
+ * @property {import("./camera.js").Camera} camera
+ * @property {Record<string, any>} node  the node options
+ * @property {Record<string, any>} edge  the edge options, with the layout's own defaults
+ * @property {import("./render.js").Looks} looks per node and edge of `graph`
+ * @property {Float32Array} shade        per node, 0–1: how lit it is by the hover or selection
+ * @property {Float32Array} appear       per node, 0–1: how far it has faded in (or out, for a ghost)
+ * @property {number} dim                how far unlit nodes fade (the animation's hoverDim)
+ * @property {import("./matrix.js").Matrix} matrix the real nodes' positions and footprints
+ * @property {Float64Array | null} labelWidths each real node's label width, as the layout kept room for it
+ * @property {number} hover              the hovered node (an index), or -1
+ * @property {Uint8Array | null} selected per real node, 1 when selected (null: nothing is)
+ * @property {number} selectionVersion
+ * @property {Uint8Array | null} collapsed per real node, 1 when its children are folded away (null: none are)
+ * @property {Int32Array | null} hidden  per real node, how many nodes are hidden below it (a "+N" badge)
+ * @property {number} foldVersion
+ * @property {number} version            bumped when anything moved
+ * @property {number} shadeVersion       bumped when only brightness or the selection changed
+ * @property {number} geometryVersion    bumped when the layout, the styles or the graph changed
+ * @property {number} width              CSS px
+ * @property {number} height
+ * @property {number} dpr                device pixels per CSS px
+ * @property {import("./theme.js").Theme} theme
+ * @property {string} background
+ * @property {number} styleVersion
+ * @property {Restyle[]} restyles        the latest restyles, oldest first
+ *
+ * @typedef {"tree" | "merged" | "radial"} LayoutName
+ * @typedef {"static" | "elastic" | "floating"} PhysicsMode
+ *
  * @typedef {object} ControllerOptions
- * @property {string} [layout]           "tree", "radial" or "merged" (see LAYOUTS)
- * @property {object} [layoutOptions]
- * @property {string} [physics]          "static", "elastic" or "floating" (each layout offers some)
- * @property {object} [physicsOptions]
- * @property {object} [animation]        ANIMATION_OPTIONS
- * @property {(type: string, detail?: object) => void} [onEvent] every event (see `on` for one type at a time)
- * @property {(stats: object) => void} [onFrame] after every drawn frame (the renderer calls it)
+ * @property {LayoutName} [layout]       "tree" (the default), "merged" or "radial" (see LAYOUTS)
+ * @property {import("./layouts.js").LayoutOptions} [layoutOptions] the layout's options, all or some
+ * @property {PhysicsMode} [physics]     "static" (the default), "elastic" or "floating": what the layout offers
+ *   (LAYOUTS[layout].physics; a mode it doesn't offer is "static")
+ * @property {import("./physics.js").PhysicsOptions} [physicsOptions] the mode's options, all or some
+ * @property {Partial<import("./animation.js").AnimationOptions>} [animation] ANIMATION_OPTIONS, all or some
+ * @property {(type: keyof ControllerEvents, detail?: any) => void} [onEvent] every event (see `on` for one type at
+ *   a time)
+ * @property {(stats: import("./renderer.js").FrameStats) => void} [onFrame] after every drawn frame (the renderer
+ *   calls it)
  * @property {() => void} [onChange]     something changed that needs a tick (renderers wake their frame loop)
  * @property {() => number} [clock]      the time now, ms (for changes made between ticks)
  * @property {boolean | "auto"} [worker] where layouts run: "auto" (the default) in a worker for big graphs, true
@@ -89,7 +135,68 @@ const sameInts = (a, b) =>
  *   a graph that shares no nodes with the one before (`setGraph` with a different graph)
  * @property {boolean} [doubleTapToggles] a double tap on a node expands or collapses it (default false: a double tap
  *   is only reported, so an app can give it its own meaning)
- * @property {"dark" | "light" | object} [theme] the colours the engine picks itself (see theme.js; default "dark")
+ * @property {import("./theme.js").ThemeInput} [theme] the colours the engine picks itself (see theme.js; default
+ *   "dark")
+ *
+ * @typedef {object} PointDetail Where a tap, double tap or long press was, and what's there.
+ * @property {string | null} node        the node's id, or null for empty space
+ * @property {boolean} reference         the node was found through one of its reference chips
+ * @property {number} x                  CSS px from the canvas's left
+ * @property {number} y
+ * @property {{ x: number, y: number }} world the same point in world coordinates
+ * @property {string} pointerType        "mouse", "touch" or "pen"
+ *
+ * @typedef {object} GraphDetail
+ * @property {number} nodes              in the model
+ * @property {number} edges
+ * @property {number} [added]            nodes added (after a change; absent for a first graph)
+ * @property {number} [removed]          nodes removed
+ * @property {number} issues             problems found (see `graphIssue`)
+ * @property {ReturnType<GraphModel["stats"]>} stats the model's shape (roots, depth, layers, cross-links…), worked
+ *   out when first read
+ *
+ * @typedef {object} DisclosureDetail
+ * @property {string | null} node        the node expanded or collapsed (null: expandAll or collapseTo)
+ * @property {number} [depth]            levels shown (expand, expandAll, collapseTo)
+ * @property {boolean} [reveal]          the expand opened the way to a node (reveal, focus)
+ * @property {number} visible            nodes shown now
+ * @property {number} hidden             nodes folded away now
+ *
+ * @typedef {object} ControllerEvents Every event a controller sends (`on(type, listener)`, `onEvent`), by type: the
+ *   detail each listener is given.
+ * @property {GraphDetail} graph         a graph was shown, or nodes or edges came or went
+ * @property {import("./model.js").Issue} graphIssue a problem in the graph or a change to it (one per problem)
+ * @property {{ nodes: number, edges: number }} graphData only data changed: nothing is drawn differently
+ * @property {{ nodes: number, edges: number }} graphRestyle nodes' or edges' labels or styles changed
+ * @property {Partial<import("./style.js").NodeOptions>} nodeStyle node options changed: the new values
+ * @property {Partial<import("./style.js").EdgeOptions>} edgeStyle edge options changed: the new values
+ * @property {{ layout: LayoutName } & Record<string, any>} layout setLayout: the layout and all its options
+ * @property {{ mode: PhysicsMode } & Record<string, any>} physics setPhysics: the mode and all its options
+ * @property {import("./animation.js").AnimationOptions} animation setAnimation: every animation option
+ * @property {{ name: string }} theme    setTheme: "dark", "light" or "custom"
+ * @property {{ renderer: string }} renderer setRenderer: "webgl" or "canvas"
+ * @property {undefined} reset           reset: everything is going back to its home
+ * @property {{ nodes: number, time: string }} restore restore: the snapshot is shown
+ * @property {{ layout: LayoutName, nodes: number, edges: number }} laidOut a layout is in place
+ * @property {{ nodes: number }} settled the view has come to rest (see `settled()`)
+ * @property {{ k: number, pending?: boolean }} fit the camera frames the graph (pending: a layout is on its way, and
+ *   another "fit" follows when it lands)
+ * @property {{ node: string, k: number }} focus the camera is on its way to a node
+ * @property {{ selected: string[] }} select the selection changed
+ * @property {DisclosureDetail} expand   nodes were expanded (expand, expandAll, reveal)
+ * @property {DisclosureDetail} collapse nodes were collapsed (collapse, collapseTo)
+ * @property {{ node: string, reference: boolean }} hoverEnter the pointer is over a node (or one of its chips)
+ * @property {{ node: string }} hoverLeave the pointer left it
+ * @property {PointDetail} tap
+ * @property {PointDetail} doubleTap     the second of two quick taps in about the same place
+ * @property {PointDetail} longPress     a press held still for half a second (its release isn't a tap)
+ * @property {{ node: string, carried: number }} dragStart a node is being dragged (`carried`: it and its subtree)
+ * @property {{ node: string, thrown: boolean, screenSpeed: number, cancelled?: boolean }} dragEnd
+ * @property {{ x: number, y: number }} panStart where the pan started, CSS px
+ * @property {{ node?: undefined, thrown: boolean, screenSpeed: number, cancelled?: boolean }} panEnd
+ * @property {{ k: number }} pinchStart  two pointers are zooming: the scale they started at
+ * @property {{ k: number }} pinchEnd
+ * @property {{ message: string }} error a layout failed, or the layout worker was given up on
  */
 
 export class GraphController {
@@ -151,7 +258,9 @@ export class GraphController {
     this.layoutOpts = resolve(LAYOUTS[layout].options, layoutOptions);
     this.mode = LAYOUTS[layout].physics[physics] ? physics : "static";
     this.modeOpts = physicsOptions(layout, this.mode, physicsOpts);
-    this.anim = resolve(ANIMATION_OPTIONS, animation);
+    this.anim = /** @type {import("./animation.js").AnimationOptions} */ (
+      resolve(ANIMATION_OPTIONS, animation)
+    );
     this.camera = { x: 0, y: 0, k: 1 };
     this.glide = null; // the camera's coasting speed after a pan, world px/s
     // The camera keeping step with a morph, so the node it's anchored on stays put on screen (see #holdPlace).
@@ -199,7 +308,9 @@ export class GraphController {
     this.settleWaiters = [];
     /** @type {import("./ghosts.js").Ghost[]} nodes that left the graph, folding away */
     this.ghosts = [];
+    /** @type {Scene | null} what to draw, made by every tick */
     this.scene = null;
+    /** @type {import("./renderer.js").Renderer | null} */
     this.renderer = null;
 
     this.model = GraphModel.from(model);
@@ -208,6 +319,7 @@ export class GraphController {
     this.graph = new Graph(); // empty until the first layout below
     this.#carry(null, null);
     this.looks = looksOf(this.graph, this.node, this.edge, this.theme);
+    /** @type {import("./layouts.js").Routing} how edges bend, for the layout on screen */
     this.routing = { kind: "tree", direction: "TB" };
     this.homeBox = null;
     this.layouter = new Layouter({
@@ -225,7 +337,10 @@ export class GraphController {
     for (const issue of this.model.issues) this.#emit("graphIssue", issue);
   }
 
-  /** How nodes look: the model's node options. */
+  /**
+   * How nodes look: the model's node options.
+   * @returns {import("./style.js").NodeOptions}
+   */
   get node() {
     return this.model.opts.node;
   }
@@ -234,6 +349,7 @@ export class GraphController {
    * How edges look: the model's edge options, with the layout's own defaults (LAYOUTS[layout].edgeDefaults) for any
    * key the model's options leave at its default (`model.explicit`). So an edge's own style wins, then an edge option
    * set on purpose, then the layout's default, then EDGE_OPTIONS' default.
+   * @returns {import("./style.js").EdgeOptions}
    */
   get edge() {
     const opts = this.model.opts.edge;
@@ -253,6 +369,10 @@ export class GraphController {
   /**
    * Call `listener(detail)` on every event of `type` (or `onEvent` for all of them). Returns a function that stops
    * it.
+   * @template {keyof ControllerEvents} K
+   * @param {K} type
+   * @param {(detail: ControllerEvents[K]) => void} listener
+   * @returns {() => void}
    */
   on(type, listener) {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
@@ -407,6 +527,8 @@ export class GraphController {
   /**
    * The colours the engine picks itself: "dark", "light", or an object of colours over one of them (theme.js).
    * Graph and option colours that were set stay as they are.
+   * @param {import("./theme.js").ThemeInput} theme
+   * @returns {Readonly<import("./theme.js").Theme>} the theme now in use
    */
   setTheme(theme) {
     this.theme = resolveTheme(theme);
@@ -415,17 +537,28 @@ export class GraphController {
     return this.theme;
   }
 
-  /** Replace the graph: the model takes `input` (JSON, or another model's graph) and keeps what's unchanged. */
+  /**
+   * Replace the graph: the model takes `input` (JSON, or another model's graph) and keeps what's unchanged.
+   * @param {import("./model.js").GraphJSON | GraphModel} input
+   * @returns {import("./model.js").Change | null}
+   */
   setGraph(input) {
     return this.model.replace(input);
   }
 
-  /** Change the graph by a delta (see GraphModel.update). */
+  /**
+   * Change the graph by a delta (see GraphModel.update).
+   * @param {import("./model.js").Delta} delta
+   * @returns {import("./model.js").Change | null}
+   */
   update(delta) {
     return this.model.update(delta);
   }
 
-  /** Show a different model: its nodes glide from where the same ids were in the old one. */
+  /**
+   * Show a different model: its nodes glide from where the same ids were in the old one.
+   * @param {GraphModel | import("./model.js").GraphJSON} model
+   */
   setModel(model) {
     this.unlisten();
     this.model = GraphModel.from(model);
@@ -483,6 +616,8 @@ export class GraphController {
    * every shown node's layout state (see snapshot.js and next/MODEL.md). While a layout is on its way, it's the graph
    * on screen. `settings.explicit` lists the node and edge options set on purpose (the rest are defaults, the
    * layout's or the engine's).
+   * @param {string} [note] why it's taken (kept in the snapshot)
+   * @returns {import("./snapshot.js").Snapshot}
    */
   snapshot(note = "") {
     return takeSnapshot(
@@ -512,11 +647,14 @@ export class GraphController {
 
   /**
    * Show a snapshot: its graph, settings, camera, selection, collapsed nodes and node positions, as they were (no
-   * morph).
+   * morph). Throws on anything that isn't a snapshot this engine can read.
+   * @param {import("./snapshot.js").Snapshot} snapshot
    */
   restore(snapshot) {
     const graph = snapshotModel(snapshot).toJSON();
-    const { settings = {} } = snapshot;
+    const {
+      settings = /** @type {Partial<import("./snapshot.js").SnapshotSettings>} */ ({}),
+    } = snapshot;
     const { explicit } = settings;
     // Only the options that were set on purpose are set again (so a layout's own defaults still apply to the rest);
     // an older snapshot, without that list, sets them all.
@@ -581,10 +719,11 @@ export class GraphController {
   /**
    * Draw on `renderer` from now on (the old one lets go of the screen). Its text measurement becomes the model's,
    * unless the model was given its own.
+   * @param {import("./renderer.js").Renderer | null} renderer
    */
   setRenderer(renderer) {
     if (renderer === this.renderer) return;
-    this.renderer?.detach(this);
+    this.renderer?.detach();
     this.renderer = renderer;
     if (!renderer) return;
     if (renderer.measureText && !this.model.measured) {
@@ -599,7 +738,7 @@ export class GraphController {
   destroy() {
     this.unlisten();
     this.layouter.dispose();
-    this.renderer?.detach(this);
+    this.renderer?.detach();
     this.renderer = null;
     this.gestures.clear();
   }
@@ -609,14 +748,24 @@ export class GraphController {
   // Every setter merges: the options given change, the rest stay as they are (as node and edge styles do). Options
   // belong to one layout or one physics mode, so a different layout or mode starts from its own defaults.
 
-  /** How things move between states (ANIMATION_OPTIONS, all or some). */
+  /**
+   * How things move between states (ANIMATION_OPTIONS, all or some).
+   * @param {Partial<import("./animation.js").AnimationOptions>} [opts]
+   */
   setAnimation(opts = {}) {
-    this.anim = resolve(ANIMATION_OPTIONS, { ...this.anim, ...opts });
+    this.anim = /** @type {import("./animation.js").AnimationOptions} */ (
+      resolve(ANIMATION_OPTIONS, { ...this.anim, ...opts })
+    );
     this.#changed();
     this.#emit("animation", this.anim);
   }
 
-  /** Lay out with layout `name` (see LAYOUTS) and its options, all or some. A new layout is framed. */
+  /**
+   * Lay out with layout `name` (see LAYOUTS) and its options, all or some. A new layout is framed. An unknown name
+   * throws.
+   * @param {LayoutName} name
+   * @param {import("./layouts.js").LayoutOptions} [opts]
+   */
   setLayout(name, opts = {}) {
     if (!LAYOUTS[name]) throw new Error(`Unknown layout "${name}"`);
     const changed = name !== this.layout;
@@ -639,6 +788,8 @@ export class GraphController {
    * Move with physics `mode` ("static", "elastic", "floating": what the layout offers, see LAYOUTS) and its options,
    * all or some. Leave out the mode (null) to change only options. A mode the layout doesn't offer throws, and
    * changes nothing.
+   * @param {PhysicsMode | null} [mode]
+   * @param {import("./physics.js").PhysicsOptions} [opts]
    */
   setPhysics(mode = this.mode, opts = {}) {
     mode ??= this.mode;
@@ -658,12 +809,18 @@ export class GraphController {
     this.#emit("physics", { mode, ...this.modeOpts });
   }
 
-  /** How nodes look (NODE_OPTIONS, all or some): the model's options, so every view of it changes. */
+  /**
+   * How nodes look (NODE_OPTIONS, all or some): the model's options, so every view of it changes.
+   * @param {Partial<import("./style.js").NodeOptions>} opts
+   */
   setNodeStyle(opts) {
     this.model.setOptions({ node: opts });
   }
 
-  /** How edges look (EDGE_OPTIONS, all or some). */
+  /**
+   * How edges look (EDGE_OPTIONS, all or some).
+   * @param {Partial<import("./style.js").EdgeOptions>} opts
+   */
   setEdgeStyle(opts) {
     this.model.setOptions({ edge: opts });
   }
@@ -676,7 +833,13 @@ export class GraphController {
     this.#emit("reset");
   }
 
-  /** The drawing area's size in CSS px, and device pixels per CSS px. Frames again if the camera hasn't been moved. */
+  /**
+   * The drawing area's size in CSS px, and device pixels per CSS px. Frames again if the camera hasn't been moved.
+   * (A renderer calls this; headless, call it yourself.)
+   * @param {number} width
+   * @param {number} height
+   * @param {number} [dpr]
+   */
   setViewport(width, height, dpr = 1) {
     this.width = Math.max(width, 1);
     this.height = Math.max(height, 1);
@@ -688,12 +851,22 @@ export class GraphController {
 
   // ---- the camera ----------------------------------------------------------------------------------------------
 
-  /** A point on the canvas (CSS px from its top-left) in world coordinates. */
+  /**
+   * A point on the canvas (CSS px from its top-left) in world coordinates.
+   * @param {number} x
+   * @param {number} y
+   * @returns {{ x: number, y: number }}
+   */
   toWorld(x, y) {
     return cam.toWorld(this.camera, this.width, this.height, x, y);
   }
 
-  /** A world point on the canvas (CSS px from its top-left). */
+  /**
+   * A world point on the canvas (CSS px from its top-left).
+   * @param {number} x
+   * @param {number} y
+   * @returns {{ x: number, y: number }}
+   */
   toScreen(x, y) {
     return cam.toScreen(this.camera, this.width, this.height, x, y);
   }
@@ -701,6 +874,7 @@ export class GraphController {
   /**
    * Frame the graph where it is (or where it's heading, mid-transition). While a layout is on its way, the graph it
    * brings is framed when it arrives (and the graph on screen meanwhile).
+   * @param {boolean} [animate] glide there (the default), or jump
    */
   fit(animate = true) {
     this.glide = null;
@@ -779,6 +953,7 @@ export class GraphController {
   /**
    * How far the camera may zoom: in to 8×, out to 0.05×, or further if that's what it takes to see the whole graph
    * (half its fit, so there's room around it).
+   * @returns {{ min: number, max: number }}
    */
   zoomLimits() {
     return cam.zoomLimits(this.homeBox, this.width, this.height);
@@ -787,6 +962,9 @@ export class GraphController {
   /**
    * Zoom by `factor` about canvas point (x, y) (default: the middle), keeping the world point under it in place.
    * For zoom buttons, and the renderer's pinch gestures.
+   * @param {number} factor above 1 zooms in
+   * @param {number} [x]
+   * @param {number} [y]
    */
   zoomBy(factor, x = this.width / 2, y = this.height / 2) {
     this.#userCamera();
@@ -930,8 +1108,9 @@ export class GraphController {
     const target = rebuilding
       ? new Graph(this.model, null, this.#disclosure().part)
       : this.graph;
-    const spec = this.#sizingSpec(
+    const spec = sizingSpec(
       target,
+      this.model,
       looksOf(target, this.node, this.edge),
     );
     // A new structure keeps what stays where it was: the homes on screen, by id, as a hint (layout-job.js).
@@ -1123,28 +1302,6 @@ export class GraphController {
     );
   }
 
-  /**
-   * What a layout needs to know about sizes (layout-job.js): each node's label width (the model's, measured once
-   * each) and how far its shape reaches, and the label settings that turn those into footprints.
-   */
-  #sizingSpec(graph, looks) {
-    const { node } = this;
-    const labelled = node.labels !== "off";
-    return {
-      widths: labelled
-        ? graph.pick(this.model.labelWidths())
-        : new Float64Array(graph.nodes.length),
-      reach: Float64Array.from(
-        graph.nodes,
-        (n) => looks.radius[n.index] * reach(looks.shape[n.index]),
-      ),
-      height: this.model.labelHeight,
-      gap: node.collisionRadius,
-      labels: node.labels,
-      collide: labelled && node.labelCollide,
-    };
-  }
-
   /** Fix each node's label direction from its home, and the footprint that goes with it. */
   #placeLabels(spec) {
     const m = this.graph.matrix;
@@ -1190,6 +1347,7 @@ export class GraphController {
   /**
    * Advance everything to `now` (ms): layout morphs, physics, the camera, hover and fades, ghosts, long presses.
    * Then `scene` holds what to draw. Returns whether anything is still moving.
+   * @param {number} now ms, on the controller's clock
    * @returns {TickResult}
    */
   tick(now) {
@@ -1374,7 +1532,12 @@ export class GraphController {
     this.last = 0;
   }
 
-  /** Tick from `start` to `start + ms`, `step` ms at a time (tests and headless use). Returns the last result. */
+  /**
+   * Tick from `start` to `start + ms`, `step` ms at a time (tests and headless use). Returns the last result.
+   * @param {number} ms
+   * @param {{ start?: number, step?: number }} [options]
+   * @returns {TickResult | null}
+   */
   run(ms, { start = this.clock(), step = 1000 / 60 } = {}) {
     let result = null;
     for (let t = 0; t <= ms; t += step) result = this.tick(start + t);
@@ -1432,18 +1595,30 @@ export class GraphController {
     return [...this.folds];
   }
 
-  /** Whether node `id` is collapsed (its children are folded away). */
+  /**
+   * Whether node `id` is collapsed (its children are folded away).
+   * @param {string} id
+   * @returns {boolean}
+   */
   isCollapsed(id) {
     return this.folds.has(String(id));
   }
 
-  /** Whether node `id` is in the model but not shown (folded away under a collapsed node). */
+  /**
+   * Whether node `id` is in the model but not shown (folded away under a collapsed node).
+   * @param {string} id
+   * @returns {boolean}
+   */
   isHidden(id) {
     const i = this.model.index.get(String(id));
     return i !== undefined && !this.#disclosure().shown[i];
   }
 
-  /** How many nodes are hidden below node `id` (0 unless it's shown and collapsed): what a "+N" badge shows. */
+  /**
+   * How many nodes are hidden below node `id` (0 unless it's shown and collapsed): what a "+N" badge shows.
+   * @param {string} id
+   * @returns {number}
+   */
   hiddenCount(id) {
     const i = this.model.index.get(String(id));
     if (i === undefined) return 0;
@@ -1452,7 +1627,11 @@ export class GraphController {
     return (d.counts ??= hiddenBelow(this.model, d))[i];
   }
 
-  /** Collapse node `id`: what's below it, and not shown through another path, folds into it. Leaves can't be. */
+  /**
+   * Collapse node `id`: what's below it, and not shown through another path, folds into it. Leaves can't be.
+   * @param {string} id
+   * @returns {boolean} whether anything changed
+   */
   collapse(id) {
     id = String(id);
     const i = this.model.index.get(id);
@@ -1471,6 +1650,7 @@ export class GraphController {
    * hidden (see `reveal`).
    * @param {string} id
    * @param {{ depth?: number }} [options]
+   * @returns {boolean} whether anything changed
    */
   expand(id, { depth = 1 } = {}) {
     id = String(id);
@@ -1487,17 +1667,28 @@ export class GraphController {
     return this.#setFolds(next, "expand", { node: id, depth: levels });
   }
 
-  /** Expand node `id` if it's collapsed, else collapse it. */
+  /**
+   * Expand node `id` if it's collapsed, else collapse it.
+   * @param {string} id
+   * @returns {boolean} whether anything changed
+   */
   toggle(id) {
     return this.isCollapsed(id) ? this.expand(id) : this.collapse(id);
   }
 
-  /** Show everything: no node collapsed. */
+  /**
+   * Show everything: no node collapsed.
+   * @returns {boolean} whether anything changed
+   */
   expandAll() {
     return this.#setFolds(new Set(), "expand", { node: null, depth: Infinity });
   }
 
-  /** Show `depth` levels below the roots (0: just the roots) and collapse everything deeper. */
+  /**
+   * Show `depth` levels below the roots (0: just the roots) and collapse everything deeper.
+   * @param {number} depth
+   * @returns {boolean} whether anything changed
+   */
   collapseTo(depth) {
     const levels = depth >= 0 ? Math.floor(depth) : 0;
     return this.#setFolds(collapsedAt(this.model, levels), "collapse", {
@@ -1509,6 +1700,8 @@ export class GraphController {
   /**
    * Show node `id`: expand the collapsed nodes on its path from a root (whatever else that brings into view starts
    * collapsed, so only the path opens). False when it's shown already or not in the model. `focus` does this itself.
+   * @param {string} id
+   * @returns {boolean}
    */
   reveal(id) {
     id = String(id);
@@ -1704,7 +1897,10 @@ export class GraphController {
     this.gestures.cancel(input);
   }
 
-  /** The pointer left the canvas: no more hover (a press in progress carries on). */
+  /**
+   * The pointer left the canvas: no more hover (a press in progress carries on).
+   * @param {Partial<import("./gestures.js").PointerInput>} [input]
+   */
   pointerLeave(input) {
     this.gestures.leave(input);
   }
@@ -1719,7 +1915,10 @@ export class GraphController {
     this.gestures.wheel(input);
   }
 
-  /** A double-click at canvas point (x, y): on empty space, frame the graph. (Taps find double taps themselves.) */
+  /**
+   * A double-click at canvas point (x, y): on empty space, frame the graph. (Taps find double taps themselves.)
+   * @param {{ x: number, y: number }} input
+   */
   doubleClick({ x, y }) {
     if (this.hit(this.toWorld(x, y)) < 0) this.fit();
   }
@@ -1752,6 +1951,9 @@ export class GraphController {
   /**
    * The topmost node under a world point, or -1. With `references`, a reference under the point counts as its
    * ingredient (for hover: pointing at a reference lights up the ingredient and everything that uses it).
+   * @param {{ x: number, y: number }} p
+   * @param {{ references?: boolean }} [options]
+   * @returns {number} an index into `graph`
    */
   hit(p, { references = false } = {}) {
     const { index, reference } = this.#pick(p, references);

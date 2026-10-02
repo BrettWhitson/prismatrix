@@ -12,7 +12,7 @@
 //
 // Pure: no DOM.
 
-import { footprint } from "./boxes.js";
+import { footprint, reach } from "./boxes.js";
 import { Graph } from "./graph.js";
 import { GraphModel } from "./model.js";
 import { LAYOUTS } from "./layouts.js";
@@ -48,7 +48,7 @@ import { LAYOUTS } from "./layouts.js";
  * bends. Null when no node is kept (nothing to keep in place).
  * @param {import("./graph.js").Graph} previous
  * @param {import("./graph.js").Graph} graph
- * @param {{ bends?: Map<object, number[][]>, references?: { edge: object, x: number, y: number }[] }} [routing]
+ * @param {import("./layouts.js").Routing | null} [routing]
  * @returns {LayoutHint | null}
  */
 export function hintFrom(previous, graph, routing = null) {
@@ -80,7 +80,7 @@ export function hintFrom(previous, graph, routing = null) {
   const points = new Array(edges).fill(null);
   let total = 0;
   for (const [e, list] of routing.bends ?? []) {
-    const i = index.get(e.id);
+    const i = index.get(/** @type {{ id: string }} */ (e).id);
     if (i === undefined || !list.length) continue;
     points[i] = list;
     total += list.length;
@@ -116,6 +116,33 @@ export function usableHint(hint, nodes, edges) {
     return false;
   for (let i = 0; i < nodes; i++) if (!Number.isNaN(hint.x[i])) return true;
   return false;
+}
+
+/**
+ * What a layout needs to know about sizes, for working graph `graph` of `model`: each node's label width (the
+ * model's, measured once each) and how far its shape reaches (from `looks`, render.js's looksOf), and the label
+ * settings (the model's node options) that turn those into footprints.
+ * @param {Graph} graph
+ * @param {GraphModel} model
+ * @param {{ radius: Float64Array, shape: string[] }} looks per node of `graph`
+ * @returns {SizingSpec}
+ */
+export function sizingSpec(graph, model, looks) {
+  const { node } = model.opts;
+  const labelled = node.labels !== "off";
+  return {
+    widths: labelled
+      ? graph.pick(model.labelWidths())
+      : new Float64Array(graph.nodes.length),
+    reach: Float64Array.from(
+      graph.nodes,
+      (n) => looks.radius[n.index] * reach(looks.shape[n.index]),
+    ),
+    height: model.labelHeight,
+    gap: node.collisionRadius,
+    labels: node.labels,
+    collide: labelled && node.labelCollide,
+  };
 }
 
 /** A layout's sizing (see layouts.js) from a spec: label widths, and each node's footprint for a label direction. */

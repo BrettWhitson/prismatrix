@@ -75,7 +75,7 @@ export function gpuEdges(scene) {
  *   naming its four control nodes; the shader evaluates it from where they are this frame.
  *
  * `cpu` lists the edges left to the CPU (none: every edge this can pack, the GPU draws).
- * @param {object} scene
+ * @param {import("./controller.js").Scene} scene
  * @param {{ x: number, y: number }} origin
  * @returns {{ pieces: Float32Array, pieceEdge: Int32Array, pieceCount: number, shapedPieces: number,
  *   tips: Float32Array, tipEdge: Int32Array, tipCount: number, shapedTips: number, spans: Float32Array,
@@ -197,6 +197,7 @@ export function packPieces(scene, origin) {
     const straight = bundled && !e.tree;
     const bends = layered ? (routing.bends.get(e) ?? []) : [];
     const k = bends.length;
+    /** @type {{ x: number, y: number, f: number, node?: boolean }[]} */
     const stops = [NODE_A];
     bends.forEach(([x, y], i) => stops.push({ x, y, f: (i + 1) / (k + 1) }));
     stops.push(NODE_B);
@@ -659,7 +660,7 @@ export function piecePoints(shape, axis, a, b, trimA, trimB, corner) {
  * New looks for some edges (`dirty`: a flag per edge index) in GPU data from packPieces, in place: their colour and
  * half-width, all a restyle can change without a new layout. Returns, for each kind of instance (pieces, tips,
  * spans, bundleTips), the runs [first, end) that changed, for uploading just those.
- * @param {object} scene
+ * @param {import("./controller.js").Scene} scene
  * @param {ReturnType<typeof packPieces>} data
  * @param {Uint8Array} dirty
  * @returns {Record<string, [number, number][]>}
@@ -672,6 +673,7 @@ export function restylePieces(scene, data, dirty) {
     if (!rgb) colours.set(hex, (rgb = parseColour(hex)));
     return rgb;
   };
+  /** @type {[string, Float32Array, Int32Array, number, number, number, number][]} */
   const kinds = [
     // kind, instances, their edges, count, stride, half-width at (-1: none), colour at
     [

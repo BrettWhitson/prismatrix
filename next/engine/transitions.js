@@ -9,6 +9,13 @@ import { EASINGS, approach } from "./animation.js";
 /**
  * A point `f` of the way from (x0, y0) to (x1, y1) around a radial layout's centre: angle and radius each change
  * evenly (the angle the short way round), so nodes swing along their rings instead of cutting across the middle.
+ * @param {{ cx?: number, cy?: number }} centre
+ * @param {number} x0
+ * @param {number} y0
+ * @param {number} x1
+ * @param {number} y1
+ * @param {number} f
+ * @returns {[number, number]}
  */
 export function alongRings({ cx, cy }, x0, y0, x1, y1, f) {
   const r0 = Math.hypot(x0 - cx, y0 - cy),

@@ -65,11 +65,10 @@ export function linkGlyphs(scene, minimum = GLYPH_MIN_PX) {
  * The display graph with references: `graph`'s nodes plus one per reference, and its edges with each referenced
  * one ending at its reference (same index, so per-edge looks still line up). Per-node arrays are extended to match.
  * The display graph's `uses` maps each referenced ingredient's index to its in-degree.
- * @param {object} graph   the real graph
- * @param {{ edge: object, source: number, target: number, x: number, y: number, radius?: number }[]} references
- *   from the layout (layered.js)
- * @param {{ looks: object, shade: Float32Array, appear: Float32Array }} base for the real graph
- * @returns {{ graph: object, looks: object, shade: Float32Array, appear: Float32Array }}
+ * @param {import("./render.js").DisplayGraph} graph the real graph
+ * @param {import("./layered.js").Reference[] | undefined} references from the layout (layered.js)
+ * @param {Omit<import("./render.js").Shown, "graph">} base for the real graph
+ * @returns {import("./render.js").Shown}
  */
 export function withReferences(graph, references, base) {
   if (!references?.length) return { graph, ...base };

@@ -17,14 +17,78 @@ import {
 } from "./theme.js";
 
 /**
+ * @typedef {object} Looks How every node and edge of a graph looks, by index (looksOf).
+ * @property {Float64Array} radius     per node, world px
+ * @property {string[]} fill           per node, "#rrggbb"
+ * @property {string[]} shape          per node
+ * @property {(string | null)[]} stroke per node, its border colour (null: none)
+ * @property {Float64Array} strokeWidth per node (0: no border)
+ * @property {any[]} icon              per node, a URL or an image (null: none)
+ * @property {string[]} edgeColour     per edge
+ * @property {Float64Array} edgeWidth  per edge, world px
+ * @property {{ colour: string, width: number, byTarget: boolean }} edgeDefault an edge's look without a style of its own
+ * @property {import("./theme.js").Theme} theme
+ * @property {string} iconFit          the node option
+ * @property {Int32Array | null} branch per node, which branch of its root it's on (colouring by branch), or null
+ *
+ * @typedef {object} DisplayNode A node as painters read it: a working graph's node (graph.js), or one that's only
+ *   drawn (a reference chip, a ghost).
+ * @property {string} id
+ * @property {string} label
+ * @property {number} index
+ * @property {number} x
+ * @property {number} y
+ * @property {number} homeX
+ * @property {number} homeY
+ * @property {number} parent      its parent's index, or -1
+ * @property {number[]} children
+ * @property {number} depth
+ * @property {number} [labelAngle]
+ * @property {number} [descendants]
+ * @property {Record<string, any>} [style]
+ * @property {Record<string, any>} [data]
+ * @property {number} [reference] a reference chip: its ingredient's index
+ * @property {boolean} [ghost]    a node that left the graph, folding away
+ *
+ * @typedef {object} DisplayEdge An edge as painters read it (graph.js's Edge, or one that's only drawn).
+ * @property {string} [id]
+ * @property {number} source
+ * @property {number} target
+ * @property {boolean} tree
+ * @property {string} [label]
+ * @property {Record<string, any>} [style]
+ * @property {Record<string, any>} [data]
+ * @property {boolean} [reference] ends at a reference chip
+ * @property {boolean} [ghost]
+ *
+ * @typedef {object} DisplayGraph What painters draw: a working graph (graph.js), or one with reference chips
+ *   (references.js) and ghosts (ghosts.js) appended after its own nodes.
+ * @property {DisplayNode[]} nodes
+ * @property {DisplayEdge[]} edges
+ * @property {Map<string, any>} byId
+ * @property {number[]} roots
+ * @property {number[]} order
+ * @property {ReadonlyArray<ReadonlyArray<number>>} [incoming] per node, the edges into it
+ * @property {ReadonlyArray<ReadonlyArray<number>>} [outgoing] per node, the edges out of it
+ * @property {Map<number, number>} [uses] per referenced ingredient (node index), how many use it
+ *
+ * @typedef {object} Shown A display graph and what painters read per node and edge of it.
+ * @property {DisplayGraph} graph
+ * @property {Looks} looks
+ * @property {Float32Array} shade  per node, 0–1: how lit it is
+ * @property {Float32Array} appear per node, 0–1: how far it has faded in
+ */
+
+/**
  * How every node and edge looks: each element's own `style` (from the model) first, then the view's node and edge
  * options (sizing, colouring rules, defaults), then the theme (the palette, and the colours of options left at their
  * defaults). Per node: radius, fill, shape, stroke colour (null for none) and width, icon (a URL or an image, null
  * for none). Per edge: colour and width. patchLooks redoes some of them in place.
- * @returns {{ radius: Float64Array, fill: string[], shape: string[], stroke: (string | null)[],
- *   strokeWidth: Float64Array, icon: any[], edgeColour: string[], edgeWidth: Float64Array,
- *   edgeDefault: { colour: string, width: number, byTarget: boolean }, theme: object, iconFit: string,
- *   branch: Int32Array | null }}
+ * @param {DisplayGraph} graph
+ * @param {Record<string, any>} node the node options (NODE_OPTIONS, resolved)
+ * @param {Record<string, any>} edge the edge options (EDGE_OPTIONS, resolved)
+ * @param {import("./theme.js").Theme} [theme]
+ * @returns {Looks}
  */
 export function looksOf(graph, node, edge, theme = DEFAULT_THEME) {
   const count = graph.nodes.length;
@@ -158,7 +222,7 @@ export function lineage(graph, index) {
  * Draw one whole frame on one 2D canvas: background, edges, nodes, labels. Renderers that split the scene across
  * layers (see webgl.js) call the parts below themselves.
  * @param {CanvasRenderingContext2D} ctx
- * @param {object} scene
+ * @param {import("./controller.js").Scene} scene
  */
 export function drawScene(ctx, scene, icons = iconStore()) {
   clearTo(ctx, scene, scene.background ?? scene.theme?.background);

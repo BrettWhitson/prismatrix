@@ -37,30 +37,67 @@ export const SIZE_KEYS = [
 export const roughMeasure = (text, size) => text.length * size * 0.56;
 
 /**
- * @typedef {object} ModelNode
+ * @typedef {object} ModelNode A node as the model keeps it (frozen).
  * @property {string} id
  * @property {string} label    shown on the node; defaults to the id
  * @property {NodeStyle} style how this node looks, overriding the model's node options (see NODE_STYLE)
- * @property {object} data     anything else, untouched by the engine
+ * @property {Record<string, any>} data anything else, untouched by the engine
  *
  * @typedef {object} NodeStyle
  * @property {string} [color]  "#rrggbb"
- * @property {number} [size]   diameter, world px
- * @property {string} [shape]  one of the node shapes (circle, square, rounded, diamond, hexagon, ring)
+ * @property {number} [size]   diameter, world px (1–400)
+ * @property {"circle" | "square" | "rounded" | "diamond" | "hexagon" | "ring" | "tile"} [shape]
+ * @property {string} [stroke] a border's colour, "#rrggbb"
+ * @property {number} [strokeWidth] the border's width, world px (0–100; default: the node option `strokeWidth`)
+ * @property {string | { width: number, height: number }} [icon] an image drawn in the node: a URL, or an image
+ *   already in hand (an HTMLImageElement, ImageBitmap, canvas…; only a URL survives toJSON)
  * @property {string} [badge]  up to 12 characters in a pill at the node's top right ("!", "new"); top left when the
  *   node is collapsed (its "+N" takes the right)
  *
  * @typedef {object} EdgeStyle
  * @property {string} [color]  "#rrggbb"
- * @property {number} [width]  world px
+ * @property {number} [width]  world px (0.1–40)
  *
- * @typedef {object} ModelEdge
+ * @typedef {object} ModelEdge An edge as the model keeps it (frozen).
  * @property {string} id       given, or "source>target" (with "#2", "#3"… for repeats)
  * @property {string} source   node id
  * @property {string} target   node id
  * @property {string} label    drawn small near the target end ("×3"), or "" for none
  * @property {EdgeStyle} style how this edge looks, overriding the model's edge options (see EDGE_STYLE)
- * @property {object} data
+ * @property {Record<string, any>} data
+ *
+ * @typedef {object} NodeJSON A node in the prismatrix-graph format (next/MODEL.md).
+ * @property {string | number} id
+ * @property {string} [label]
+ * @property {NodeStyle} [style]
+ * @property {Record<string, any>} [data]
+ *
+ * @typedef {object} EdgeJSON An edge in the prismatrix-graph format.
+ * @property {string | number} [id]
+ * @property {string | number} source
+ * @property {string | number} target
+ * @property {string | number} [label]
+ * @property {EdgeStyle} [style]
+ * @property {Record<string, any>} [data]
+ *
+ * @typedef {object} GraphJSON A graph in the prismatrix-graph format (or plain `{ nodes, edges }`).
+ * @property {"prismatrix-graph"} [format]
+ * @property {number} [version]
+ * @property {Record<string, any>} [meta]
+ * @property {NodeJSON[]} [nodes]
+ * @property {EdgeJSON[]} [edges]
+ *
+ * @typedef {object} NodeChange A change to a node: each field given replaces the node's own.
+ * @property {string | number} id
+ * @property {string} [label]
+ * @property {NodeStyle} [style]
+ * @property {Record<string, any>} [data]
+ *
+ * @typedef {object} EdgeChange A change to an edge.
+ * @property {string | number} id
+ * @property {string | number} [label]
+ * @property {EdgeStyle} [style]
+ * @property {Record<string, any>} [data]
  *
  * @typedef {object} Issue
  * @property {string} kind     "duplicate-node", "missing-id", "missing-node", "missing-endpoint", "self-loop",
@@ -68,13 +105,14 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @property {string} message
  * @property {string} [id]
  *
- * @typedef {object} Delta
- * @property {object[]} [addNodes]     new nodes, as in the JSON format
- * @property {string[]} [removeNodes]  ids (their edges go too)
- * @property {object[]} [changeNodes]  `{ id, label?, style?, data? }`: the fields given replace the node's own
- * @property {object[]} [addEdges]     new edges, as in the JSON format
- * @property {string[]} [removeEdges]  ids
- * @property {object[]} [changeEdges]  `{ id, label?, style?, data? }`
+ * @typedef {object} Delta A change to a model (`update`). Each field takes a list (any iterable), or a single item.
+ * @property {NodeJSON | Iterable<NodeJSON>} [addNodes] new nodes, as in the JSON format
+ * @property {string | number | Iterable<string | number>} [removeNodes] ids (their edges go too)
+ * @property {NodeChange | Iterable<NodeChange>} [changeNodes] `{ id, label?, style?, data? }`: the fields given
+ *   replace the node's own
+ * @property {EdgeJSON | Iterable<EdgeJSON>} [addEdges] new edges, as in the JSON format
+ * @property {string | number | Iterable<string | number>} [removeEdges] ids
+ * @property {EdgeChange | Iterable<EdgeChange>} [changeEdges] `{ id, label?, style?, data? }`
  *
  * @typedef {object} Change
  * @property {number} version      the model's version after the change
@@ -91,12 +129,14 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @property {string[]} edgesRemoved
  * @property {string[]} edgesChanged  every kept edge with a new record (style or data), in edge order
  * @property {string[]} edgesRestyled the part of edgesChanged whose style changed
- * @property {{ node: object, edge: object }} [options] for setOptions: the options that changed, with new values
+ * @property {{ node: Partial<import("./style.js").NodeOptions>, edge: Partial<import("./style.js").EdgeOptions> }}
+ *   [options] for setOptions: the options that changed, with their new values
  * @property {Issue[]} issues      problems in this change (left out, never fixed silently)
  *
  * @typedef {object} ModelOptions
- * @property {object} [node]    node appearance: NODE_OPTIONS (size, shape, colours, labels and their size…)
- * @property {object} [edge]    edge appearance: EDGE_OPTIONS
+ * @property {Partial<import("./style.js").NodeOptions>} [node] node appearance: NODE_OPTIONS (size, shape, colours,
+ *   labels and their size…)
+ * @property {Partial<import("./style.js").EdgeOptions>} [edge] edge appearance: EDGE_OPTIONS
  * @property {(text: string, size: number) => number} [measure] a label's width at a font size; a renderer supplies a
  *   real one when a controller connects them (until then, an estimate)
  * @property {boolean} [strict] throw on the first problem instead of listing it in `issues`
@@ -240,9 +280,10 @@ function same(raw, copy) {
  * Deep equality by value, as structuredClone sees values: NaN equals NaN, dates by time, regular expressions by
  * source and flags, arrays and typed arrays element by element, maps and sets by their entries, objects by their own
  * keys. Cycles are followed once.
- * @param {unknown} a
- * @param {unknown} b
+ * @param {any} a
+ * @param {any} b
  * @param {Map<object, object>} [seen] pairs already being compared (for cycles)
+ * @returns {boolean}
  */
 export function equal(a, b, seen) {
   if (a === b) return true;
@@ -257,8 +298,10 @@ export function equal(a, b, seen) {
     if (a.constructor !== b.constructor || a.byteLength !== b.byteLength)
       return false;
     if (a instanceof DataView) return sameBytes(a, b);
-    for (let i = 0; i < a.length; i++)
-      if (a[i] !== b[i] && !(a[i] !== a[i] && b[i] !== b[i])) return false;
+    const items = /** @type {Uint8Array} */ (a); // a typed array, of any kind
+    for (let i = 0; i < items.length; i++)
+      if (items[i] !== b[i] && !(items[i] !== items[i] && b[i] !== b[i]))
+        return false;
     return true;
   }
   switch (tag) {
@@ -550,8 +593,9 @@ export class GraphModel {
 
   /**
    * A model from JSON (the prismatrix-graph format, or plain `{ nodes, edges }`), or the model itself if given one.
-   * @param {object | GraphModel} input
+   * @param {GraphJSON | GraphModel} input
    * @param {ModelOptions} [options]
+   * @returns {GraphModel}
    */
   static from(input, options) {
     if (input instanceof GraphModel) return input;
@@ -559,7 +603,7 @@ export class GraphModel {
   }
 
   /**
-   * @param {object} [input] prismatrix-graph JSON, or plain `{ nodes, edges }`
+   * @param {GraphJSON | GraphModel} [input] prismatrix-graph JSON, or plain `{ nodes, edges }`
    * @param {ModelOptions} [options]
    */
   constructor(
@@ -570,7 +614,10 @@ export class GraphModel {
     /** Hears errors thrown by listeners (see ModelOptions.onError); console.error when unset. */
     this.onError = onError ?? null;
     const warn = this.#optionWarning(this.#startIssues);
-    /** How nodes and edges look: resolved NODE_OPTIONS and EDGE_OPTIONS. */
+    /**
+     * How nodes and edges look: resolved NODE_OPTIONS and EDGE_OPTIONS.
+     * @type {{ node: import("./style.js").NodeOptions, edge: import("./style.js").EdgeOptions }}
+     */
     this.opts = {
       node: resolve(NODE_OPTIONS, plain(node), warn),
       edge: resolve(EDGE_OPTIONS, plain(edge), warn),
@@ -584,9 +631,11 @@ export class GraphModel {
       node: givenKeys(NODE_OPTIONS, node),
       edge: givenKeys(EDGE_OPTIONS, edge),
     };
+    /** @type {(text: string, size: number) => number} a label's width at a font size */
     this.measure = measure ?? roughMeasure;
     /** Whether `measure` is a real text measurement (given, or a renderer's), not the estimate. */
     this.measured = !!measure;
+    /** @type {Readonly<Record<string, any>>} the graph's `meta` (frozen) */
     this.meta = EMPTY;
     /** @type {Map<string, number>} node id → index, kept up to date in place */
     this.index = new Map();
@@ -598,6 +647,7 @@ export class GraphModel {
     this.structureVersion = 0;
     /** @type {Issue[]} problems found by the latest load or change */
     this.issues = [];
+    /** @type {Set<(change: Change, model: GraphModel) => void>} */
     this.listeners = new Set();
     this.cache = new Map(); // views computed once per structure (forest, dag, stats)
     this.widthCache = new Map(); // label text → width, at the current label size and measure
@@ -624,15 +674,26 @@ export class GraphModel {
     return (this.#edgesView ??= Object.freeze(this.#edgeList.slice()));
   }
 
+  /** How many nodes. */
   get size() {
     return this.#nodeList.length;
   }
 
+  /**
+   * The node with id `id`, or undefined.
+   * @param {string | number} id
+   * @returns {ModelNode | undefined}
+   */
   node(id) {
     const i = this.index.get(String(id));
     return i === undefined ? undefined : this.#nodeList[i];
   }
 
+  /**
+   * The edge with id `id`, or undefined.
+   * @param {string | number} id
+   * @returns {ModelEdge | undefined}
+   */
   edge(id) {
     const i = this.edgeIndex.get(String(id));
     return i === undefined ? undefined : this.#edgeList[i];
@@ -742,7 +803,10 @@ export class GraphModel {
     return this.opts.node.labelSize * LINE;
   }
 
-  /** Measure labels with `measure` from now on (a renderer's real text measurement, say). */
+  /**
+   * Measure labels with `measure` from now on (a renderer's real text measurement, say).
+   * @param {(text: string, size: number) => number} measure
+   */
   setMeasure(measure) {
     if (!measure || measure === this.measure) return;
     this.measure = measure;
@@ -763,6 +827,8 @@ export class GraphModel {
    * doesn't stop the others (the error goes to `onError`, or the console). A change asked for from inside a
    * listener (an `update` in reply to another) waits until every listener has heard the current one, then is
    * applied and told in its turn; the call itself returns null.
+   * @param {(change: Change, model: GraphModel) => void} listener
+   * @returns {() => void}
    */
   onChange(listener) {
     this.listeners.add(listener);
@@ -774,6 +840,7 @@ export class GraphModel {
   /**
    * Make the model hold `input` (JSON, plain `{ nodes, edges }`, or another model), in its order. Nodes and edges
    * that are the same as before keep their records: nothing is copied, checked or measured again.
+   * @param {GraphJSON | GraphModel} input
    * @returns {Change | null} what changed; null when nothing did (or when called from a listener: queued)
    */
   replace(input) {
@@ -797,7 +864,8 @@ export class GraphModel {
    * change. Numbers out of range are clamped; unknown keys and bad values are listed in the issues. A new label size
    * measures labels again (each distinct one, once). The keys given count as set on purpose (`explicit`). With
    * `reset`, the options become exactly what's given over the defaults, and only those keys are set on purpose.
-   * @param {{ node?: object, edge?: object }} options
+   * @param {{ node?: Partial<import("./style.js").NodeOptions>, edge?: Partial<import("./style.js").EdgeOptions> }}
+   *   options
    * @param {{ reset?: boolean }} [how]
    * @returns {Change | null} what changed; null when nothing did (or when called from a listener: queued)
    */
@@ -1297,6 +1365,7 @@ export class GraphModel {
     const warn = this.#optionWarning(issues);
     const before = this.opts;
     // Merged over what's set (or, with `reset`, over the defaults: only what's given is set).
+    /** @type {GraphModel["opts"]} */
     const next = {
       node:
         node || reset
@@ -1323,10 +1392,12 @@ export class GraphModel {
     // for it may have been showing.
     const nodeChanged = changes(before.node, next.node),
       edgeChanged = changes(before.edge, next.edge);
-    for (const [was, now, out, values] of [
+    /** @type {[ReadonlySet<string>, Set<string>, Record<string, any>, Record<string, any>][]} */
+    const kinds = [
       [this.explicit.node, explicit.node, nodeChanged, next.node],
       [this.explicit.edge, explicit.edge, edgeChanged, next.edge],
-    ]) {
+    ];
+    for (const [was, now, out, values] of kinds) {
       for (const k of now) if (!was.has(k)) out[k] = values[k];
       for (const k of was) if (!now.has(k)) out[k] = values[k];
     }
@@ -1495,6 +1566,9 @@ export class GraphModel {
   /**
    * What differs from `previous` (another model, or JSON) to this model, by id: nodes and edges added, removed,
    * kept, and kept nodes whose label, style or data differ.
+   * @param {GraphModel | GraphJSON} previous
+   * @returns {{ nodesAdded: string[], nodesRemoved: string[], nodesKept: string[], nodesChanged: string[],
+   *   edgesAdded: string[], edgesRemoved: string[] }}
    */
   diff(previous) {
     const before = GraphModel.from(previous);
@@ -1533,7 +1607,10 @@ export class GraphModel {
     };
   }
 
-  /** The model as prismatrix-graph JSON: GraphModel.from(model.toJSON()) gives an equal model. */
+  /**
+   * The model as prismatrix-graph JSON: GraphModel.from(model.toJSON()) gives an equal model.
+   * @returns {GraphJSON}
+   */
   toJSON() {
     return {
       format: GRAPH_FORMAT,

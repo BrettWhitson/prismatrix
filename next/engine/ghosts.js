@@ -19,6 +19,7 @@
  * @property {number} labelAngle
  * @property {number} radius     as drawn when it left
  * @property {string} fill
+ * @property {string} shape
  * @property {number} x0         where it was when it left
  * @property {number} y0
  * @property {Ancestry | null} up its ancestors in the graph it left, from its parent up to its root
@@ -86,7 +87,7 @@ export function departures(previous, next, looks, now) {
  * Where a ghost folds to: its nearest ancestor that `graph` still has (a node), or that is itself a ghost still
  * leaving (a ghost id), or nothing (it fades where it is). Ghosts carry their ancestors as a chain (`up`); a plain
  * list of ids (`ancestors`) works too.
- * @returns {{ node: object } | { ghost: string } | null}
+ * @returns {{ node: import("./render.js").DisplayNode, ghost?: undefined } | { ghost: string, node?: undefined } | null}
  */
 export function foldTarget(ghost, graph, ghostIds) {
   const ids = "up" in ghost ? chainIds(ghost.up) : ghost.ancestors;
@@ -110,13 +111,13 @@ const parentOf = (g) => ("up" in g ? g.up?.id : g.ancestors[0]);
  * The display graph for a frame: `graph`'s nodes and edges with the ghosts appended (nodes at their current
  * positions, plus an edge from each ghost's parent, real or ghost, where it has one), and the per-node arrays the
  * renderer reads, extended to match. Ghosts past their time are left out.
- * @param {object} graph   the real graph
+ * @param {import("./render.js").DisplayGraph} graph the real graph
  * @param {Ghost[]} ghosts
- * @param {object} base    { looks: { radius, fill }, shade, appear } for the real graph
+ * @param {Omit<import("./render.js").Shown, "graph">} base for the real graph
  * @param {number} now
  * @param {number} ms      how long a ghost takes to fold away
  * @param {(t: number) => number} ease
- * @returns {{ graph: object, looks: object, shade: Float32Array, appear: Float32Array, live: Ghost[] }}
+ * @returns {import("./render.js").Shown & { live: Ghost[] }}
  */
 export function withGhosts(graph, ghosts, base, now, ms, ease) {
   const live = ghosts.filter((g) => ms > 0 && now - g.start < ms);

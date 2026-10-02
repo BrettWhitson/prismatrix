@@ -232,7 +232,10 @@ export class Gestures {
     this.host.changed();
   }
 
-  /** A pointer left the canvas: no more hover (a press in progress carries on). */
+  /**
+   * A pointer left the canvas: no more hover (a press in progress carries on).
+   * @param {Partial<PointerInput>} [input]
+   */
   leave({ id } = {}) {
     if (this.pointers.has(id) || this.primary) return;
     this.host.hover(-1, false);
