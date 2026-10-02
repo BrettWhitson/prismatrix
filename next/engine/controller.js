@@ -27,7 +27,7 @@ import { Graph } from "./graph.js";
 import { GraphModel } from "./model.js";
 import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
-import { Simulation, physicsOptions } from "./physics.js";
+import { Simulation, physicsOptions, referencedEdges } from "./physics.js";
 import { looksOf } from "./render.js";
 import { runLayout, unpackRouting } from "./layout-job.js";
 import { Layouter } from "./layouter.js";
@@ -1005,6 +1005,8 @@ export class GraphController {
         boxes: this.node.labelCollide && this.node.labels !== "off",
         padding: this.node.collisionRadius,
       },
+      // Edges drawn as references don't pull: dragging a recipe doesn't tug a far-away ingredient.
+      referencedEdges(this.graph, this.routing.references),
     );
   }
 
