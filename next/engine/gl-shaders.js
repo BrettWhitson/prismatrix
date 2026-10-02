@@ -55,17 +55,11 @@ void main() {
   v_shape = a_shape;
 }`;
 
-export const NODE_FRAGMENT = `#version 300 es
-precision highp float;
-in vec2 v_local;
-flat in float v_radius;
-flat in vec4 v_colour;
-flat in float v_shape;
-${COMMON_FRAGMENT}
-uniform float u_outline;
-uniform vec3 u_background;
-out vec4 outColour;
-
+/**
+ * Exact distances to the node shapes (negative inside), so the same shape can be filled, outlined, or ringed at a
+ * distance (a selection halo): shape ids as SHAPE_IDS, r the node's radius. A ring (5) is its circle.
+ */
+const NODE_SHAPES = `
 float box(vec2 p, vec2 b) {
   vec2 d = abs(p) - b;
   return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
@@ -86,6 +80,45 @@ float hexagon(vec2 p, float r) {
   return length(p) * sign(p.y);
 }
 
+// A diamond with its points r from the centre on both axes (Inigo Quilez's rhombus).
+float diamond(vec2 p, float r) {
+  vec2 b = vec2(r);
+  p = abs(p);
+  vec2 q = b - 2.0 * p;
+  float h = clamp((q.x * b.x - q.y * b.y) / dot(b, b), -1.0, 1.0);
+  float d = length(p - 0.5 * b * vec2(1.0 - h, 1.0 + h));
+  return d * sign(p.x * b.y + p.y * b.x - b.x * b.y);
+}
+
+float shapeDistance(vec2 p, float r, float shape) {
+  return shape == 1.0 ? box(p, vec2(r))
+    : shape == 2.0 ? roundedBox(p, vec2(r), r * 0.45)
+    : shape == 3.0 ? diamond(p, r * 1.25)
+    : shape == 4.0 ? hexagon(p, r * 1.1)
+    : length(p) - r;
+}
+
+// How far past the radius a shape reaches (a diamond's and a hexagon's points stick out), and a ring's half stroke.
+float shapeReach(float shape) {
+  return shape == 3.0 ? 1.25 : shape == 4.0 ? 1.1 : 1.0;
+}
+
+float ringHalfStroke(float r) {
+  return max(1.5, r * 0.35) * 0.5;
+}`;
+
+export const NODE_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_local;
+flat in float v_radius;
+flat in vec4 v_colour;
+flat in float v_shape;
+${COMMON_FRAGMENT}
+${NODE_SHAPES}
+uniform float u_outline;
+uniform vec3 u_background;
+out vec4 outColour;
+
 void main() {
   vec2 p = v_local;
   float r = v_radius;
@@ -93,17 +126,13 @@ void main() {
   float alpha;
   if (v_shape == 5.0) {
     // A ring: background inside, a stroke in the node's colour around it.
-    float halfStroke = max(1.5, r * 0.35) * 0.5;
+    float halfStroke = ringHalfStroke(r);
     float d = length(p) - r;
     float stroke = cover(abs(d) - halfStroke);
     alpha = max(cover(d), stroke);
     colour = mix(u_background, colour, alpha > 0.0 ? stroke / alpha : 0.0);
   } else {
-    float d = v_shape == 1.0 ? box(p, vec2(r))
-      : v_shape == 2.0 ? roundedBox(p, vec2(r), r * 0.45)
-      : v_shape == 3.0 ? (abs(p.x) + abs(p.y) - r * 1.25) * 0.707106781
-      : v_shape == 4.0 ? hexagon(p, r * 1.1)
-      : length(p) - r;
+    float d = shapeDistance(p, r, v_shape);
     if (u_outline > 0.0) {
       // An outline in the background colour, centred on the shape's edge.
       float halfLine = u_outline * 0.5;
@@ -114,6 +143,56 @@ void main() {
   }
   alpha *= v_colour.a;
   outColour = vec4(colour * alpha, alpha);
+}`;
+
+/**
+ * A selection halo: a ring u_halo.x world px outside a node's shape (its exact offset, so corners come out round),
+ * u_halo.y wide, in the node's colour. Instances are the selected nodes, packed as nodes are (packHalos).
+ */
+export const HALO_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec2 a_centre;
+layout(location = 2) in float a_radius;
+layout(location = 3) in vec4 a_colour;
+layout(location = 4) in float a_shape;
+${COMMON_VERTEX}
+${NODE_SHAPES}
+uniform vec2 u_halo; // gap, width (world px)
+
+out vec2 v_local;
+flat out float v_radius;
+flat out vec4 v_colour;
+flat out float v_shape;
+
+void main() {
+  float ring = a_shape == 5.0 ? ringHalfStroke(a_radius) : 0.0;
+  float extent = a_radius * shapeReach(a_shape) + ring + u_halo.x + u_halo.y + 2.0 * u_pixel;
+  vec2 local = a_corner * extent;
+  gl_Position = toClip(a_centre + local);
+  v_local = local;
+  v_radius = a_radius;
+  v_colour = a_colour;
+  v_shape = a_shape;
+}`;
+
+export const HALO_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_local;
+flat in float v_radius;
+flat in vec4 v_colour;
+flat in float v_shape;
+${COMMON_FRAGMENT}
+${NODE_SHAPES}
+uniform vec2 u_halo;
+out vec4 outColour;
+
+void main() {
+  // Distance from the node's outer edge (a ring's stroke reaches past its circle).
+  float d = v_shape == 5.0
+    ? length(v_local) - v_radius - ringHalfStroke(v_radius)
+    : shapeDistance(v_local, v_radius, v_shape);
+  float alpha = cover(abs(d - u_halo.x - u_halo.y * 0.5) - u_halo.y * 0.5) * v_colour.a;
+  outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
 /** An edge segment: a capsule whose radius runs from one half-width to the other, so joints come out round. */
