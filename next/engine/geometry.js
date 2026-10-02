@@ -178,30 +178,6 @@ export function rounded(pts, radius) {
   return out;
 }
 
-/**
- * Whether a radial step edge would loop: the child has drifted inside its parent's ring (the edge would leave
- * outward and double back), or the arc round the middle is much longer than the way straight across. Drags and
- * floating physics do this; laid-out trees don't. Such an edge is drawn as a smooth curve instead.
- */
-export function stepLoops(rs, rt, arc, chord) {
-  // Laid-out radial trees reach at most about 1.5 (checked over 200 random trees): 1.75 never fires on a tree
-  // nobody has moved, and catches the swirls a drag or floating physics makes.
-  return rt < rs - 1 || arc > 1.75 * chord + 10;
-}
-
-/**
- * Whether either end of a radial edge has moved well off its ring: by more than a quarter of the distance between
- * the two rings. A ring arc only reads as "round the ring" while its ends sit on rings; floating physics and drags
- * move them off, and then a smooth curve reads better than an arc round a centre they've left.
- */
-export function offRings(s, t, rs, rt, cx, cy) {
-  if (s.homeX === undefined || t.homeX === undefined) return false;
-  const homeS = Math.hypot(s.homeX - cx, s.homeY - cy),
-    homeT = Math.hypot(t.homeX - cx, t.homeY - cy);
-  const slack = Math.abs(homeT - homeS) / 4;
-  return Math.abs(rs - homeS) > slack || Math.abs(rt - homeT) > slack;
-}
-
 /** Points per B-spline span when drawing a bundled edge. */
 const BUNDLE_STEPS = 8;
 
@@ -382,13 +358,20 @@ function radialStep(routing, s, t) {
   let delta = at - as;
   if (delta > Math.PI) delta -= Math.PI * 2;
   if (delta < -Math.PI) delta += Math.PI * 2;
-  // While a layout morph runs, nodes travel between rings on purpose: keep the arc (the loop guard still
-  // applies), so edges don't turn into curves and snap back to steps when the morph lands.
-  if (
-    (!routing.morphing && offRings(s, t, rs, rt, cx, cy)) ||
-    stepLoops(rs, rt, rm * Math.abs(delta), Math.hypot(t.x - s.x, t.y - s.y))
-  )
-    return curve(routing, s, t);
+  // Where the layout put the ends (a display-only node has no home of its own: where it is).
+  const hs =
+      s.homeX === undefined ? rs : Math.hypot(s.homeX - cx, s.homeY - cy),
+    ht = t.homeX === undefined ? rt : Math.hypot(t.homeX - cx, t.homeY - cy);
+  const w = stepCurveWeight(
+    rs,
+    rt,
+    hs,
+    ht,
+    rm * Math.abs(delta),
+    Math.hypot(t.x - s.x, t.y - s.y),
+    routing.morphing,
+  );
+  if (w >= 1) return curve(routing, s, t);
   const pts = [s.x, s.y];
   const count = Math.max(1, Math.ceil(Math.abs(delta) / ARC_STEP));
   for (let i = 0; i <= count; i++) {
@@ -396,7 +379,67 @@ function radialStep(routing, s, t) {
     pts.push(cx + Math.cos(a) * rm, cy + Math.sin(a) * rm);
   }
   pts.push(t.x, t.y);
-  return pts;
+  if (w <= 0) return pts;
+  // Partway: each point of the step slides towards the curve, matched by how far along the edge it is.
+  const c1 = [cx + Math.cos(as) * rm, cy + Math.sin(as) * rm],
+    c2 = [cx + Math.cos(at) * rm, cy + Math.sin(at) * rm];
+  return blendTowardsCubic(pts, [s.x, s.y], c1, c2, [t.x, t.y], w);
+}
+
+const smoothstep = (a, b, x) => {
+  const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * How far a radial step edge has turned into a curve, 0 (a step round the ring) to 1 (a smooth curve). A step
+ * reads as "round the ring" only while its ends sit on their rings, its child is further out than its parent, and
+ * its arc doesn't loop round the centre; as a drag or physics breaks one of those, the edge eases into a curve
+ * (and back), rather than snapping. Each test passes halfway where the old yes/no rule switched: an end off its ring
+ * by a quarter of the gap between the rings, the child level with its parent, an arc 1.75 times the straight
+ * distance. While a layout morph runs, nodes travel between rings on purpose: being off a ring doesn't count then.
+ * @param {number} rs where the source is, from the centre; `rt` the target; `hs`, `ht` where their layout put them
+ * @param {number} arc the step's arc length; `chord` the straight distance between the ends
+ */
+export function stepCurveWeight(rs, rt, hs, ht, arc, chord, morphing = false) {
+  const gap = Math.abs(ht - hs);
+  const slack = Math.max(gap / 4, 1e-6);
+  const off = morphing
+    ? 0
+    : smoothstep(
+        0.5,
+        1.5,
+        Math.max(Math.abs(rs - hs), Math.abs(rt - ht)) / slack,
+      );
+  const inside = smoothstep(-gap / 4, 1, rs - rt);
+  const loops = smoothstep(0.9, 1, arc / (1.75 * chord + 10));
+  return Math.max(off, inside, loops);
+}
+
+/**
+ * Points `pts` (flat x, y) slid `w` of the way towards a cubic from p0 to p3 (controls p1, p2): each point to the
+ * curve's point as far along it as the point is along `pts`.
+ */
+export function blendTowardsCubic(pts, p0, p1, p2, p3, w) {
+  let total = 0;
+  const along = [0];
+  for (let i = 2; i < pts.length; i += 2) {
+    total += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
+    along.push(total);
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i += 2) {
+    const u = total ? along[i / 2] / total : 0,
+      v = 1 - u;
+    const a = v * v * v,
+      b = 3 * v * v * u,
+      c = 3 * v * u * u,
+      d = u * u * u;
+    const cx = a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
+      cy = a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1];
+    out.push(pts[i] + (cx - pts[i]) * w, pts[i + 1] + (cy - pts[i + 1]) * w);
+  }
+  return out;
 }
 
 /**

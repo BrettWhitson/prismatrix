@@ -6,7 +6,12 @@ import { Graph } from "../../next/engine/graph.js";
 import { GraphModel } from "../../next/engine/model.js";
 import { treeLayout } from "../../next/engine/layouts.js";
 import { layeredLayout } from "../../next/engine/layered.js";
-import { edgeRoute, rounded, trim } from "../../next/engine/geometry.js";
+import {
+  edgeRoute,
+  rounded,
+  stepCurveWeight,
+  trim,
+} from "../../next/engine/geometry.js";
 import { looksOf } from "../../next/engine/render.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "../../next/engine/style.js";
 import { resolve } from "../../next/engine/schema.js";
@@ -238,4 +243,52 @@ test("positions: the matrix, then display-only nodes, relative to the origin, in
   assert.equal(out.length, POSITION_COLUMNS * 4);
   assert.deepEqual([...out.slice(4, 8)], [1, 1, 201, 201]);
   assert.deepEqual([...out.slice(5 * 4, 6 * 4)], [-93, -192, -93, -192]);
+});
+
+test("a radial step eases into a curve as its node drifts off its ring: no jumps, on the CPU or the GPU", () => {
+  const routing = { kind: "radial", cx: 0, cy: 0 };
+  const polar = (r, deg, home) => {
+    const a = (deg * Math.PI) / 180;
+    return {
+      x: Math.cos(a) * r,
+      y: Math.sin(a) * r,
+      homeX: Math.cos(a) * home,
+      homeY: Math.sin(a) * home,
+    };
+  };
+  const t = polar(200, 40, 200);
+  let cpuBefore = null,
+    gpuBefore = null;
+  let weights = [];
+  // Drag the source outward off its ring (home radius 100) in 1 px steps, well past the old yes/no switch (25 px).
+  for (let r = 100; r <= 160; r += 1) {
+    const s = polar(r, 10, 100);
+    const cpu = trim(
+      edgeRoute({ nodes: [s, t] }, routing, "step", {
+        source: 0,
+        target: 1,
+        tree: true,
+      }),
+      6,
+      10,
+    );
+    const gpu = radialPiecePoints(1, routing, s, t, 6, 10, 8);
+    if (cpuBefore) {
+      assert.ok(hausdorff(cpu, cpuBefore) < 6, `CPU jumps at ${r}`);
+      assert.ok(hausdorff(gpu, gpuBefore) < 6, `GPU jumps at ${r}`);
+    }
+    cpuBefore = cpu;
+    gpuBefore = gpu;
+    weights.push(
+      stepCurveWeight(r, 200, 100, 200, 0, 1), // the off-ring part alone
+    );
+  }
+  assert.equal(weights[0], 0, "on its ring: a step");
+  assert.equal(weights.at(-1), 1, "far off: a curve");
+  assert.ok(
+    weights.every((w, i) => i === 0 || w >= weights[i - 1]),
+    "never back towards a step while drifting further off",
+  );
+  // During a layout morph, being off a ring doesn't count.
+  assert.equal(stepCurveWeight(130, 200, 100, 200, 0, 1, true), 0);
 });

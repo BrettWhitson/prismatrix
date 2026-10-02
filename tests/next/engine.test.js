@@ -762,7 +762,7 @@ import {
   bspline,
   bundledPoints,
   edgeRoute,
-  stepLoops,
+  stepCurveWeight,
 } from "../../next/engine/geometry.js";
 
 test("a radial step edge falls back to a curve when it would loop", () => {
@@ -792,12 +792,13 @@ test("a radial step edge falls back to a curve when it would loop", () => {
     "not the ring arc",
   );
   assert.ok(Math.max(...radii) <= 200 + 1e-6, "stays inside the outer end");
-  assert.ok(stepLoops(200, 50, 10, 100));
-  assert.ok(
-    stepLoops(100, 200, 300, 150),
+  assert.equal(stepCurveWeight(200, 50, 200, 50, 10, 100), 1, "child inside");
+  assert.equal(
+    stepCurveWeight(100, 200, 100, 200, 300, 150),
+    1,
     "an arc much longer than the way across",
   );
-  assert.ok(!stepLoops(100, 200, 200, 150));
+  assert.equal(stepCurveWeight(100, 200, 100, 200, 200, 150), 0);
 });
 
 /** root → a → a1, root → b → b1, plus a cross-link a1 → b1 (a shared ingredient). */
@@ -893,8 +894,9 @@ test("step arcs never fall back on a radial tree nobody has moved", () => {
       if (d > Math.PI) d -= Math.PI * 2;
       if (d < -Math.PI) d += Math.PI * 2;
       const arc = ((rs + rt) / 2) * Math.abs(d);
-      assert.ok(
-        !stepLoops(rs, rt, arc, Math.hypot(t.x - s.x, t.y - s.y)),
+      assert.equal(
+        stepCurveWeight(rs, rt, rs, rt, arc, Math.hypot(t.x - s.x, t.y - s.y)),
+        0,
         `seed ${seed}`,
       );
     }

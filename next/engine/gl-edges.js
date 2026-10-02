@@ -9,6 +9,7 @@
 // against the CPU's own edge routes). Pure: no GL.
 
 import { parseColour } from "./gl-pack.js";
+import { stepCurveWeight } from "./geometry.js";
 
 /** Points along each piece: the shader draws the capsules between consecutive ones. */
 export const PIECE_POINTS = 16;
@@ -163,7 +164,6 @@ export function radialPiecePoints(
   morphing = false,
 ) {
   const { cx, cy } = centre;
-  const out = [];
   const rs = Math.hypot(s.x - cx, s.y - cy),
     rt = Math.hypot(t.x - cx, t.y - cy);
   const at = Math.atan2(t.y - cy, t.x - cx);
@@ -174,99 +174,117 @@ export function radialPiecePoints(
   if (delta > Math.PI) delta -= Math.PI * 2;
   if (delta < -Math.PI) delta += Math.PI * 2;
   let mode = shape;
+  let w = 0; // a step's way to a curve
   if (mode === 1) {
     if (centred) mode = 0;
     else {
-      const hs = Math.hypot(s.homeX - cx, s.homeY - cy),
-        ht = Math.hypot(t.homeX - cx, t.homeY - cy);
-      const slack = Math.abs(ht - hs) / 4;
-      const off = Math.abs(rs - hs) > slack || Math.abs(rt - ht) > slack;
-      const loops =
-        rt < rs - 1 ||
-        rm * Math.abs(delta) > 1.75 * Math.hypot(t.x - s.x, t.y - s.y) + 10;
-      if ((!morphing && off) || loops) mode = 2;
+      w = stepCurveWeight(
+        rs,
+        rt,
+        Math.hypot(s.homeX - cx, s.homeY - cy),
+        Math.hypot(t.homeX - cx, t.homeY - cy),
+        rm * Math.abs(delta),
+        Math.hypot(t.x - s.x, t.y - s.y),
+        morphing,
+      );
+      if (w >= 1) mode = 2;
     }
   }
   const ray = (a, r) => [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+  const pad = (out) => {
+    while (out.length < RADIAL_POINTS) out.push(out[out.length - 1]);
+    return out;
+  };
   if (mode === 0) {
     const len = Math.hypot(t.x - s.x, t.y - s.y) || 1;
     const dx = (t.x - s.x) / len,
       dy = (t.y - s.y) / len;
-    out.push(
+    return pad([
       [s.x + dx * trimA, s.y + dy * trimA],
       [t.x - dx * trimB, t.y - dy * trimB],
-    );
-  } else if (mode === 2) {
-    const p = [[s.x, s.y], ray(as, rm), ray(at, rm), [t.x, t.y]];
-    const at3 = (u) => {
-      const v = 1 - u;
-      const w = [v * v * v, 3 * v * v * u, 3 * v * u * u, u * u * u];
-      return [0, 1].map((k) => w.reduce((sum, wi, i) => sum + wi * p[i][k], 0));
-    };
-    const cut = (reach, fromB) => {
-      if (reach <= 0) return fromB ? 1 : 0;
-      const end = fromB ? p[3] : p[0];
-      let lo = 0,
-        hi = 0.5;
-      for (let k = 0; k < 12; k++) {
-        const m = (lo + hi) / 2;
-        const q = at3(fromB ? 1 - m : m);
-        if (Math.hypot(q[0] - end[0], q[1] - end[1]) < reach) lo = m;
-        else hi = m;
-      }
-      return fromB ? 1 - lo : lo;
-    };
-    const t0 = cut(trimA, false),
-      t1 = cut(trimB, true);
-    for (let i = 0; i < PIECE_POINTS; i++)
-      out.push(at3(t0 + ((t1 - t0) * i) / (PIECE_POINTS - 1)));
-  } else {
-    const A = ray(as, rs + trimA),
-      B = ray(at, rt - trimB);
-    const turn = delta >= 0 ? 1 : -1;
-    const chord =
-      (rm * Math.abs(delta)) /
-      Math.max(1, Math.ceil(Math.abs(delta) / ARC_STEP));
-    const f1 = Math.max(
-      0,
-      Math.min(corner, Math.min(rm - (rs + trimA), chord) / 2),
-    );
-    const f2 = Math.max(
-      0,
-      Math.min(corner, Math.min(rt - trimB - rm, chord) / 2),
-    );
-    const quad = (q, j, r, k) =>
-      [0, 1].map(
-        (i) => (1 - k) * (1 - k) * q[i] + 2 * (1 - k) * k * j[i] + k * k * r[i],
-      );
-    out.push(A);
-    for (let i = 0; i < 4; i++)
-      out.push(
-        quad(
-          ray(as, rm - f1),
-          ray(as, rm),
-          ray(as + (turn * f1) / rm, rm),
-          i / 3,
-        ),
-      );
-    // Round the short way: from the source's angle by the (wrapped) turn between them.
-    const from = as + (turn * f1) / rm,
-      to = as + delta - (turn * f2) / rm;
-    for (let i = 0; i < 20; i++)
-      out.push(ray(from + ((to - from) * i) / 19, rm));
-    for (let i = 0; i < 4; i++)
-      out.push(
-        quad(
-          ray(at - (turn * f2) / rm, rm),
-          ray(at, rm),
-          ray(at, rm + f2),
-          i / 3,
-        ),
-      );
-    out.push(B);
+    ]);
   }
-  while (out.length < RADIAL_POINTS) out.push(out[out.length - 1]);
-  return out;
+  // The curve: out along the source's spoke and in along the target's, bending at the ring between.
+  const p = [[s.x, s.y], ray(as, rm), ray(at, rm), [t.x, t.y]];
+  const curveAt = (u) => {
+    const v = 1 - u;
+    const k = [v * v * v, 3 * v * v * u, 3 * v * u * u, u * u * u];
+    return [0, 1].map((i) => k.reduce((sum, ki, j) => sum + ki * p[j][i], 0));
+  };
+  const cut = (reach, fromB) => {
+    if (reach <= 0) return fromB ? 1 : 0;
+    const end = fromB ? p[3] : p[0];
+    let lo = 0,
+      hi = 0.5;
+    for (let k = 0; k < 12; k++) {
+      const m = (lo + hi) / 2;
+      const q = curveAt(fromB ? 1 - m : m);
+      if (Math.hypot(q[0] - end[0], q[1] - end[1]) < reach) lo = m;
+      else hi = m;
+    }
+    return fromB ? 1 - lo : lo;
+  };
+  const t0 = cut(trimA, false),
+    t1 = cut(trimB, true);
+  if (mode === 2) {
+    const out = [];
+    for (let i = 0; i < PIECE_POINTS; i++)
+      out.push(curveAt(t0 + ((t1 - t0) * i) / (PIECE_POINTS - 1)));
+    return pad(out);
+  }
+  // The step: the source end, a rounded corner, the ring arc (the short way round), a rounded corner, the target end.
+  const A = ray(as, rs + trimA),
+    B = ray(at, rt - trimB);
+  const turn = delta >= 0 ? 1 : -1;
+  const chord =
+    (rm * Math.abs(delta)) / Math.max(1, Math.ceil(Math.abs(delta) / ARC_STEP));
+  const f1 = Math.max(
+    0,
+    Math.min(corner, Math.min(rm - (rs + trimA), chord) / 2),
+  );
+  const f2 = Math.max(
+    0,
+    Math.min(corner, Math.min(rt - trimB - rm, chord) / 2),
+  );
+  const quad = (q, j, r, k) =>
+    [0, 1].map(
+      (i) => (1 - k) * (1 - k) * q[i] + 2 * (1 - k) * k * j[i] + k * k * r[i],
+    );
+  const out = [A];
+  for (let i = 0; i < 4; i++)
+    out.push(
+      quad(
+        ray(as, rm - f1),
+        ray(as, rm),
+        ray(as + (turn * f1) / rm, rm),
+        i / 3,
+      ),
+    );
+  const from = as + (turn * f1) / rm,
+    to = as + delta - (turn * f2) / rm;
+  for (let i = 0; i < 20; i++) out.push(ray(from + ((to - from) * i) / 19, rm));
+  for (let i = 0; i < 4; i++)
+    out.push(
+      quad(
+        ray(at - (turn * f2) / rm, rm),
+        ray(at, rm),
+        ray(at, rm + f2),
+        i / 3,
+      ),
+    );
+  out.push(B);
+  if (w <= 0) return out;
+  // Partway to a curve: each point slides towards the curve's point as far along it as the point is along the step.
+  let total = 0;
+  const along = [0];
+  for (let i = 1; i < out.length; i++) {
+    total += Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]);
+    along.push(total);
+  }
+  return out.map(([x, y], i) => {
+    const [qx, qy] = curveAt(t0 + (t1 - t0) * (total ? along[i] / total : 0));
+    return [x + (qx - x) * w, y + (qy - y) * w];
+  });
 }
 
 /**

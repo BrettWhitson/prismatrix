@@ -428,6 +428,16 @@ vec2 radialStepAt(int i, vec2 A, vec2 B, float as_, float at, float delta, float
   return c + ray(mix(from, to, float(i - 5) / 19.0)) * rm;
 }
 
+// How far a radial step has turned into a curve (0–1): stepCurveWeight in geometry.js.
+float stepCurveWeight(float rs, float rt, float hs, float ht, float arc, float chord) {
+  float gap = abs(ht - hs);
+  float slack = max(gap / 4.0, 1e-6);
+  float off = u_morphing ? 0.0 : smoothstep(0.5, 1.5, max(abs(rs - hs), abs(rt - ht)) / slack);
+  float inside = smoothstep(-gap / 4.0, 1.0, rs - rt);
+  float loops = smoothstep(0.9, 1.0, arc / (1.75 * chord + 10.0));
+  return max(off, max(inside, loops));
+}
+
 void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   vec2 c = u_centre;
   vec2 S = s.xy, T = t.xy;
@@ -441,15 +451,14 @@ void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   if (delta > 3.14159265) delta -= 6.28318531;
   if (delta < -3.14159265) delta += 6.28318531;
   int mode = u_shape; // 0 straight, 1 step, 2 curve
+  float w = 0.0; // a step's way to a curve
   if (mode == 1) {
     if (centred) mode = 0;
     else {
-      // Off its ring (unless a layout morph is moving it), or an arc that would loop: a curve reads better.
-      float hs = length(s.zw - c), ht = length(t.zw - c);
-      float slack = abs(ht - hs) / 4.0;
-      bool off = abs(rs - hs) > slack || abs(rt - ht) > slack;
-      bool loops = rt < rs - 1.0 || rm * abs(delta) > 1.75 * length(T - S) + 10.0;
-      if ((!u_morphing && off) || loops) mode = 2;
+      // Off its ring (unless a layout morph is moving it), inside its parent, or an arc that would loop: it eases
+      // into a curve.
+      w = stepCurveWeight(rs, rt, length(s.zw - c), length(t.zw - c), rm * abs(delta), length(T - S));
+      if (w >= 1.0) mode = 2;
     }
   }
   if (mode == 0) {
@@ -479,6 +488,22 @@ void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   float f2 = max(0.0, min(u_corner, min(length(B - c) - rm, chord) * 0.5));
   a = radialStepAt(part, A, B, as_, at, delta, rm, f1, f2, turn);
   b = radialStepAt(part + 1, A, B, as_, at, delta, rm, f1, f2, turn);
+  if (w <= 0.0) return;
+  // Partway to a curve: each point slides towards the curve's point as far along it as the point is along the step.
+  vec2 c1 = c + ray(as_) * rm, c2 = c + ray(at) * rm;
+  float t0 = cubicCut(a_trim.x, S, c1, c2, T, false), t1 = cubicCut(a_trim.y, S, c1, c2, T, true);
+  vec2 previous = A;
+  float run = 0.0, alongA = 0.0, alongB = 0.0;
+  for (int i = 1; i < 30; i++) {
+    vec2 p = radialStepAt(i, A, B, as_, at, delta, rm, f1, f2, turn);
+    run += length(p - previous);
+    previous = p;
+    if (i == part) alongA = run;
+    if (i == part + 1) alongB = run;
+  }
+  float total = max(run, 1e-6);
+  a = mix(a, cubicAt(mix(t0, t1, alongA / total), S, c1, c2, T), w);
+  b = mix(b, cubicAt(mix(t0, t1, alongB / total), S, c1, c2, T), w);
 }
 
 void main() {
