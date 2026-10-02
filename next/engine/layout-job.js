@@ -100,25 +100,6 @@ export function hintFrom(previous, graph, routing = null) {
 }
 
 /**
- * Whether `hint` fits a graph of `nodes` nodes and `edges` edges (one entry each, edge parts optional) and keeps at
- * least one node. A layout is given a hint only when it does.
- */
-export function usableHint(hint, nodes, edges) {
-  if (!hint || hint.x?.length !== nodes || hint.y?.length !== nodes)
-    return false;
-  if (hint.refX && (hint.refX.length !== edges || hint.refY?.length !== edges))
-    return false;
-  if (
-    hint.bendStart &&
-    (hint.bendStart.length !== edges + 1 ||
-      hint.bendXY?.length !== 2 * hint.bendStart[edges])
-  )
-    return false;
-  for (let i = 0; i < nodes; i++) if (!Number.isNaN(hint.x[i])) return true;
-  return false;
-}
-
-/**
  * What a layout needs to know about sizes, for working graph `graph` of `model`: each node's label width (the
  * model's, measured once each) and how far its shape reaches (from `looks`, render.js's looksOf), and the label
  * settings (the model's node options) that turn those into footprints.
@@ -196,12 +177,7 @@ export function graphFromStructure({ count, from, to }) {
  * @param {LayoutHint | null} [hint]
  */
 export function runLayout(graph, name, options, spec, hint = null) {
-  const routing = LAYOUTS[name].run(
-    graph,
-    options,
-    sizingFrom(spec),
-    usableHint(hint, graph.nodes.length, graph.edges.length) ? hint : null,
-  );
+  const routing = LAYOUTS[name].run(graph, options, sizingFrom(spec), hint);
   const m = graph.matrix;
   return {
     homeX: m.homeX.slice(),
