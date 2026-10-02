@@ -274,8 +274,7 @@ test("a snapshot restores the same graph, settings, camera and positions", () =>
 });
 
 test("references are drawn as chips that follow their source, and pointing at one lights its ingredient", () => {
-  // root, a and d all use hub. root → hub is its tree edge (found first) and d → hub is short, so only a → hub,
-  // four layers long, gets a reference.
+  // root, a and d all use hub. d → hub, from one layer up, is the edge drawn; root's and a's get references.
   const nodes = ["root", "a", "b", "c", "d", "hub"].map((id) => ({ id }));
   const edges = [
     ["root", "a"],
@@ -290,17 +289,21 @@ test("references are drawn as chips that follow their source, and pointing at on
   c.setLayout("merged", { references: "hubs", shareMin: 3 });
   wait(1500);
   const refs = c.routing.references;
-  assert.equal(refs.length, 1);
-  assert.equal(c.scene.graph.nodes.length, 6 + 1);
-  const chip = c.scene.graph.nodes[6];
-  assert.equal(c.scene.looks.shape[6], "ring");
+  assert.deepEqual(refs.map((r) => c.graph.nodes[r.source].id).sort(), [
+    "a",
+    "root",
+  ]);
+  assert.equal(c.scene.graph.nodes.length, 6 + 2);
+  const k = refs.findIndex((r) => c.graph.nodes[r.source].id === "a");
+  const chip = c.scene.graph.nodes[6 + k];
+  assert.equal(c.scene.looks.shape[6 + k], "ring");
   assert.equal(c.scene.graph.nodes[chip.parent].id, "a");
   // The referenced edge ends at the chip, at the same index.
-  const ei = c.graph.edges.indexOf(refs[0].edge);
-  assert.equal(c.scene.graph.edges[ei].target, 6);
+  const ei = c.graph.edges.indexOf(refs[k].edge);
+  assert.equal(c.scene.graph.edges[ei].target, 6 + k);
 
   // Drag the chip's source: the chip moves with it.
-  const source = c.graph.nodes[refs[0].source];
+  const source = c.graph.nodes[refs[k].source];
   const before = { x: chip.x, y: chip.y };
   const at = c.toScreen(source.x, source.y);
   c.pointerDown({ ...at, time: now() });
@@ -308,7 +311,7 @@ test("references are drawn as chips that follow their source, and pointing at on
   wait(300);
   c.pointerUp({ time: now() });
   wait(50);
-  const moved = c.scene.graph.nodes[6];
+  const moved = c.scene.graph.nodes[6 + k];
   assert.ok(Math.abs(moved.x - before.x - (source.x - source.homeX)) < 1);
 
   // Pointing at a chip lights up its ingredient.

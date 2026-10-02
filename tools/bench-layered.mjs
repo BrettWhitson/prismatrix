@@ -14,6 +14,9 @@
 //   centring    mean distance of a parent from the middle of its children (px)
 //   width       drawing width (px); height (px)
 //   ms          layout time
+//   moved       stability: after a one-node change (a new ingredient under one item), the share of the other nodes
+//               whose home moves more than 2 px (%), averaged over three such changes
+//   shift       stability: how far they move on average (px)
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,11 +100,48 @@ export function measure(model, layout = layeredLayout, options = {}) {
   };
 }
 
+/**
+ * How much a layout keeps its place under a small change (the mental map): add one new ingredient under an item a
+ * quarter, half and three quarters of the way through the node list, lay out again, and compare every other
+ * node's home with where it was. Returns the share of them that moved more than 2 px (%) and the mean distance (px).
+ */
+export function stability(model, layout = layeredLayout, options = {}) {
+  const json = GraphModel.from(model).toJSON();
+  const homes = (data) => {
+    const g = new Graph(GraphModel.from(data));
+    layout(g, options, sizing);
+    return new Map(g.nodes.map((n) => [n.id, [n.homeX, n.homeY]]));
+  };
+  const before = homes(json);
+  let moved = 0,
+    shift = 0,
+    kept = 0;
+  for (const at of [0.25, 0.5, 0.75]) {
+    const parent = json.nodes[Math.floor(json.nodes.length * at)].id;
+    const after = homes({
+      nodes: [...json.nodes, { id: "bench-new" }],
+      edges: [...json.edges, { source: parent, target: "bench-new" }],
+    });
+    for (const [id, [x, y]] of before) {
+      const [x2, y2] = after.get(id);
+      const d = Math.hypot(x2 - x, y2 - y);
+      if (d > 2) moved++;
+      shift += d;
+      kept++;
+    }
+  }
+  return {
+    moved: Math.round((moved / kept) * 100),
+    shift: Math.round(shift / kept),
+  };
+}
+
 // Run directly (not imported by another script): print the table.
 if (process.argv[1]?.endsWith("bench-layered.mjs")) {
   const rows = fixtures().map(([name, model]) => ({
     case: name,
     ...measure(model),
+    ...stability(model),
   }));
   if (process.argv.includes("--json"))
     console.log(JSON.stringify(rows, null, 2));

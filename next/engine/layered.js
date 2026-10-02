@@ -5,6 +5,8 @@
 //   2. Layers: longest path from the sources, so every node sits just below the deepest thing that uses it and
 //      depth reads as crafting steps. Or (ranking "simplex") network simplex (Gansner et al. 1993), which moves
 //      nodes down next to what they're made from so long edges are fewer, keeping tree edges short where it can.
+//      Then each node's tree edge (the one edge into it drawn as part of the tree) is one from a user a layer
+//      above it, so tree edges are short and the long ones are cross-links.
 //   3. Long edges: a dummy node on every layer an edge crosses, so edges bend between nodes, not through them.
 //   4. Order within layers: barycenter sweeps down and up, from a depth-first order and from seeded shuffles of it;
 //      then global sifting (sifting.js) moves each node and each long edge of the best as a whole to wherever it
@@ -18,10 +20,11 @@
 //      (Gansner's auxiliary-graph LP) at a fraction of the cost. Placement "median" is the older unweighted version.
 //   6. Edges follow their dummy nodes ("bends"), recorded per edge for the edge geometry.
 //
-// References (step 2b, on by default): a cross-link into an ingredient used by `shareMin` or more recipes, which
-// would cross two or more layers, ends at a reference instead: a chip one layer below its source, laid out like a
-// node (references.js draws it). Busy ingredients are what make dense recipe graphs a tangle; on the crafting
-// fixtures this removes 75–95% of crossings and over half the ink, for a wider drawing.
+// References (step 2b, on by default): every cross-link into an ingredient used by `shareMin` or more recipes ends
+// at a reference instead: a small chip one layer below its source, laid out like a little node (references.js draws
+// it). Only the ingredient's tree edge stays a real edge. Busy ingredients are what make dense recipe graphs a
+// tangle, and even their short edges cross everything between their users; on the crafting fixtures references
+// remove 75–95% of crossings and over half the ink, and on real recipe data 96%.
 //
 // Pure: no DOM. Measured with `npm run bench:merged`.
 
@@ -32,9 +35,6 @@ import { globalSifting } from "./sifting.js";
 const ORDER_SWEEPS = 12;
 // Before global sifting, half as many sweeps give the same result: sifting does the rest.
 const SIFT_SWEEPS = 6;
-// Network simplex layering stops improving after this many ms: a few thousand nodes finish well within it; a huge
-// graph gets a good layering instead of a frozen page (each pivot costs more as the graph grows).
-const SIMPLEX_BUDGET = 50;
 const PLACE_PASSES = 8;
 const BALANCE_PASSES = 12;
 const BALANCE_MIN_PASSES = 4; // then stop as soon as nothing moves more than half a pixel
@@ -47,8 +47,10 @@ const TREE_RANK_WEIGHT = 8;
  * @param {import("./graph.js").Graph} graph
  * @param {{ direction?: string, levelGap?: number, nodeGap?: number }} [options]
  * @param {import("./layouts.js").Sizing} [sizing]
- * @returns {{ kind: "layered", direction: string, bends: Map<object, number[][]>, crossings: number,
- *   initialCrossings: number, layerOf: Int32Array }}
+ * @returns {{ kind: "layered", direction: string, bends: Map<object, number[][]>, references: Reference[],
+ *   crossings: number, initialCrossings: number, layerOf: Int32Array,
+ *   simplex?: { pivots: number, optimal: boolean } }} `simplex` (ranking "simplex" only): how many exchanges the
+ *   layering made, and whether it reached the fewest long edges or stopped at its work budget (very big graphs)
  */
 export function layeredLayout(
   graph,
@@ -104,16 +106,23 @@ export function layeredLayout(
 
   // ---- 2. layers: network simplex (fewest layers crossed in all), or longest path from the sources
   let layerOf = new Int32Array(n);
+  let simplex;
   if (ranking === "simplex") {
+    // Network simplex stops after this much work (nodes and edges visited, simplex.js): crafting graphs of up to
+    // about ten thousand nodes reach the fewest long edges; bigger ones stop with most of the gain, and say so
+    // (`simplex.optimal`). Counted in work, never in time, so the layout doesn't depend on the machine.
+    const SIMPLEX_WORK = 2e7;
     const kept = edges.flatMap((_, ei) => (from(ei) === to(ei) ? [] : [ei]));
-    layerOf = networkSimplex(
+    const ranked = networkSimplex(
       n,
       kept.map(from),
       kept.map(to),
       kept.map(() => 1),
       kept.map((ei) => (edges[ei].tree ? TREE_RANK_WEIGHT : 1)),
-      { budget: SIMPLEX_BUDGET },
-    ).rank;
+      { work: SIMPLEX_WORK },
+    );
+    layerOf = ranked.rank;
+    simplex = { pivots: ranked.pivots, optimal: ranked.optimal };
   } else {
     const indegree = new Int32Array(n);
     const down = Array.from({ length: n }, () => []);
@@ -134,9 +143,34 @@ export function layeredLayout(
   let layerCount = 0;
   for (let v = 0; v < n; v++) layerCount = Math.max(layerCount, layerOf[v] + 1);
 
-  // ---- 2b. references: a cross-link into a busy shared ingredient (used by shareMin or more) that would cross
-  // layers ends instead at a reference to it, one layer below its source. Layout nodes: real nodes, then
-  // references (laid out like nodes, with their ingredient's footprint), then dummies.
+  // ---- 2a. tree edges: each node's edge in from a user as few layers up as there is (one, after longest path),
+  // the forest's own tree edge on a tie, else the first. The forest picks an ingredient's shallowest user (breadth
+  // first), which is its longest edge in here: drawn as the tree edge, it would be both long and pulled straight
+  // hardest, and never referenced.
+  const tree = new Uint8Array(edges.length);
+  {
+    const best = new Int32Array(n).fill(-1);
+    edges.forEach((e, ei) => {
+      if (reversed[ei] || e.source === e.target) return;
+      const v = e.target,
+        b = best[v];
+      const span = layerOf[v] - layerOf[e.source];
+      if (b < 0) best[v] = ei;
+      else {
+        const spanB = layerOf[v] - layerOf[edges[b].source];
+        if (span < spanB || (span === spanB && e.tree && !edges[b].tree))
+          best[v] = ei;
+      }
+    });
+    for (const ei of best) if (ei >= 0) tree[ei] = 1;
+  }
+
+  // ---- 2b. references: every cross-link into a busy shared ingredient (used by shareMin or more) ends instead at
+  // a reference to it, one layer below its source; only the ingredient's tree edge reaches it. Even a one-layer edge
+  // into a busy ingredient crosses everything between its users, so it gets one too. A reference is a compact chip
+  // (REFERENCE_HALF either side of its centre, drawn without its ingredient's label), so a recipe with many of them
+  // stays narrow. Layout nodes: real nodes, then references, then dummies.
+  const REFERENCE_HALF = 6;
   const lay = Array.from(layerOf); // layer per layout node
   const endOf = edges.map((_, ei) => to(ei)); // where each edge ends in the layout: its target or a reference
   const refs = [];
@@ -144,9 +178,8 @@ export function layeredLayout(
     const uses = new Int32Array(n);
     edges.forEach((e) => uses[e.target]++);
     edges.forEach((e, ei) => {
-      if (e.tree || reversed[ei] || e.source === e.target) return;
+      if (tree[ei] || reversed[ei] || e.source === e.target) return;
       if (uses[e.target] < shareMin) return;
-      if (layerOf[e.target] - layerOf[e.source] < 2) return;
       endOf[ei] = n + refs.length;
       lay.push(layerOf[e.source] + 1);
       refs.push({ edge: ei, source: e.source, target: e.target });
@@ -158,7 +191,7 @@ export function layeredLayout(
   const upper = Array.from({ length: real }, () => []); // neighbours one layer up
   const lower = Array.from({ length: real }, () => []);
   // How much each segment wants to be straight, parallel to upper and lower: long edges' inner segments most,
-  // then their ends, then short edges; a tree edge (an ingredient's first recipe) four times its kind.
+  // then their ends, then short edges; a tree edge (a node's edge in from one layer up, step 2a) four times its kind.
   const upperWeight = Array.from({ length: real }, () => []);
   const lowerWeight = Array.from({ length: real }, () => []);
   const link = (a, b, w) => {
@@ -175,7 +208,7 @@ export function layeredLayout(
       b = endOf[ei];
     if (a === b) return;
     const chain = [a];
-    const boost = edges[ei].tree ? 4 : 1;
+    const boost = tree[ei] ? 4 : 1;
     let prev = a;
     for (let k = lay[a] + 1; k < lay[b]; k++) {
       const d = lay.length;
@@ -252,8 +285,11 @@ export function layeredLayout(
     far[node.index] = flip ? -a : b;
   }
   refs.forEach(({ target }, k) => {
-    // A reference is drawn smaller than its ingredient, with the same label: the same footprint is close enough.
-    for (const side of [left, right, near, far]) side[n + k] = side[target];
+    // A reference is a chip with no label: REFERENCE_HALF each way, or less if its ingredient is smaller.
+    left[n + k] = Math.min(REFERENCE_HALF, left[target]);
+    right[n + k] = Math.min(REFERENCE_HALF, right[target]);
+    near[n + k] = Math.max(-REFERENCE_HALF, near[target]);
+    far[n + k] = Math.min(REFERENCE_HALF, far[target]);
   });
   const gap = nodeGap + sizing.gap;
   const dummyHalf = 2;
@@ -347,14 +383,17 @@ export function layeredLayout(
     kind: "layered",
     direction,
     bends,
-    // Each reference: the edge it stands in for, and where it sits.
+    // Each reference: the edge it stands in for, where it sits, and the most its chip should reach from its centre
+    // (the room the layout kept for it).
     references: refs.map(({ edge, source, target }, k) => {
       const [x, y] = place(n + k);
-      return { edge: edges[edge], source, target, x, y };
+      const radius = Math.min(left[n + k], right[n + k]);
+      return { edge: edges[edge], source, target, x, y, radius };
     }),
     crossings: bestCrossings,
     initialCrossings,
     layerOf,
+    ...(simplex && { simplex }),
   };
 }
 
@@ -478,6 +517,16 @@ function seeded(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32;
   };
 }
+
+/**
+ * @typedef {object} Reference A cross-link drawn to a chip under its source instead of to its ingredient.
+ * @property {object} edge   the edge it stands in for
+ * @property {number} source the edge's source (node index)
+ * @property {number} target the ingredient (node index)
+ * @property {number} x      where the chip sits
+ * @property {number} y
+ * @property {number} radius the most the chip should reach from its centre: the room the layout kept for it
+ */
 
 /**
  * Swap neighbouring nodes on each layer whenever that removes crossings with the layers above and below
