@@ -259,7 +259,7 @@ test("a radial step eases into a curve as its node drifts off its ring: no jumps
   const t = polar(200, 40, 200);
   let cpuBefore = null,
     gpuBefore = null;
-  let weights = [];
+  const weights = [];
   // Drag the source outward off its ring (home radius 100) in 1 px steps, well past the old yes/no switch (25 px).
   for (let r = 100; r <= 160; r += 1) {
     const s = polar(r, 10, 100);
