@@ -113,6 +113,7 @@ const settings = {
   graph: resolve(GRAPH_OPTIONS, stored.graph),
   renderer: stored.renderer === "canvas" ? "canvas" : "webgl",
   frameRate: stored.frameRate === "uncapped" ? "uncapped" : "display",
+  theme: stored.theme === "light" ? "light" : "dark",
   layout: LAYOUTS[stored.layout] ? stored.layout : "radial",
   layouts: stored.layouts ?? {}, // per layout: { options, mode, physics: { [mode]: options } }
   node: resolve(NODE_OPTIONS, stored.node),
@@ -223,6 +224,7 @@ const model = new GraphModel(makeGraph(settings.graph), {
   const s = layoutState();
   controller = new GraphController(model, renderer, {
     layout: settings.layout,
+    theme: settings.theme,
     layoutOptions: s.options,
     physics: s.mode,
     physicsOptions: s.physics[s.mode],
@@ -481,6 +483,24 @@ function render() {
           controller.renderer.frameRate,
           (v) => {
             settings.frameRate = controller.renderer.setFrameRate(v);
+            save();
+          },
+        ),
+        control(
+          select(
+            "theme",
+            "Theme",
+            [
+              { value: "dark", label: "Dark" },
+              { value: "light", label: "Light" },
+            ],
+            "dark",
+            "The colours the engine draws with: background, text and its halo, edges, and the node palette.",
+          ),
+          settings.theme,
+          (v) => {
+            settings.theme = v;
+            controller.setTheme(v);
             save();
           },
         ),
