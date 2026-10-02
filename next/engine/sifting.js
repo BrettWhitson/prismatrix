@@ -9,6 +9,11 @@
 // causes fewest crossings. Moving a block one place right swaps it with its neighbour, and the change in crossings
 // from that swap only involves the edges of those two blocks, so trying every place costs one pass along the order.
 //
+// The one order starts as the layers given, exactly, whenever they can be read off a single order (every block keeps
+// the same neighbours to its left and right on each layer it spans): then sifting only ever removes crossings. Its
+// effort is counted in steps of work (edge pairs compared, places tried), not time, so the same input always gives
+// the same order on any machine.
+//
 // Pure: no DOM.
 
 /**
@@ -19,14 +24,14 @@
  * @param {number[][]} graph.lower   per layout node, its neighbours one layer down
  * @param {ArrayLike<number>} graph.block per layout node, the block it belongs to (0 … blocks - 1)
  * @param {number} graph.blocks
- * @param {{ rounds?: number, budget?: number }} [options] budget: stop starting new blocks after this many ms
- * @returns {{ layers: number[][], rounds: number }}
+ * @param {{ rounds?: number, work?: number }} [options] work: stop starting new blocks after this many steps
+ * @returns {{ layers: number[][], rounds: number, exact: boolean, work: number }} exact: the starting order was
+ *   the layers given (so the result has no more crossings than they had); work: the steps it took
  */
 export function globalSifting(
   { layers, layer, upper, lower, block, blocks },
-  { rounds = 6, budget = 80 } = {},
+  { rounds = 6, work = Infinity } = {},
 ) {
-  const started = performance.now();
   const vertices = layer.length;
   // Each block's span of layers and its vertex on each.
   const lo = new Int32Array(blocks).fill(0x7fffffff),
@@ -63,28 +68,18 @@ export function globalSifting(
     lower[v].forEach((u, i) => (downIds[downStart[s] + i] = block[u]));
   }
 
-  // The starting order of blocks: by mean relative place across the layers they're on.
-  const order = [];
-  {
-    const sum = new Float64Array(blocks),
-      seen = new Int32Array(blocks);
-    for (const list of layers)
-      list.forEach((v, i) => {
-        sum[block[v]] += (i + 0.5) / list.length;
-        seen[block[v]]++;
-      });
-    for (let b = 0; b < blocks; b++) if (hi[b] >= 0) order.push(b);
-    order.sort((a, b) => sum[a] / seen[a] - sum[b] / seen[b] || a - b);
-  }
+  const { order, exact } = startingOrder(layers, block, blocks, hi);
   // Each block's index in the order. A block being tried elsewhere sits half a place to one side of a neighbour.
   const place = new Float64Array(blocks);
   order.forEach((b, i) => (place[b] = i));
 
+  let spent = 0; // steps of work so far
   /**
    * Pairs of edges, one from each run of `ids`, that cross with the first run's block on the left: their other ends
    * are the other way round. A and B are read at places pa and pb, wherever they appear.
    */
   const crossingsOf = (ids, l0, l1, r0, r1, A, pa, B, pb) => {
+    spent += (l1 - l0) * (r1 - r0);
     let c = 0;
     for (let i = l0; i < l1; i++) {
       const x = ids[i];
@@ -132,11 +127,12 @@ export function globalSifting(
     downStart[at[b]];
 
   let round = 0;
-  for (; round < rounds; round++) {
+  for (; round < rounds && spent < work; round++) {
     let improved = false;
     const queue = order.slice().sort((a, b) => degree(b) - degree(a) || a - b);
     for (const A of queue) {
-      if (performance.now() - started > budget) break;
+      if (spent >= work) break;
+      spent += order.length;
       const home = place[A];
       // Walk A from the far left rightwards past each other block, keeping the best place (ties: nearest where it
       // was). Only blocks that share a layer with A change anything.
@@ -170,7 +166,7 @@ export function globalSifting(
           place[order[i]] = i;
       }
     }
-    if (!improved || performance.now() - started > budget) {
+    if (!improved) {
       round++;
       break;
     }
@@ -182,5 +178,98 @@ export function globalSifting(
       const v = vertexAt[s];
       out[layer[v]].push(v);
     }
-  return { layers: out, rounds: round };
+  return { layers: out, rounds: round, exact, work: spent };
+}
+
+/**
+ * One left-to-right order of blocks that reads back as the layers given: each layer's neighbours in order are
+ * constraints (left one first), and the blocks are taken in topological order of them, the one furthest left on
+ * average first among those free to go. When the constraints go round in a circle (two long edges swap sides
+ * between layers), the block furthest left on average that's still waiting goes next anyway, and the order is no
+ * longer exact.
+ */
+function startingOrder(layers, block, blocks, hi) {
+  const mean = new Float64Array(blocks),
+    seen = new Int32Array(blocks);
+  const waiting = new Int32Array(blocks); // constraints still to be met before a block can go
+  let edges = 0;
+  for (const list of layers) edges += Math.max(0, list.length - 1);
+  // The constraints as a flat list of right-hand blocks per left-hand block.
+  const start = new Int32Array(blocks + 1),
+    next = new Int32Array(edges);
+  for (const list of layers)
+    for (let i = 0; i < list.length; i++) {
+      const b = block[list[i]];
+      mean[b] += (i + 0.5) / list.length;
+      seen[b]++;
+      if (i + 1 < list.length) start[b + 1]++;
+    }
+  for (let b = 0; b < blocks; b++) {
+    start[b + 1] += start[b];
+    if (seen[b]) mean[b] /= seen[b];
+  }
+  const fill = start.slice(0, blocks);
+  for (const list of layers)
+    for (let i = 0; i + 1 < list.length; i++) {
+      const b = block[list[i + 1]];
+      next[fill[block[list[i]]]++] = b;
+      waiting[b]++;
+    }
+  const before = (a, b) => mean[a] - mean[b] || a - b;
+  // Blocks free to go, as a binary heap by mean place.
+  const heap = [];
+  const push = (b) => {
+    let i = heap.length;
+    heap.push(b);
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (before(heap[p], b) <= 0) break;
+      heap[i] = heap[p];
+      i = p;
+    }
+    heap[i] = b;
+  };
+  const pop = () => {
+    const top = heap[0],
+      last = heap.pop();
+    if (heap.length) {
+      let i = 0;
+      for (;;) {
+        let c = 2 * i + 1;
+        if (c >= heap.length) break;
+        if (c + 1 < heap.length && before(heap[c + 1], heap[c]) < 0) c++;
+        if (before(last, heap[c]) <= 0) break;
+        heap[i] = heap[c];
+        i = c;
+      }
+      heap[i] = last;
+    }
+    return top;
+  };
+  const used = [];
+  for (let b = 0; b < blocks; b++) if (hi[b] >= 0) used.push(b);
+  // For breaking a circle: every block by mean place, and how far along that list nothing is left waiting.
+  const byMean = used.slice().sort(before);
+  let scan = 0;
+  const done = new Uint8Array(blocks);
+  for (const b of used) if (!waiting[b]) push(b);
+  const order = [];
+  let exact = true;
+  while (order.length < used.length) {
+    let b;
+    if (heap.length) b = pop();
+    else {
+      while (done[byMean[scan]]) scan++;
+      b = byMean[scan];
+      exact = false;
+    }
+    if (done[b]) continue;
+    done[b] = 1;
+    order.push(b);
+    for (let k = start[b]; k < start[b + 1]; k++) {
+      const c = next[k];
+      if (--waiting[c] === 0 && !done[c]) push(c);
+    }
+  }
+  return { order, exact };
 }
