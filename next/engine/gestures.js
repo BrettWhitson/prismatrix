@@ -420,7 +420,8 @@ export class Gestures {
 
   /**
    * A tap: sends "tap" (and "doubleTap" for the second of two quick ones in about the same place), selects what was
-   * tapped (if the controller's `tapSelects`), and frames the graph on a double tap on empty space.
+   * tapped (if the controller's `tapSelects`), and frames the graph on a double tap on empty space. A double tap on a
+   * node expands or collapses it if the controller's `doubleTapToggles`.
    */
   #tap(ptr, time) {
     const { c } = this;
@@ -436,6 +437,7 @@ export class Gestures {
       this.lastTap = null;
       this.host.emit("doubleTap", detail);
       if (detail.node === null) c.fit();
+      else if (c.doubleTapToggles) c.toggle(detail.node);
       return;
     }
     this.lastTap = { time, x: detail.x, y: detail.y, node: detail.node };

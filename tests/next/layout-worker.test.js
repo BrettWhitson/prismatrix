@@ -12,6 +12,7 @@ import { LAYOUTS } from "../../next/engine/layouts.js";
 import { resolve } from "../../next/engine/schema.js";
 import {
   graphFromStructure,
+  hintFrom,
   runLayout,
   sizingFrom,
   structureOf,
@@ -181,10 +182,16 @@ function onTheSpot(input) {
   return runLayout(g, "tree", treeOptions, spec(g));
 }
 
-/** The homes a controller that never uses a worker gives `input`. */
-function homesHere(input) {
-  const c = new GraphController(new GraphModel(input), null, { worker: false });
+/**
+ * The homes a controller that never uses a worker gives the last of `inputs`, shown one after the other (each
+ * layout keeps the one before in place: its hint).
+ */
+function homesHere(...inputs) {
+  const c = new GraphController(new GraphModel(inputs[0]), null, {
+    worker: false,
+  });
   c.setViewport(800, 600);
+  for (const input of inputs.slice(1)) c.setGraph(input);
   const homes = [...c.graph.matrix.homeX];
   c.destroy();
   return homes;
@@ -253,7 +260,11 @@ test("quick updates while the worker is busy: only the job running and the newes
     assert.equal(jobs() - before, 2, "the first update's job, then the newest");
     assert.equal(c.graph.nodes.length, 60, "the newest graph is shown");
     assert.equal(c.layoutPending, false);
-    assert.deepEqual([...c.graph.matrix.homeX], homesHere(recipes(60, 5)));
+    // The newest was asked for while the first graph was on screen: laid out with that graph's homes as its hint.
+    assert.deepEqual(
+      [...c.graph.matrix.homeX],
+      homesHere(recipes(50, 5), recipes(60, 5)),
+    );
     c.destroy();
   });
 
@@ -329,6 +340,61 @@ test("the structure goes to the worker only when it changes, moved rather than c
   assert.match(answers[1].error, /no structure for this version/);
 });
 
+test("a hint (the layout before) goes to the worker with its job, copied: the layout is the one worked out on the spot", async () => {
+  const { FakeWorker, flush, sent } = await fakeWorkers();
+  await withWorker(FakeWorker, async () => {
+    const layouter = new Layouter({ worker: true });
+    const options = resolve(LAYOUTS.merged.options);
+    const input = recipes(80, 16);
+    const before = graphOf(input);
+    const routing = LAYOUTS.merged.run(
+      before,
+      options,
+      sizingFrom(spec(before)),
+    );
+    // Ten new ingredients under ten of the recipes.
+    const after = graphOf({
+      nodes: [
+        ...input.nodes,
+        ...Array.from({ length: 10 }, (_, k) => ({
+          id: `new${k}`,
+          label: `new ${k}`,
+        })),
+      ],
+      edges: [
+        ...input.edges,
+        ...Array.from({ length: 10 }, (_, k) => ({
+          source: `n${k * 7}`,
+          target: `new${k}`,
+        })),
+      ],
+    });
+    const hint = hintFrom(before, after, routing);
+    const result = layouter.run(after, "merged", options, spec(after), hint);
+    flush();
+    const there = await result;
+    assert.ok(sent[0].hint, "sent with the job");
+    // Copied: still whole here (and for the page's thread, if the worker fails).
+    assert.equal(hint.x.length, 90);
+    assert.equal(hint.bendStart.length, after.edges.length + 1);
+    const here = runLayout(after, "merged", options, spec(after), hint);
+    assert.deepEqual([...there.homeX], [...here.homeX]);
+    assert.deepEqual([...there.homeY], [...here.homeY]);
+    // And it did keep things in place: most of the 80 kept nodes stay where they were (ten changes at once).
+    let stayed = 0;
+    for (let i = 0; i < 80; i++)
+      if (
+        Math.hypot(
+          there.homeX[i] - before.matrix.homeX[i],
+          there.homeY[i] - before.matrix.homeY[i],
+        ) <= 2
+      )
+        stayed++;
+    assert.ok(stayed > 40, `${stayed} of 80 stayed`);
+    layouter.dispose();
+  });
+});
+
 test("if a worker can't be started, layouts run on the spot (said once) and the view and the model agree", async () => {
   const { FakeWorker } = await fakeWorkers({ throws: "blocked by policy" });
   await withWorker(FakeWorker, async () => {
@@ -386,7 +452,10 @@ for (const how of ["onerror", "onmessageerror"])
       assert.ok(workers[0].terminated);
       assert.equal(c.graph.nodes.length, 80, "the newest layout is in place");
       assert.equal(c.layoutPending, false);
-      assert.deepEqual([...c.graph.matrix.homeX], homesHere(recipes(80, 5)));
+      assert.deepEqual(
+        [...c.graph.matrix.homeX],
+        homesHere(recipes(50, 5), recipes(80, 5)),
+      );
       // From then on, on the spot.
       c.setGraph(recipes(90, 5));
       assert.equal(c.graph.nodes.length, 90);

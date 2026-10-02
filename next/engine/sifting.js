@@ -24,13 +24,15 @@
  * @param {number[][]} graph.lower   per layout node, its neighbours one layer down
  * @param {ArrayLike<number>} graph.block per layout node, the block it belongs to (0 … blocks - 1)
  * @param {number} graph.blocks
- * @param {{ rounds?: number, work?: number }} [options] work: stop starting new blocks after this many steps
+ * @param {{ rounds?: number, work?: number, movable?: ArrayLike<number> | null }} [options] work: stop starting new
+ *   blocks after this many steps; movable: per block, nonzero if it may be moved (the others keep their order among
+ *   themselves, so a layout that's mostly as it was stays so: see layered.js's hint); all of them when left out
  * @returns {{ layers: number[][], rounds: number, exact: boolean, work: number }} exact: the starting order was
  *   the layers given (so the result has no more crossings than they had); work: the steps it took
  */
 export function globalSifting(
   { layers, layer, upper, lower, block, blocks },
-  { rounds = 6, work = Infinity } = {},
+  { rounds = 6, work = Infinity, movable = null } = {},
 ) {
   const vertices = layer.length;
   // Each block's span of layers and its vertex on each.
@@ -129,7 +131,9 @@ export function globalSifting(
   let round = 0;
   for (; round < rounds && spent < work; round++) {
     let improved = false;
-    const queue = order.slice().sort((a, b) => degree(b) - degree(a) || a - b);
+    const queue = order
+      .filter((b) => !movable || movable[b])
+      .sort((a, b) => degree(b) - degree(a) || a - b);
     for (const A of queue) {
       if (spent >= work) break;
       spent += order.length;

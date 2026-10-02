@@ -22,15 +22,22 @@
 import { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
 import { footprint, labelAngle, reach } from "./boxes.js";
 import { departures, withGhosts } from "./ghosts.js";
+import {
+  collapsedAt,
+  disclose,
+  expandedTo,
+  hiddenBelow,
+  revealed,
+} from "./disclosure.js";
 import { referenceRadius, withReferences } from "./references.js";
 import { Graph } from "./graph.js";
 import { GraphModel } from "./model.js";
 import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
-import { Simulation, physicsOptions } from "./physics.js";
+import { Simulation, physicsOptions, referencedEdges } from "./physics.js";
 import { looksOf, patchLooks } from "./render.js";
 import { THEMES, resolveTheme } from "./theme.js";
-import { runLayout, unpackRouting } from "./layout-job.js";
+import { hintFrom, runLayout, unpackRouting } from "./layout-job.js";
 import { Layouter } from "./layouter.js";
 import { resolve } from "./schema.js";
 import { HIT_SCALE, HitGrid, LineageCache, lineageMask } from "./picking.js";
@@ -46,6 +53,10 @@ export const BACKGROUND = THEMES.dark.background;
 
 /** Restyles the scene's log keeps (see #restyle): a painter further behind than this rebuilds everything. */
 const RESTYLE_LOG = 16;
+
+/** Whether two integer arrays hold the same values. */
+const sameInts = (a, b) =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
 
 /**
  * @typedef {object} TickResult
@@ -73,11 +84,20 @@ const RESTYLE_LOG = 16;
  *   zooms with a mouse wheel and pans with a trackpad; a pinch (ctrl+wheel) always zooms
  * @property {boolean} [tapSelects]      a tap selects the node under it (shift, ctrl or cmd: adds or removes it) and a
  *   tap on empty space clears the selection (default true)
+ * @property {number | null} [depth]     progressive disclosure: show this many levels below the roots and collapse
+ *   the rest (0: just the roots; null, the default: everything). Applies to the first graph, to `setModel`, and to
+ *   a graph that shares no nodes with the one before (`setGraph` with a different graph)
+ * @property {boolean} [doubleTapToggles] a double tap on a node expands or collapses it (default false: a double tap
+ *   is only reported, so an app can give it its own meaning)
  * @property {"dark" | "light" | object} [theme] the colours the engine picks itself (see theme.js; default "dark")
  */
 
 export class GraphController {
   #shownCache = null; // the display graph with references, and what it was made from
+  #edgeCache = null; // the edge options with the layout's own defaults, and what they were made from
+  #disclosed = null; // what's shown with the collapsed nodes as they are (see #disclosure)
+  #parts = 0; // parts of the model shown so far, numbered (each one's graph key)
+  #marks = null; // the scene's collapsed flags and hidden counts, and what they were made for
 
   /**
    * @param {GraphModel | object} model  the graph to show (JSON is made into a model)
@@ -101,6 +121,8 @@ export class GraphController {
       workerUrl,
       wheel = "auto",
       tapSelects = true,
+      depth = null,
+      doubleTapToggles = false,
       theme,
     } = {},
   ) {
@@ -115,6 +137,13 @@ export class GraphController {
     this.clock = clock;
     this.wheelMode = wheel;
     this.tapSelects = tapSelects;
+    this.doubleTapToggles = doubleTapToggles;
+    /** Levels shown below the roots when a graph is first shown (null: all of them). See ControllerOptions.depth. */
+    this.depth = depth ?? null;
+    /** @type {Set<string>} the ids of collapsed nodes (view state: the model keeps every node) */
+    this.folds = new Set();
+    this.foldVersion = 0; // bumped whenever the collapsed set changes
+    this.pivot = null; // the node just expanded or collapsed: the camera holds still on it while the rest moves
     /** @type {Map<string, Set<(detail: any) => void>>} listeners by event type (see `on`) */
     this.listeners = new Map();
     if (!LAYOUTS[layout]) throw new Error(`Unknown layout "${layout}"`);
@@ -175,6 +204,7 @@ export class GraphController {
 
     this.model = GraphModel.from(model);
     this.unlisten = this.model.onChange((change) => this.#onModel(change));
+    if (this.depth !== null) this.folds = collapsedAt(this.model, this.depth);
     this.graph = new Graph(); // empty until the first layout below
     this.#carry(null, null);
     this.looks = looksOf(this.graph, this.node, this.edge, this.theme);
@@ -200,9 +230,22 @@ export class GraphController {
     return this.model.opts.node;
   }
 
-  /** How edges look: the model's edge options. */
+  /**
+   * How edges look: the model's edge options, with the layout's own defaults (LAYOUTS[layout].edgeDefaults) for any
+   * key the model's options leave at its default (`model.explicit`). So an edge's own style wins, then an edge option
+   * set on purpose, then the layout's default, then EDGE_OPTIONS' default.
+   */
   get edge() {
-    return this.model.opts.edge;
+    const opts = this.model.opts.edge;
+    const defaults = LAYOUTS[this.layout].edgeDefaults;
+    if (!defaults) return opts;
+    const c = this.#edgeCache;
+    if (c && c.opts === opts && c.layout === this.layout) return c.edge;
+    const edge = { ...opts };
+    for (const [key, value] of Object.entries(defaults))
+      if (!this.model.explicit.edge.has(key)) edge[key] = value;
+    this.#edgeCache = { opts, layout: this.layout, edge };
+    return edge;
   }
 
   // ---- events --------------------------------------------------------------------------------------------------
@@ -258,6 +301,7 @@ export class GraphController {
     }
     if (change.structure) {
       const shown = this.graph.nodes.length;
+      this.#keepFolds(change);
       this.#relayout();
       this.#reportGraph(
         shown && {
@@ -281,18 +325,24 @@ export class GraphController {
     this.#emit("graphRestyle", counts);
   }
 
-  /** The changed nodes' and edges' new records, onto the working graph (when it's the model's current structure). */
+  /**
+   * The changed nodes' and edges' new records, onto the working graph (when it's the model's current structure).
+   * Nodes and edges folded away have none there: the graph that shows them takes the model's records when it's made.
+   */
   #patchRecords({ nodesChanged, edgesChanged }) {
     const { graph, model } = this;
-    if (graph.model !== model || graph.structure !== model.structureVersion)
+    if (graph.model !== model || graph.structure !== this.#disclosure().key)
       return;
-    for (const id of nodesChanged)
-      graph.nodes[model.index.get(id)].record = model.node(id);
+    for (const id of nodesChanged) {
+      const i = graph.indexOf(model.index.get(id));
+      if (i >= 0) graph.nodes[i].record = model.node(id);
+    }
     for (const id of edgesChanged) {
+      const i = graph.edgeIndexOf(model.edgeIndex.get(id));
+      if (i < 0) continue;
       const record = model.edge(id);
-      const e = graph.edges[model.edgeIndex.get(id)];
-      e.style = record.style;
-      e.data = record.data;
+      graph.edges[i].style = record.style;
+      graph.edges[i].data = record.data;
     }
   }
 
@@ -327,15 +377,20 @@ export class GraphController {
     if (
       change &&
       graph.model === model &&
-      graph.structure === model.structureVersion
+      graph.structure === this.#disclosure().key
     ) {
+      // By their index in the graph on screen; nodes and edges folded away aren't there.
+      const shown = (ids, index, local) =>
+        ids.map((id) => local(index.get(id))).filter((i) => i >= 0);
       const done = patchLooks(
         this.looks,
         graph,
         this.node,
         this.edge,
-        change.nodesRestyled.map((id) => model.index.get(id)),
-        change.edgesRestyled.map((id) => model.edgeIndex.get(id)),
+        shown(change.nodesRestyled, model.index, (i) => graph.indexOf(i)),
+        shown(change.edgesRestyled, model.edgeIndex, (i) =>
+          graph.edgeIndexOf(i),
+        ),
       );
       ({ nodes, edges } = done);
     } else {
@@ -376,6 +431,9 @@ export class GraphController {
     if (this.renderer?.measureText && !this.model.measured)
       this.model.setMeasure(this.renderer.measureText);
     this.unlisten = this.model.onChange((change) => this.#onModel(change));
+    this.folds =
+      this.depth === null ? new Set() : collapsedAt(this.model, this.depth);
+    this.foldVersion++;
     this.#relayout();
     this.#reportGraph();
   }
@@ -410,8 +468,8 @@ export class GraphController {
     else this.hover = hover;
     // Drags hold the same nodes at their new rows (one whose node is gone ends, and its pointer pans on).
     this.gestures.rebind();
-    // The selection is by id: ids that left the graph leave it.
-    const gone = [...this.selection].filter((id) => !graph.byId.has(id));
+    // The selection is by id: ids that left the model leave it (ones only folded away stay selected).
+    const gone = [...this.selection].filter((id) => !this.model.node(id));
     if (gone.length && previous) {
       for (const id of gone) this.selection.delete(id);
       this.selectionVersion++;
@@ -420,8 +478,10 @@ export class GraphController {
   }
 
   /**
-   * Everything needed to show this view again exactly: the graph, settings, camera and every node's layout state
-   * (see snapshot.js and next/MODEL.md). While a layout is on its way, it's the graph on screen.
+   * Everything needed to show this view again exactly: the graph, settings, camera, selection, collapsed nodes and
+   * every shown node's layout state (see snapshot.js and next/MODEL.md). While a layout is on its way, it's the graph
+   * on screen. `settings.explicit` lists the node and edge options set on purpose (the rest are defaults, the
+   * layout's or the engine's).
    */
   snapshot(note = "") {
     return takeSnapshot(
@@ -434,27 +494,57 @@ export class GraphController {
           physicsOptions: this.modeOpts,
           node: this.node,
           edge: this.edge,
+          explicit: {
+            node: [...this.model.explicit.node],
+            edge: [...this.model.explicit.edge],
+          },
           animation: this.anim,
           renderer: this.renderer?.name,
         },
         camera: this.camera,
+        selection: this.selected,
+        collapsed: this.collapsed,
       },
       note,
     );
   }
 
-  /** Show a snapshot: its graph, settings, camera and node positions, as they were (no morph). */
+  /**
+   * Show a snapshot: its graph, settings, camera, selection, collapsed nodes and node positions, as they were (no
+   * morph).
+   */
   restore(snapshot) {
     const graph = snapshotModel(snapshot).toJSON();
     const { settings = {} } = snapshot;
+    const { explicit } = settings;
+    // Only the options that were set on purpose are set again (so a layout's own defaults still apply to the rest);
+    // an older snapshot, without that list, sets them all.
+    const only = (values = {}, keys = []) =>
+      Object.fromEntries(
+        keys.filter((k) => k in values).map((k) => [k, values[k]]),
+      );
     this.quiet = true; // apply everything, then lay out once
     try {
       if (settings.animation) this.setAnimation(settings.animation);
-      this.model.setOptions({ node: settings.node, edge: settings.edge });
+      this.model.setOptions(
+        explicit
+          ? {
+              node: only(settings.node, explicit.node),
+              edge: only(settings.edge, explicit.edge),
+            }
+          : { node: settings.node, edge: settings.edge },
+        { reset: !!explicit },
+      );
       this.model.replace(graph);
     } finally {
       this.quiet = false;
     }
+    const known = (ids) =>
+      (Array.isArray(ids) ? ids : [])
+        .map(String)
+        .filter((id) => this.model.node(id));
+    this.folds = new Set(known(snapshot.collapsed));
+    this.foldVersion++;
     if (settings.layout && LAYOUTS[settings.layout]) {
       this.layout = settings.layout;
       this.layoutOpts = resolve(
@@ -481,6 +571,7 @@ export class GraphController {
     this.sim.wake();
     this.version++;
     this.#changed();
+    this.select(known(snapshot.selection));
     this.#emit("restore", { nodes: this.model.size, time: snapshot.time });
   }
 
@@ -629,7 +720,11 @@ export class GraphController {
       this.cameraTween = null;
     }
     this.#changed();
-    this.#emit("fit", { k: target.k });
+    // While a layout is on its way this frames the graph on screen, and another "fit" follows when it lands.
+    this.#emit("fit", {
+      k: target.k,
+      ...(this.layoutPending && { pending: true }),
+    });
   }
 
   /**
@@ -642,6 +737,7 @@ export class GraphController {
    */
   focus(id, { zoom, animate = true } = {}) {
     id = String(id);
+    if (this.isHidden(id)) this.reveal(id); // folded away: open the way to it first
     const n = this.graph.byId.get(id);
     if (!n) {
       if (!this.layoutPending || !this.model.node(id)) return false;
@@ -735,21 +831,26 @@ export class GraphController {
       const p = this.toScreen(m.x[i], m.y[i]);
       return p.x >= 0 && p.x <= this.width && p.y >= 0 && p.y <= this.height;
     };
+    const indexOf = (id) =>
+      id === null ? -1 : (graph.byId.get(id)?.index ?? -1);
+    // Only nodes that will still be shown count (one folding away has no place to hold).
+    const stays = (i) => this.#stays(graph.nodes[i].id);
     const candidates = [
       this.pointer?.node ?? -1,
+      indexOf(this.pivot),
       this.hover,
-      ...[...this.selection].map((id) => graph.byId.get(id)?.index ?? -1),
-      this.focused === null ? -1 : (graph.byId.get(this.focused)?.index ?? -1),
+      ...[...this.selection].map(indexOf),
+      indexOf(this.focused),
     ];
-    let at = candidates.find((i) => i >= 0 && onScreen(i)) ?? -1;
+    let at = candidates.find((i) => i >= 0 && onScreen(i) && stays(i)) ?? -1;
     if (at < 0) {
-      // Nearest the middle (only nodes that will still be there count, but the check is a map lookup: only made for
+      // Nearest the middle (only nodes that will still be there count, but the check is a lookup: only made for
       // nodes nearer than the best so far).
       const { x: cx, y: cy } = this.camera;
       let best = Infinity;
       for (let i = 0; i < m.count; i++) {
         const d = (m.x[i] - cx) ** 2 + (m.y[i] - cy) ** 2;
-        if (d < best && this.model.node(graph.nodes[i].id)) {
+        if (d < best && stays(i)) {
           best = d;
           at = i;
         }
@@ -824,16 +925,23 @@ export class GraphController {
   #relayout({ fit = null, sync = false } = {}) {
     const rebuilding =
       this.graph.model !== this.model ||
-      this.graph.structure !== this.model.structureVersion;
-    const target = rebuilding ? new Graph(this.model) : this.graph;
+      this.graph.structure !== this.#disclosure().key;
+    const target = rebuilding
+      ? new Graph(this.model, null, this.#disclosure().part)
+      : this.graph;
     const spec = this.#sizingSpec(
       target,
       looksOf(target, this.node, this.edge),
     );
+    // A new structure keeps what stays where it was: the homes on screen, by id, as a hint (layout-job.js).
+    const hint =
+      rebuilding && this.graph.nodes.length
+        ? hintFrom(this.graph, target, this.routing)
+        : null;
     const job = { id: ++this.layoutRequest, target, rebuilding, fit, spec };
     const result = sync
-      ? runLayout(target, this.layout, this.layoutOpts, spec)
-      : this.layouter.run(target, this.layout, this.layoutOpts, spec);
+      ? runLayout(target, this.layout, this.layoutOpts, spec, hint)
+      : this.layouter.run(target, this.layout, this.layoutOpts, spec, hint);
     if (!(result instanceof Promise)) return this.#settle(job, result);
     this.layoutPending = true;
     this.#changed();
@@ -897,11 +1005,16 @@ export class GraphController {
     this.layoutPending = false;
     const { target } = job;
     const anchor = this.#anchor();
+    this.pivot = null;
     target.matrix.homeX.set(result.homeX);
     target.matrix.homeY.set(result.homeY);
     let previous = null,
       was = null,
-      fit = job.fit ?? (this.framed ? (this.pendingFit ?? "animate") : null);
+      // A framed view frames the new layout, except under a drag or pan: the camera then holds still on what's held.
+      fit =
+        job.fit ??
+        (this.framed && !this.pointer ? (this.pendingFit ?? "animate") : null);
+    const asked = this.pendingFit; // a fit() asked for while this layout was on its way
     this.pendingFit = null;
     if (job.rebuilding) {
       previous = this.graph.nodes.length ? this.graph : null;
@@ -950,6 +1063,10 @@ export class GraphController {
         start: this.clock(),
       };
     } else if (!fit && !this.cameraTween) this.#holdPlace(anchor);
+    if (asked && fit)
+      this.#emit("fit", {
+        k: fit === "instant" ? this.camera.k : this.cameraTween.to.k,
+      });
     this.#changed();
     this.#emit("laidOut", {
       layout: this.layout,
@@ -1014,7 +1131,7 @@ export class GraphController {
     const labelled = node.labels !== "off";
     return {
       widths: labelled
-        ? this.model.labelWidths()
+        ? graph.pick(this.model.labelWidths())
         : new Float64Array(graph.nodes.length),
       reach: Float64Array.from(
         graph.nodes,
@@ -1056,6 +1173,8 @@ export class GraphController {
         boxes: this.node.labelCollide && this.node.labels !== "off",
         padding: this.node.collisionRadius,
       },
+      // Edges drawn as references don't pull: dragging a recipe doesn't tug a far-away ingredient.
+      referencedEdges(this.graph, this.routing.references),
     );
   }
 
@@ -1146,6 +1265,11 @@ export class GraphController {
       hover: this.hover,
       selected: this.#selectionMask(),
       selectionVersion: this.selectionVersion,
+      // Progressive disclosure, a value per real node (both null when nothing shown is collapsed): `collapsed`, 1 for
+      // a node whose children are folded away, and `hidden`, how many nodes are hidden below it (a "+N" badge; 0
+      // when everything below it is shown elsewhere). foldVersion changes whenever they might.
+      ...this.#foldMarks(),
+      foldVersion: this.foldVersion,
       version: this.version,
       shadeVersion: this.shadeVersion,
       geometryVersion: this.geometryVersion,
@@ -1290,6 +1414,251 @@ export class GraphController {
     this.#changed();
     this.#emit("select", { selected: this.selected });
     return true;
+  }
+
+  // ---- progressive disclosure ----------------------------------------------------------------------------------
+  //
+  // Collapsing is view state: the model keeps every node, and the working graph is built from the part of it that's
+  // shown (disclosure.js has the rule: a node is hidden when every path to it from a root passes through a collapsed
+  // node). Expanding is a structural change like any other: the new nodes grow out of the node that opened, and
+  // collapsing folds them back into it as ghosts; the camera holds still on that node meanwhile. Each call sends an
+  // "expand" or "collapse" event ({ node, visible, hidden, … }) and returns whether anything changed.
+
+  /** The ids of the collapsed nodes. */
+  get collapsed() {
+    return [...this.folds];
+  }
+
+  /** Whether node `id` is collapsed (its children are folded away). */
+  isCollapsed(id) {
+    return this.folds.has(String(id));
+  }
+
+  /** Whether node `id` is in the model but not shown (folded away under a collapsed node). */
+  isHidden(id) {
+    const i = this.model.index.get(String(id));
+    return i !== undefined && !this.#disclosure().shown[i];
+  }
+
+  /** How many nodes are hidden below node `id` (0 unless it's shown and collapsed): what a "+N" badge shows. */
+  hiddenCount(id) {
+    const i = this.model.index.get(String(id));
+    if (i === undefined) return 0;
+    const d = this.#disclosure();
+    if (!d.shown[i] || !d.folded[i]) return 0;
+    return (d.counts ??= hiddenBelow(this.model, d))[i];
+  }
+
+  /** Collapse node `id`: what's below it, and not shown through another path, folds into it. Leaves can't be. */
+  collapse(id) {
+    id = String(id);
+    const i = this.model.index.get(id);
+    if (i === undefined || this.folds.has(id)) return false;
+    const { outStart } = this.model.adjacency();
+    if (outStart[i + 1] === outStart[i]) return false; // nothing to fold
+    return this.#setFolds(new Set(this.folds).add(id), "collapse", {
+      node: id,
+    });
+  }
+
+  /**
+   * Expand node `id` to show `depth` levels below it (default 1, its children; Infinity: everything below it).
+   * Nodes those levels bring into view that lead on to more hidden nodes start collapsed, so one expand never spills
+   * a whole subtree; nodes already shown elsewhere stay as they are. An expanded node that's itself hidden stays
+   * hidden (see `reveal`).
+   * @param {string} id
+   * @param {{ depth?: number }} [options]
+   */
+  expand(id, { depth = 1 } = {}) {
+    id = String(id);
+    const i = this.model.index.get(id);
+    if (i === undefined) return false;
+    const levels = depth >= 1 ? Math.floor(depth) : 1;
+    const next = expandedTo(
+      this.model,
+      this.folds,
+      i,
+      levels,
+      this.#disclosure().shown,
+    );
+    return this.#setFolds(next, "expand", { node: id, depth: levels });
+  }
+
+  /** Expand node `id` if it's collapsed, else collapse it. */
+  toggle(id) {
+    return this.isCollapsed(id) ? this.expand(id) : this.collapse(id);
+  }
+
+  /** Show everything: no node collapsed. */
+  expandAll() {
+    return this.#setFolds(new Set(), "expand", { node: null, depth: Infinity });
+  }
+
+  /** Show `depth` levels below the roots (0: just the roots) and collapse everything deeper. */
+  collapseTo(depth) {
+    const levels = depth >= 0 ? Math.floor(depth) : 0;
+    return this.#setFolds(collapsedAt(this.model, levels), "collapse", {
+      node: null,
+      depth: levels,
+    });
+  }
+
+  /**
+   * Show node `id`: expand the collapsed nodes on its path from a root (whatever else that brings into view starts
+   * collapsed, so only the path opens). False when it's shown already or not in the model. `focus` does this itself.
+   */
+  reveal(id) {
+    id = String(id);
+    const i = this.model.index.get(id);
+    if (i === undefined) return false;
+    const next = revealed(this.model, this.folds, i, this.#disclosure());
+    return !!next && this.#setFolds(next, "expand", { node: id, reveal: true });
+  }
+
+  /** Make `next` the collapsed set: lay out what it shows (if that changed) and tell listeners. */
+  #setFolds(next, type, detail) {
+    if (
+      next.size === this.folds.size &&
+      [...next].every((id) => this.folds.has(id))
+    )
+      return false;
+    this.folds = next;
+    this.foldVersion++;
+    this.version++; // the collapsed marks are drawn
+    const d = this.#disclosure();
+    this.pivot = detail.node;
+    if (
+      this.layoutPending ||
+      this.graph.model !== this.model ||
+      this.graph.structure !== d.key
+    )
+      this.#relayout();
+    else {
+      this.pivot = null; // the same nodes are shown: only the marks change
+      this.#changed();
+    }
+    const visible = d.nodes ? d.nodes.length : this.model.size;
+    this.#emit(type, {
+      ...detail,
+      visible,
+      hidden: this.model.size - visible,
+    });
+    return true;
+  }
+
+  /**
+   * What's shown of the model with the collapsed nodes as they are (disclosure.js), worked out once per structure
+   * and collapsed set. `part` is what the working graph is built from (null: all of it) and `key` names it: a graph
+   * whose `structure` is that key is current. A collapse that changes nothing shown keeps the part and its key.
+   */
+  #disclosure() {
+    const { model } = this;
+    const c = this.#disclosed;
+    if (
+      c &&
+      c.model === model &&
+      c.structure === model.structureVersion &&
+      c.folds === this.foldVersion
+    )
+      return c;
+    const d = disclose(model, this.folds);
+    let part = null;
+    if (!d.all) {
+      const same =
+        c?.part &&
+        c.model === model &&
+        c.structure === model.structureVersion &&
+        sameInts(c.part.nodes, d.nodes) &&
+        sameInts(c.part.edges, d.edges);
+      part = same
+        ? c.part
+        : {
+            nodes: d.nodes,
+            edges: d.edges,
+            key: `${model.structureVersion}/${++this.#parts}`,
+          };
+    }
+    this.#disclosed = {
+      ...d,
+      model,
+      structure: model.structureVersion,
+      folds: this.foldVersion,
+      part,
+      key: part ? part.key : model.structureVersion,
+      counts: null, // hidden counts, worked out when first asked for
+    };
+    return this.#disclosed;
+  }
+
+  /** Whether node `id` is in the model and shown: it will be on screen once the newest layout is in. */
+  #stays(id) {
+    const i = this.model.index.get(id);
+    return i !== undefined && this.#disclosure().shown[i] === 1;
+  }
+
+  /**
+   * After nodes or edges came or went: collapsed nodes that left the model leave the set, and a graph that's all
+   * new (it shares no node with the one before) starts at the `depth` option's levels again. A node added under a
+   * collapsed one is hidden like the rest.
+   */
+  #keepFolds({ nodesAdded, nodesRemoved }) {
+    const { model } = this;
+    let next = null;
+    if (this.depth !== null && model.size && nodesAdded.length === model.size)
+      next = collapsedAt(model, this.depth);
+    else if (this.folds.size && nodesRemoved.length) {
+      next = new Set([...this.folds].filter((id) => model.node(id)));
+      if (next.size === this.folds.size) next = null;
+    }
+    if (!next) return;
+    this.folds = next;
+    this.foldVersion++;
+  }
+
+  /** The scene's collapsed flags and hidden counts per node of the graph on screen (both null when there are none). */
+  #foldMarks() {
+    const { graph, model } = this;
+    const m = this.#marks;
+    if (
+      m &&
+      m.graph === graph &&
+      m.folds === this.foldVersion &&
+      m.structure === model.structureVersion &&
+      m.model === model
+    )
+      return m.out;
+    let out = { collapsed: null, hidden: null };
+    if (this.folds.size && graph.nodes.length) {
+      const d = this.#disclosure();
+      const counts = (d.counts ??= hiddenBelow(model, d));
+      // The graph on screen is usually the one made for this disclosure (its rows are the part's nodes); while a
+      // newer layout is on its way it may be an older one, matched by id.
+      const current = graph.model === model && graph.structure === d.key;
+      const count = graph.nodes.length;
+      const collapsed = new Uint8Array(count),
+        hidden = new Int32Array(count);
+      let any = false;
+      for (let i = 0; i < count; i++) {
+        const mi = current
+          ? graph.part
+            ? graph.part.nodes[i]
+            : i
+          : model.index.get(graph.nodes[i].id);
+        if (mi === undefined || !d.folded[mi]) continue;
+        collapsed[i] = 1;
+        hidden[i] = counts[mi];
+        any = true;
+      }
+      if (any) out = { collapsed, hidden };
+    }
+    this.#marks = {
+      graph,
+      folds: this.foldVersion,
+      structure: model.structureVersion,
+      model,
+      out,
+    };
+    return out;
   }
 
   // ---- interaction ---------------------------------------------------------------------------------------------

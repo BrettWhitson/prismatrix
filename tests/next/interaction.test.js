@@ -69,7 +69,13 @@ function fakeWorker() {
       const graph = this.graph;
       queue.push(() => {
         this.onmessage?.({ data: { id: data.id, started: true } });
-        const result = runLayout(graph, data.layout, data.options, data.sizing);
+        const result = runLayout(
+          graph,
+          data.layout,
+          data.options,
+          data.sizing,
+          data.hint,
+        );
         this.onmessage?.({ data: { id: data.id, result } });
       });
     }
@@ -181,6 +187,7 @@ test("reset lets go of a node being dragged", () => {
 test("a structural update mid-drag keeps the drag: the same node stays under the pointer, and one dragEnd", () => {
   const { c, wait, now, of } = setup(SMALL, { physics: "elastic" });
   wait(1500);
+  // The view is framed: a layout landing under a drag mustn't frame again and move the drawing under the pointer.
   const s = onScreen(c, "a1");
   c.pointerDown({ ...s, time: now() });
   c.pointerMove({ x: s.x + 50, y: s.y, time: now() });

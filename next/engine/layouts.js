@@ -20,6 +20,13 @@ import { layeredLayout } from "./layered.js";
  * @property {number} gap extra clearance every footprint keeps from its neighbours
  */
 
+/**
+ * @typedef {import("./layout-job.js").LayoutHint} LayoutHint Where everything was before a change (layout-job.js).
+ *   Every layout takes one as its fourth argument and keeps kept nodes near where they were: a tree and a radial
+ *   tree move as a whole (their shape is fixed by the tree), the merged tree also keeps its order and pulls nodes
+ *   back (layered.js).
+ */
+
 /** Nodes of radius 8 with no labels. */
 export const DEFAULT_SIZING = {
   box: () => ({ x0: -8, y0: -8, x1: 8, y1: 8 }),
@@ -50,6 +57,7 @@ export function treeLayout(
     parentAlign = "centres",
   } = {},
   sizing = DEFAULT_SIZING,
+  hint = null,
 ) {
   const count = graph.nodes.length;
   const flip = direction === "BT" || direction === "RL";
@@ -104,6 +112,7 @@ export function treeLayout(
     n.homeX = across ? depth : breadth[n.index];
     n.homeY = across ? breadth[n.index] : depth;
   }
+  if (hint) holdPlace(graph, hint);
   return { kind: "tree", direction };
 }
 
@@ -128,6 +137,7 @@ export function radialLayout(
   graph,
   { ringGap = 80, sweep = 360, rotation = 0, spacing = "tidy" } = {},
   sizing = DEFAULT_SIZING,
+  hint = null,
 ) {
   const { nodes } = graph;
   const count = nodes.length;
@@ -325,12 +335,53 @@ export function radialLayout(
     radius = compact(radius);
   }
 
+  // A full circle can turn freely: turned by the median of kept nodes' turns, so that most keep their angle.
+  if (hint && sweep >= 360) {
+    const turns = [];
+    for (const n of nodes) {
+      const px = hint.x[n.index],
+        py = hint.y[n.index];
+      if (Number.isNaN(px) || (!px && !py) || !radius[ringOf(n)]) continue;
+      let d = Math.atan2(py, px) - angle[n.index];
+      d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
+      turns.push(d);
+    }
+    turns.sort((a, b) => a - b);
+    const turn = turns.length ? turns[turns.length >> 1] : 0;
+    for (const n of nodes) angle[n.index] += turn;
+  }
   for (const n of nodes) {
     const r = radius[ringOf(n)];
     n.homeX = r ? Math.cos(angle[n.index]) * r : 0;
     n.homeY = r ? Math.sin(angle[n.index]) * r : 0;
   }
   return { kind: "radial", cx: 0, cy: 0 };
+}
+
+/**
+ * Move the whole drawing so that the nodes `hint` knows move least in all: by the median of their moves, across and
+ * down (the move that keeps most of them exactly in place, when most of the drawing kept its shape).
+ */
+function holdPlace(graph, hint) {
+  const dx = [],
+    dy = [];
+  for (const n of graph.nodes) {
+    if (Number.isNaN(hint.x[n.index])) continue;
+    dx.push(n.homeX - hint.x[n.index]);
+    dy.push(n.homeY - hint.y[n.index]);
+  }
+  if (!dx.length) return;
+  const median = (list) => {
+    list.sort((a, b) => a - b);
+    const m = list.length >> 1;
+    return list.length % 2 ? list[m] : (list[m - 1] + list[m]) / 2;
+  };
+  const mx = median(dx),
+    my = median(dy);
+  for (const n of graph.nodes) {
+    n.homeX -= mx;
+    n.homeY -= my;
+  }
 }
 
 /** Keeps a node on its level (tree) or its ring (radial) while physics moves it. */
@@ -373,7 +424,8 @@ export function constrainer(routing, opts) {
 
 /**
  * The layouts. `physics` lists the modes each one supports; for each mode, `options` are extra knobs only this
- * layout has and `defaults` override the mode's general defaults.
+ * layout has and `defaults` override the mode's general defaults. `edgeDefaults`, where a layout has them, replace
+ * EDGE_OPTIONS' defaults while it's shown, for any edge option that wasn't set on purpose (the controller's `edge`).
  */
 export const LAYOUTS = {
   tree: {
@@ -447,6 +499,8 @@ export const LAYOUTS = {
   merged: {
     label: "Merged tree",
     run: layeredLayout,
+    // Step edges from unrelated parents run along the same layer gaps and merge into rails; curves can each be traced.
+    edgeDefaults: { shape: "curve" },
     options: [
       select(
         "direction",
@@ -524,6 +578,15 @@ export const LAYOUTS = {
         1,
         3,
         "How many recipes must use an ingredient before all but one get references.",
+      ),
+      range(
+        "stability",
+        "Stability",
+        0,
+        1,
+        0.05,
+        0.5,
+        "When the graph changes (a recipe expanded or collapsed), how firmly everything else keeps its place: the old order is kept and nodes are pulled back to where they were. At 0, every change is laid out afresh.",
       ),
     ],
     physics: {
