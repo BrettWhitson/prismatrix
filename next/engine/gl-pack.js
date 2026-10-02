@@ -37,7 +37,10 @@ export const SEGMENT_STRIDE = 9;
 /** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour r, g, b. */
 export const END_STRIDE = 9;
 
-/** "#rrggbb" to [r, g, b] in 0–1. */
+/**
+ * "#rrggbb" to [r, g, b] in 0–1.
+ * @returns {[number, number, number]}
+ */
 export function parseColour(hex) {
   const n = parseInt(hex.slice(1), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
@@ -46,6 +49,11 @@ export function parseColour(hex) {
 /**
  * A typed array (Float32Array unless `Type` says otherwise) of at least `n`: `old` when it's big enough, else a
  * bigger one holding what `old` held.
+ * @template {Float32Array | Int32Array} T
+ * @param {T | null | undefined} old
+ * @param {number} n
+ * @param {any} [Type]
+ * @returns {T}
  */
 export function room(old, n, Type = Float32Array) {
   if (old && old.length >= n) return old;
