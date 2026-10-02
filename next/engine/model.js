@@ -1436,50 +1436,6 @@ export class GraphModel {
   }
 
   /**
-   * What differs from `previous` (another model, or JSON) to this model, by id: nodes and edges added, removed,
-   * kept, and kept nodes whose label, style or data differ.
-   * @param {GraphModel | GraphJSON} previous
-   * @returns {{ nodesAdded: string[], nodesRemoved: string[], nodesKept: string[], nodesChanged: string[],
-   *   edgesAdded: string[], edgesRemoved: string[] }}
-   */
-  diff(previous) {
-    const before = GraphModel.from(previous);
-    const nodesAdded = [],
-      nodesKept = [],
-      nodesChanged = [];
-    for (const n of this.#nodeList) {
-      const old = before.node(n.id);
-      if (!old) nodesAdded.push(n.id);
-      else {
-        nodesKept.push(n.id);
-        if (
-          old.label !== n.label ||
-          !equal(old.style, n.style) ||
-          !equal(old.data, n.data)
-        )
-          nodesChanged.push(n.id);
-      }
-    }
-    const nodesRemoved = before.nodes
-      .filter((n) => !this.index.has(n.id))
-      .map((n) => n.id);
-    const edgesAdded = this.#edgeList
-      .filter((e) => !before.edgeIndex.has(e.id))
-      .map((e) => e.id);
-    const edgesRemoved = before.edges
-      .filter((e) => !this.edgeIndex.has(e.id))
-      .map((e) => e.id);
-    return {
-      nodesAdded,
-      nodesRemoved,
-      nodesKept,
-      nodesChanged,
-      edgesAdded,
-      edgesRemoved,
-    };
-  }
-
-  /**
    * The model as prismatrix-graph JSON: GraphModel.from(model.toJSON()) gives an equal model.
    * @returns {GraphJSON}
    */

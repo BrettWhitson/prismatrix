@@ -157,22 +157,6 @@ test("stats describe the graph's shape", () => {
   );
 });
 
-test("diff: added, removed, kept and changed nodes; added and removed edges", () => {
-  const before = GraphModel.from(recipe());
-  const next = recipe();
-  next.nodes = next.nodes.filter((n) => n.id !== "ore");
-  next.nodes.push({ id: "coin", label: "Mystic Coin" });
-  next.nodes[2] = { ...next.nodes[2], label: "Mithril Ingot (x2)" };
-  next.edges = next.edges.filter((e) => e.target !== "ore");
-  next.edges.push({ source: "gift", target: "coin" });
-  const change = GraphModel.from(next).diff(before);
-  assert.deepEqual(change.nodesAdded, ["coin"]);
-  assert.deepEqual(change.nodesRemoved, ["ore"]);
-  assert.deepEqual(change.nodesChanged, ["ingot"]);
-  assert.deepEqual(change.edgesAdded, ["gift>coin"]);
-  assert.deepEqual(change.edgesRemoved, ["ingot>ore"]);
-});
-
 test("the working graph is built from a model, and keeps it", () => {
   const m = GraphModel.from(recipe());
   const g = new Graph(m);
