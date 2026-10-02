@@ -15,10 +15,10 @@ import { WebGLPainter, webglAvailable } from "./webgl.js";
  * @typedef {object} FrameStats
  * @property {number} fps        smoothed
  * @property {number} dt         seconds since the previous frame, unclamped (0 for the first after a rest)
- * @property {number} simMs      time spent moving nodes this frame
+ * @property {number} simMs      wall time spent moving nodes this frame (morph and physics), ms
  * @property {number} drawMs     time spent drawing this frame
  * @property {number} energy     mean squared node speed
- * @property {string} state      "moving to layout", "dragging", "moving" or "at rest"
+ * @property {string} state      "laying out", "moving to layout", "dragging", "zooming", "moving" or "at rest"
  *
  * @typedef {object} RendererOptions
  * @property {"display" | "uncapped"} [frameRate] "display" (the default) draws once per screen refresh
@@ -78,6 +78,9 @@ export class Renderer {
     if (this.controller === controller) return;
     this.detach();
     this.controller = controller;
+    // The canvas takes every touch itself (drags, pans, pinches): the browser mustn't scroll or zoom the page.
+    this.touchAction = this.canvas.style.touchAction;
+    this.canvas.style.touchAction = "none";
     this.resizer = new ResizeObserver(() => this.#resize());
     this.resizer.observe(this.canvas);
     this.#resize();
@@ -90,6 +93,7 @@ export class Renderer {
     if (!this.controller) return;
     this.resizer?.disconnect();
     this.unbind?.();
+    this.canvas.style.touchAction = this.touchAction ?? "";
     if (this.frame > 0) cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.controller = null;
@@ -162,8 +166,13 @@ export class Renderer {
     this.controller?.setViewport(width, height, dpr);
   }
 
+  /**
+   * Pointer, wheel and gesture events on the canvas, as controller calls. Every pointer is passed on by its id (each
+   * finger has its own): the controller works out drags, pans, pinches, taps, double taps and long presses.
+   */
   #bindPointer() {
     const c = this.canvas;
+    let touching = false; // a touch is down: its long press mustn't open the page's context menu
     const local = (e) => {
       const rect = c.getBoundingClientRect();
       return {
@@ -171,9 +180,16 @@ export class Renderer {
         x: e.clientX - rect.left,
         y: e.clientY - rect.top,
         time: e.timeStamp,
+        pointerType: e.pointerType,
+        button: e.button,
+        shiftKey: e.shiftKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
       };
     };
     const down = (e) => {
+      touching = e.pointerType === "touch";
       try {
         c.setPointerCapture(e.pointerId);
       } catch {
@@ -183,27 +199,52 @@ export class Renderer {
     };
     const move = (e) => this.controller?.pointerMove(local(e));
     const up = (e) => this.controller?.pointerUp(local(e));
-    const leave = () => this.controller?.pointerLeave();
+    const cancel = (e) => this.controller?.pointerCancel(local(e));
+    const leave = (e) => this.controller?.pointerLeave(local(e));
     const wheel = (e) => {
       e.preventDefault();
-      this.controller?.wheel({ ...local(e), deltaY: e.deltaY });
+      this.controller?.wheel({
+        ...local(e),
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        deltaMode: e.deltaMode,
+        wheelDeltaY: e.wheelDeltaY,
+      });
     };
-    const dbl = (e) => this.controller?.doubleClick(local(e));
-    c.addEventListener("pointerdown", down);
-    c.addEventListener("pointermove", move);
-    c.addEventListener("pointerup", up);
-    c.addEventListener("pointercancel", up);
-    c.addEventListener("pointerleave", leave);
-    c.addEventListener("wheel", wheel, { passive: false });
-    c.addEventListener("dblclick", dbl);
+    const menu = (e) => {
+      if (touching) e.preventDefault();
+    };
+    // Safari sends a trackpad pinch as gesture events (other browsers send ctrl+wheel): zoom by the change in scale.
+    let scale = 1;
+    const gestureStart = (e) => {
+      e.preventDefault();
+      scale = 1;
+    };
+    const gestureChange = (e) => {
+      e.preventDefault();
+      const rect = c.getBoundingClientRect();
+      this.controller?.zoomBy(
+        e.scale / scale,
+        e.clientX - rect.left,
+        e.clientY - rect.top,
+      );
+      scale = e.scale;
+    };
+    const listeners = [
+      ["pointerdown", down],
+      ["pointermove", move],
+      ["pointerup", up],
+      ["pointercancel", cancel],
+      ["pointerleave", leave],
+      ["wheel", wheel, { passive: false }],
+      ["contextmenu", menu],
+      ["gesturestart", gestureStart],
+      ["gesturechange", gestureChange],
+    ];
+    for (const [type, fn, options] of listeners)
+      c.addEventListener(type, fn, options);
     this.unbind = () => {
-      c.removeEventListener("pointerdown", down);
-      c.removeEventListener("pointermove", move);
-      c.removeEventListener("pointerup", up);
-      c.removeEventListener("pointercancel", up);
-      c.removeEventListener("pointerleave", leave);
-      c.removeEventListener("wheel", wheel);
-      c.removeEventListener("dblclick", dbl);
+      for (const [type, fn] of listeners) c.removeEventListener(type, fn);
       this.unbind = null;
     };
   }
