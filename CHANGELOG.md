@@ -51,7 +51,11 @@ draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the packa
     `settled()`; drags, hover and fades survive graph changes; Fit frames any graph; the camera holds its place
     across relayouts and under a drag; selected nodes get a halo.
   - **Looks:** dark and light themes (`theme`, `setTheme`); node icons from an atlas, `tile` nodes that are their
-    icon, per-node borders (`stroke`, `strokeWidth`); a restyle of a few nodes uploads only those bytes.
+    icon, per-node borders (`stroke`, `strokeWidth`); a restyle of a few nodes uploads only those bytes. Edges leave
+    below their node's label; text has a halo in the theme's background; long labels end in an ellipsis
+    (`labelMaxWidth`); edge labels (`label`, e.g. quantities) near the target; reference chips carry a link glyph,
+    show the ingredient's name on hover and fly to it on tap, and the shared node shows "×N"; collapsed nodes show
+    "+N"; a node `badge`.
   - **Model:** one-node updates cost what they change (0.01–0.6 ms at 100k nodes, was 140–630 ms); data-only changes
     are free; a throwing listener or an update made from inside a listener can't break it; out-of-range options are
     clamped and misspelt ones warned about.
