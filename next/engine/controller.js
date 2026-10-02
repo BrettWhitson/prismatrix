@@ -2,7 +2,7 @@
 // renderer (the screen), and works between them:
 //
 //   - it listens to the model and keeps up with every change: a new colour is redrawn, a new label or size is laid
-//     out again, new or removed nodes are laid out again and morphed into place;
+//     out again, new or removed nodes are laid out again and morphed into place, new data costs nothing on screen;
 //   - it owns everything that moves and must be fast: the matrix of node positions and velocities (graph.js,
 //     matrix.js), the layout, physics, animation, camera, hover, selection and drags;
 //   - every frame, the renderer asks it to `tick` and draws the `scene` it builds.
@@ -14,8 +14,12 @@
 //
 // What happens between frames is kept by node id, not by row: when nodes come or go the working graph is rebuilt
 // with new rows, and a drag, the hover, the selection and fades carry over to the same ids.
+//
+// The parts: gestures.js (what pointers and wheels mean), camera.js (framing, zoom limits, coasting), transitions.js
+// (morphs, arrivals, shading), picking.js (what's under the pointer, lineages). This file coordinates them with the
+// model and the layouts.
 
-import { ANIMATION_OPTIONS, EASINGS, approach } from "./animation.js";
+import { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
 import { footprint, labelAngle, reach } from "./boxes.js";
 import { departures, withGhosts } from "./ghosts.js";
 import { REFERENCE_SCALE, withReferences } from "./references.js";
@@ -29,38 +33,14 @@ import { runLayout, unpackRouting } from "./layout-job.js";
 import { Layouter } from "./layouter.js";
 import { resolve } from "./schema.js";
 import { HIT_SCALE, HitGrid, LineageCache, lineageMask } from "./picking.js";
+import { Gestures } from "./gestures.js";
+import * as cam from "./camera.js";
+import { arrive, fade, morph, morphFrom, progress } from "./transitions.js";
+
+export { alongRings } from "./transitions.js";
+export { looksLikeTrackpad } from "./gestures.js";
 
 export const BACKGROUND = "#0e1016";
-const MAX_THROW = 1800; // fastest throw or pan glide, in screen px/s
-const MAX_ZOOM = 8;
-const MIN_ZOOM = 0.05; // the furthest out a zoom may go, unless the graph needs further to fit
-const FIT_PAD = 40; // screen px kept clear around a framed graph
-const FIT_MAX = 2.5; // the closest a fit zooms in (a tiny graph isn't blown up)
-/** How far a press may wander, in CSS px, and still be a tap or a long press (a finger wobbles more than a mouse). */
-const TAP_SLOP = { touch: 10, pen: 6, mouse: 5 };
-const LONG_PRESS = 500; // ms held still before a press is a long press
-const DOUBLE_TAP = { ms: 300, px: 24 }; // a second tap this soon and this close is a double tap
-const LINE_PX = 33; // a wheel "line" (deltaMode 1, Firefox's mouse wheel) in px: three lines a notch, like Chrome's 100
-const WHEEL_BURST = 150; // ms: wheel events closer than this are one gesture (one kind: zoom or pan)
-
-/**
- * A point `f` of the way from (x0, y0) to (x1, y1) around a radial layout's centre: angle and radius each change
- * evenly (the angle the short way round), so nodes swing along their rings instead of cutting across the middle.
- */
-export function alongRings({ cx, cy }, x0, y0, x1, y1, f) {
-  const r0 = Math.hypot(x0 - cx, y0 - cy),
-    r1 = Math.hypot(x1 - cx, y1 - cy);
-  // At (or very near) the centre a point has no angle of its own: take the other end's.
-  const a1 =
-    r1 > 1e-6 ? Math.atan2(y1 - cy, x1 - cx) : Math.atan2(y0 - cy, x0 - cx);
-  const a0 = r0 > 1e-6 ? Math.atan2(y0 - cy, x0 - cx) : a1;
-  let turn = a1 - a0;
-  if (turn > Math.PI) turn -= Math.PI * 2;
-  if (turn < -Math.PI) turn += Math.PI * 2;
-  const r = r0 + (r1 - r0) * f,
-    a = a0 + turn * f;
-  return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
-}
 
 /**
  * @typedef {object} TickResult
@@ -88,36 +68,6 @@ export function alongRings({ cx, cy }, x0, y0, x1, y1, f) {
  *   zooms with a mouse wheel and pans with a trackpad; a pinch (ctrl+wheel) always zooms
  * @property {boolean} [tapSelects]      a tap selects the node under it (shift, ctrl or cmd: adds or removes it) and a
  *   tap on empty space clears the selection (default true)
- *
- * @typedef {object} PointerInput        a pointer event, in the controller's terms
- * @property {number} [id]               the pointer's id (each finger has its own)
- * @property {number} x                  CSS px from the canvas's left
- * @property {number} y
- * @property {number} [time]             ms, on the controller's clock
- * @property {string} [pointerType]      "mouse", "touch" or "pen"
- * @property {number} [button]           which button pressed (2, the secondary, is left to the page)
- * @property {boolean} [shiftKey]
- * @property {boolean} [ctrlKey]
- * @property {boolean} [metaKey]
- * @property {boolean} [altKey]
- *
- * @typedef {object} Pointer             a pressed pointer, and what it's doing
- * @property {number} id
- * @property {"drag" | "pan" | "pinch" | "idle"} role  dragging a node, panning, one of a pinch's two, or ignored
- * @property {string} type               pointerType
- * @property {number} node               the node dragged (an index into the working graph), or -1
- * @property {string} [nodeId]           its id, so the drag survives a rebuild of the working graph
- * @property {number[]} [carried]        the nodes it carries (itself, and its subtree when static drags carry them)
- * @property {{ x: number, y: number }} [offset] from the pointer to the node, world px
- * @property {{ x: number, y: number }} screen   where it is
- * @property {{ x: number, y: number, time: number }} start where and when it was pressed
- * @property {number} t                  when it last moved
- * @property {number} vx                 smoothed speed, world px/s
- * @property {number} vy
- * @property {boolean} tap               still a tap (or a long press): hasn't wandered, wasn't part of a pinch
- * @property {boolean} long              a long press was reported
- * @property {boolean} started           a dragStart or panStart was reported
- * @property {boolean} additive          shift, ctrl or cmd was held (a tap adds to or removes from the selection)
  */
 
 export class GraphController {
@@ -172,13 +122,16 @@ export class GraphController {
     this.width = 1;
     this.height = 1;
     this.dpr = 1;
-    /** @type {Map<number, Pointer>} pressed pointers by id */
-    this.pointers = new Map();
     this.hover = -1; // the node under a hovering pointer (an index into the working graph), or -1
     this.hoverReference = false; // found through one of its references
-    this.pinch = null; // two pointers zooming: { a, b, dist, k, anchor }
-    this.lastTap = null; // { time, x, y, node }: the first half of a possible double tap
-    this.wheelBurst = { time: -Infinity, zoom: true };
+    this.gestures = new Gestures(this, {
+      emit: (type, detail) => this.#emit(type, detail),
+      changed: () => this.#changed(),
+      pick: (p, references) => this.#pick(p, references),
+      hover: (index, reference) => this.#setHover(index, reference),
+      carried: (index) => this.#carried(index),
+      userCamera: () => this.#userCamera(),
+    });
     this.tween = null;
     this.cameraTween = null;
     this.last = 0;
@@ -192,7 +145,7 @@ export class GraphController {
     /** @type {Set<string>} selected node ids, in the order they were selected */
     this.selection = new Set();
     this.selectionVersion = 0;
-    this.selectionCache = { key: "", mask: null, lit: null };
+    this.selectionCache = { key: -1, graph: null, mask: null, lit: null };
     this.lineages = new LineageCache();
     this.grid = { graph: null, version: -1, index: null };
     this.lit = null; // the lineage mask the shading is heading for (null: everything lit)
@@ -241,8 +194,8 @@ export class GraphController {
   // ---- events --------------------------------------------------------------------------------------------------
 
   /**
-   * Call `listener(detail)` on every event of `type` (see the README of events in next/MODEL.md, or `onEvent` for
-   * all of them). Returns a function that stops it.
+   * Call `listener(detail)` on every event of `type` (or `onEvent` for all of them). Returns a function that stops
+   * it.
    */
   on(type, listener) {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
@@ -276,7 +229,7 @@ export class GraphController {
    * The model changed (an update, a replace, new options): do as little as that change needs. Nodes or edges came
    * or went → lay out again and morph (kept nodes glide from where they are, new ones arrive as the animation's
    * `enter` setting says, removed ones fold back into their family). A node's room changed → lay out again. Only
-   * looks or data changed → restyle, nothing moves.
+   * looks changed → restyle, nothing moves. Only data changed → nothing to draw.
    */
   #onModel(change) {
     if (this.quiet) return;
@@ -398,41 +351,14 @@ export class GraphController {
     this.appear = appear;
     this.fading = this.arriving = true; // worked out again by the next fade
     this.sim = new Simulation(graph);
-    const kept = (i) =>
-      previous && i >= 0
-        ? (graph.byId.get(previous.nodes[i].id)?.index ?? -1)
+    const hover =
+      previous && this.hover >= 0
+        ? (graph.byId.get(previous.nodes[this.hover].id)?.index ?? -1)
         : -1;
-    const hover = kept(this.hover);
     if (hover < 0) this.#setHover(-1, false, previous);
     else this.hover = hover;
-    for (const ptr of this.pointers.values()) {
-      if (ptr.role !== "drag") continue;
-      const at = graph.byId.get(ptr.nodeId)?.index ?? -1;
-      if (at >= 0) {
-        // Still here: the drag carries on, holding the same node (and, for a subtree drag, its subtree as it is now).
-        ptr.node = at;
-        ptr.carried = this.#carried(at);
-        for (const i of ptr.carried) this.sim.held.add(i);
-        continue;
-      }
-      // The node it held is gone: the drag ends, and the pointer pans from here.
-      if (ptr.started)
-        this.#emit("dragEnd", {
-          node: ptr.nodeId,
-          thrown: false,
-          screenSpeed: 0,
-          cancelled: true,
-        });
-      Object.assign(ptr, {
-        role: "pan",
-        node: -1,
-        nodeId: undefined,
-        carried: undefined,
-        started: false,
-        vx: 0,
-        vy: 0,
-      });
-    }
+    // Drags hold the same nodes at their new rows (one whose node is gone ends, and its pointer pans on).
+    this.gestures.rebind();
     // The selection is by id: ids that left the graph leave it.
     const gone = [...this.selection].filter((id) => !graph.byId.has(id));
     if (gone.length && previous) {
@@ -532,8 +458,7 @@ export class GraphController {
     this.layouter.dispose();
     this.renderer?.detach(this);
     this.renderer = null;
-    this.pointers.clear();
-    this.pinch = null;
+    this.gestures.clear();
   }
 
   // ---- settings ------------------------------------------------------------------------------------------------
@@ -602,8 +527,7 @@ export class GraphController {
 
   /** Send everything back to its home (a node being dragged is let go first). */
   reset() {
-    for (const ptr of this.pointers.values())
-      if (ptr.role === "drag") this.#endGesture(ptr, { cancel: true });
+    this.gestures.releaseDrags();
     this.#startTween();
     this.#changed();
     this.#emit("reset");
@@ -620,6 +544,16 @@ export class GraphController {
   }
 
   // ---- the camera ----------------------------------------------------------------------------------------------
+
+  /** A point on the canvas (CSS px from its top-left) in world coordinates. */
+  toWorld(x, y) {
+    return cam.toWorld(this.camera, this.width, this.height, x, y);
+  }
+
+  /** A world point on the canvas (CSS px from its top-left). */
+  toScreen(x, y) {
+    return cam.toScreen(this.camera, this.width, this.height, x, y);
+  }
 
   /**
    * Frame the graph where it is (or where it's heading, mid-transition). While a layout is on its way, the graph it
@@ -699,8 +633,7 @@ export class GraphController {
    * (half its fit, so there's room around it).
    */
   zoomLimits() {
-    const fit = this.homeBox ? this.#fitScale(this.homeBox) : MIN_ZOOM;
-    return { min: Math.min(MIN_ZOOM, fit / 2), max: MAX_ZOOM };
+    return cam.zoomLimits(this.homeBox, this.width, this.height);
   }
 
   /**
@@ -708,13 +641,16 @@ export class GraphController {
    * For zoom buttons, and the renderer's pinch gestures.
    */
   zoomBy(factor, x = this.width / 2, y = this.height / 2) {
-    const before = this.toWorld(x, y);
-    const { min, max } = this.zoomLimits();
     this.#userCamera();
-    this.camera.k = Math.min(Math.max(this.camera.k * factor, min), max);
-    const after = this.toWorld(x, y);
-    this.camera.x += before.x - after.x;
-    this.camera.y += before.y - after.y;
+    cam.zoomAbout(
+      this.camera,
+      this.width,
+      this.height,
+      factor,
+      x,
+      y,
+      this.zoomLimits(),
+    );
     this.#changed();
   }
 
@@ -726,45 +662,13 @@ export class GraphController {
     this.focused = null;
   }
 
-  /** The scale that fits a box of world px (with padding) in the view, at most FIT_MAX. */
-  #fitScale({ minX, minY, maxX, maxY }) {
-    return Math.min(
-      (this.width - FIT_PAD * 2) / Math.max(maxX - minX, 1),
-      (this.height - FIT_PAD * 2) / Math.max(maxY - minY, 1),
-      FIT_MAX,
-    );
-  }
-
-  /** The box every node's footprint covers, at its position or its home. */
-  #footprints(homes) {
-    const m = this.graph.matrix;
-    const xs = homes ? m.homeX : m.x,
-      ys = homes ? m.homeY : m.y;
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (let i = 0; i < m.count; i++) {
-      // A node flung off to infinity can't be framed: leave it out rather than lose the whole graph.
-      if (!Number.isFinite(xs[i]) || !Number.isFinite(ys[i])) continue;
-      minX = Math.min(minX, xs[i] + m.boxX0[i]);
-      minY = Math.min(minY, ys[i] + m.boxY0[i]);
-      maxX = Math.max(maxX, xs[i] + m.boxX1[i]);
-      maxY = Math.max(maxY, ys[i] + m.boxY1[i]);
-    }
-    if (minX > maxX) minX = minY = maxX = maxY = 0;
-    return { minX, minY, maxX, maxY };
-  }
-
-  /** A camera framing the graph: footprints, not just centres, so labels at the edge stay on screen. */
+  /** A camera framing the graph, at its positions or its homes. */
   #framing(homes) {
-    const box = this.#footprints(homes);
-    return {
-      x: (box.minX + box.maxX) / 2,
-      y: (box.minY + box.maxY) / 2,
-      // However wide the graph, it fits: no floor but a tiny one that keeps the arithmetic finite.
-      k: Math.max(this.#fitScale(box), 1e-6),
-    };
+    return cam.framing(
+      cam.footprints(this.graph.matrix, homes),
+      this.width,
+      this.height,
+    );
   }
 
   /**
@@ -791,11 +695,10 @@ export class GraphController {
       // Nearest the middle (only nodes that will still be there count, but the check is a map lookup: only made for
       // nodes nearer than the best so far).
       const { x: cx, y: cy } = this.camera;
-      const next = this.model;
       let best = Infinity;
       for (let i = 0; i < m.count; i++) {
         const d = (m.x[i] - cx) ** 2 + (m.y[i] - cy) ** 2;
-        if (d < best && next.node(graph.nodes[i].id)) {
+        if (d < best && this.model.node(graph.nodes[i].id)) {
           best = d;
           at = i;
         }
@@ -816,6 +719,45 @@ export class GraphController {
       dy = n.homeY - anchor.y;
     if (!Number.isFinite(dx + dy) || (dx === 0 && dy === 0)) return;
     this.shift = { dx, dy, start: this.tween.start, done: 0 };
+  }
+
+  /** The camera's own motion this frame: a framing or focus tween, keeping step with a morph, a glide. */
+  #moveCamera(now, dt) {
+    let busy = false;
+    if (this.cameraTween) {
+      const { t, f } = progress(
+        now,
+        this.cameraTween.start,
+        this.anim.camera,
+        this.anim.easing,
+      );
+      const { from, to, node } = this.cameraTween;
+      // Focusing on a node follows it, wherever it's heading now.
+      const n = node !== undefined && this.graph.byId.get(node);
+      if (n) Object.assign(to, this.#whereTo(n.index));
+      this.camera = cam.between(from, to, f);
+      if (t >= 1) this.cameraTween = null;
+      busy = true;
+    }
+    if (this.shift) {
+      const { t, f } = progress(
+        now,
+        this.shift.start,
+        this.anim.transition,
+        this.anim.easing,
+      );
+      this.camera.x += (f - this.shift.done) * this.shift.dx;
+      this.camera.y += (f - this.shift.done) * this.shift.dy;
+      this.shift.done = f;
+      if (t >= 1) this.shift = null;
+      busy = true;
+    }
+    if (this.glide) {
+      if (cam.coast(this.camera, this.glide, this.modeOpts.friction, dt))
+        busy = true;
+      else this.glide = null;
+    }
+    return busy;
   }
 
   // ---- layout --------------------------------------------------------------------------------------------------
@@ -899,9 +841,10 @@ export class GraphController {
     this.geometryVersion++;
     this.looks = looksOf(this.graph, this.node, this.edge);
     this.#placeLabels(job.spec);
-    this.homeBox = this.#footprints(true);
+    this.homeBox = cam.footprints(this.graph.matrix, true);
     this.#configureSim();
-    if (job.rebuilding) this.#arrive(previous, was);
+    if (job.rebuilding)
+      arrive(this.graph, previous, was, this.anim.enter, this.appear);
     this.shift = null;
     if (fit === "instant") {
       // A camera already framing where everything is heading.
@@ -1016,88 +959,6 @@ export class GraphController {
     }
   }
 
-  /**
-   * Where a new graph's nodes start. Nodes the previous graph had start where they were. New ones, by the `enter`
-   * setting: grow out of their nearest ancestor that was already there (or their root's new place), fade in where
-   * they land, or just appear there. One pass, parents before children: each new node takes its parent's answer.
-   * @param {Graph | null} previous
-   * @param {Int32Array | null} was  per node, its index in `previous` (-1: new)
-   */
-  #arrive(previous, was) {
-    const { nodes, matrix: m, order } = this.graph;
-    const count = nodes.length;
-    const enter = this.anim.enter;
-    // Per node: the previous graph's index of its nearest ancestor that was already there (-1: none), and its root.
-    const from = new Int32Array(count).fill(-1);
-    const root = Int32Array.from({ length: count }, (_, i) => i);
-    for (const i of order) {
-      const p = nodes[i].parent;
-      if (p < 0) continue;
-      root[i] = root[p];
-      from[i] = was && was[p] >= 0 ? was[p] : from[p];
-    }
-    for (let i = 0; i < count; i++) {
-      const old = was ? was[i] : -1;
-      if (old >= 0) {
-        m.x[i] = previous.matrix.x[old];
-        m.y[i] = previous.matrix.y[old];
-        continue;
-      }
-      this.appear[i] = enter === "none" ? 1 : 0;
-      if (enter !== "grow") {
-        m.x[i] = m.homeX[i];
-        m.y[i] = m.homeY[i];
-      } else if (from[i] >= 0) {
-        m.x[i] = previous.matrix.x[from[i]];
-        m.y[i] = previous.matrix.y[from[i]];
-      } else {
-        m.x[i] = m.homeX[root[i]];
-        m.y[i] = m.homeY[root[i]];
-      }
-    }
-    this.fading = true;
-  }
-
-  /** Progress 0–1 of an animation that started at `start` and lasts `ms`, eased. */
-  #progress(now, start, ms) {
-    // A frame stamped a little before the change that started it counts as its start, not as before it.
-    const t = ms > 0 ? Math.min(Math.max((now - start) / ms, 0), 1) : 1;
-    return { t, f: (EASINGS[this.anim.easing] ?? EASINGS.smooth)(t) };
-  }
-
-  /**
-   * Ease hover emphasis and fade-ins toward their targets (`lit`: a flag per node to light, or null for all).
-   * Returns true while anything is still changing.
-   */
-  #fade(dt, lit) {
-    if (lit !== this.lit) {
-      this.lit = lit;
-      this.fading = true;
-    }
-    if (!this.fading) return false;
-    let changing = false,
-      arriving = false;
-    const { shade, appear } = this;
-    for (let i = 0; i < shade.length; i++) {
-      const target = !lit || lit[i] ? 1 : 0;
-      if (shade[i] !== target) {
-        shade[i] = approach(shade[i], target, dt, this.anim.hoverFade);
-        changing = true;
-      }
-      if (appear[i] < 1) {
-        appear[i] =
-          this.anim.transition > 0
-            ? Math.min(1, appear[i] + (dt * 1000) / this.anim.transition)
-            : 1;
-        changing = true;
-        arriving ||= appear[i] < 1;
-      }
-    }
-    this.fading = changing;
-    this.arriving = arriving;
-    return changing;
-  }
-
   #configureSim() {
     this.sim.configure(
       this.mode,
@@ -1112,10 +973,7 @@ export class GraphController {
 
   /** Glide every node from where it is to its home, over the animation's transition time. */
   #startTween() {
-    const m = this.graph.matrix;
-    m.vx.fill(0);
-    m.vy.fill(0);
-    this.tween = { x: m.x.slice(), y: m.y.slice(), start: this.clock() };
+    this.tween = { ...morphFrom(this.graph.matrix), start: this.clock() };
   }
 
   // ---- time ----------------------------------------------------------------------------------------------------
@@ -1133,12 +991,13 @@ export class GraphController {
     let busy;
     const simStart = performance.now();
     if (this.tween) {
-      const { t, f } = this.#progress(
+      const { t, f } = progress(
         now,
         this.tween.start,
         this.anim.transition,
+        this.anim.easing,
       );
-      this.#morph(f);
+      morph(this.graph.matrix, this.tween, this.routing, this.sim.held, f);
       if (t >= 1) {
         this.tween = null;
         this.sim.wake();
@@ -1155,39 +1014,8 @@ export class GraphController {
       busy = !this.sim.asleep;
     }
     const simMs = performance.now() - simStart;
-    if (this.cameraTween) {
-      const { t, f } = this.#progress(
-        now,
-        this.cameraTween.start,
-        this.anim.camera,
-      );
-      const { from, to, node } = this.cameraTween;
-      // Focusing on a node follows it, wherever it's heading now.
-      const n = node !== undefined && this.graph.byId.get(node);
-      if (n) Object.assign(to, this.#whereTo(n.index));
-      // Zoom moves in log space so it feels even.
-      this.camera = {
-        x: from.x + (to.x - from.x) * f,
-        y: from.y + (to.y - from.y) * f,
-        k: from.k * (to.k / from.k) ** f,
-      };
-      if (t >= 1) this.cameraTween = null;
-      busy = true;
-    }
-    if (this.shift) {
-      const { t, f } = this.#progress(
-        now,
-        this.shift.start,
-        this.anim.transition,
-      );
-      this.camera.x += (f - this.shift.done) * this.shift.dx;
-      this.camera.y += (f - this.shift.done) * this.shift.dy;
-      this.shift.done = f;
-      if (t >= 1) this.shift = null;
-      busy = true;
-    }
-    if (this.glide) busy = this.#coast(dt) || busy;
-    this.#longPresses(now);
+    busy = this.#moveCamera(now, dt) || busy;
+    this.gestures.longPresses(now);
 
     if (this.#fade(dt, this.#litMask())) {
       this.shadeVersion++;
@@ -1248,7 +1076,6 @@ export class GraphController {
       this.#emit("settled", { nodes: this.graph.nodes.length });
       for (const resolve of this.settleWaiters.splice(0)) resolve();
     }
-    const dragging = this.pointer?.node >= 0;
     return {
       busy,
       gap,
@@ -1258,7 +1085,7 @@ export class GraphController {
         ? "laying out"
         : this.tween
           ? "moving to layout"
-          : dragging
+          : this.pointer?.node >= 0
             ? "dragging"
             : this.pinch
               ? "zooming"
@@ -1266,6 +1093,28 @@ export class GraphController {
                 ? "moving"
                 : "at rest",
     };
+  }
+
+  /**
+   * Ease hover emphasis and fade-ins toward their targets (`lit`: a flag per node to light, or null for all).
+   * Skipped once everything has arrived, until the target changes. Returns true while anything is still changing.
+   */
+  #fade(dt, lit) {
+    if (lit !== this.lit) {
+      this.lit = lit;
+      this.fading = true;
+    }
+    if (!this.fading) return false;
+    const { changing, arriving } = fade(
+      this.shade,
+      this.appear,
+      lit,
+      dt,
+      this.anim,
+    );
+    this.fading = changing;
+    this.arriving = arriving;
+    return changing;
   }
 
   /**
@@ -1283,9 +1132,9 @@ export class GraphController {
   /** A flag per node of the working graph for the selection (null when nothing's selected), and its lineage. */
   #selectionMask() {
     if (!this.selection.size) return null;
-    const key = `${this.selectionVersion}`;
     const cache = this.selectionCache;
-    if (cache.key === key && cache.graph === this.graph) return cache.mask;
+    if (cache.key === this.selectionVersion && cache.graph === this.graph)
+      return cache.mask;
     const count = this.graph.nodes.length;
     const mask = new Uint8Array(count);
     let lit = null;
@@ -1295,35 +1144,13 @@ export class GraphController {
       mask[n.index] = 1;
       lit = lineageMask(this.graph, n.index, lit ?? new Uint8Array(count));
     }
-    Object.assign(cache, { key, graph: this.graph, mask, lit });
+    Object.assign(cache, {
+      key: this.selectionVersion,
+      graph: this.graph,
+      mask,
+      lit,
+    });
     return mask;
-  }
-
-  /** One morph frame: every node `f` of the way from where it started to its home (round the rings in a radial). */
-  #morph(f) {
-    const m = this.graph.matrix;
-    const { x, y, homeX, homeY, count } = m;
-    const { x: x0, y: y0 } = this.tween;
-    const held = this.sim.held;
-    if (this.routing.kind === "radial") {
-      for (let i = 0; i < count; i++) {
-        if (held.size && held.has(i)) continue;
-        [x[i], y[i]] = alongRings(
-          this.routing,
-          x0[i],
-          y0[i],
-          homeX[i],
-          homeY[i],
-          f,
-        );
-      }
-      return;
-    }
-    for (let i = 0; i < count; i++) {
-      if (held.size && held.has(i)) continue;
-      x[i] = x0[i] + (homeX[i] - x0[i]) * f;
-      y[i] = y0[i] + (homeY[i] - y0[i]) * f;
-    }
   }
 
   /** Nothing more to do for now: the next tick starts timing afresh instead of seeing one long gap. */
@@ -1336,22 +1163,6 @@ export class GraphController {
     let result = null;
     for (let t = 0; t <= ms; t += step) result = this.tick(start + t);
     return result;
-  }
-
-  /** The camera coasting after a pan, slowed by the same friction as the nodes. Returns false once stopped. */
-  #coast(dt) {
-    const keep = Math.exp(-this.modeOpts.friction * dt);
-    const speed = Math.hypot(this.glide.x, this.glide.y);
-    const slowed = Math.max(speed * keep - this.modeOpts.friction * 6 * dt, 0);
-    if (slowed < 2) {
-      this.glide = null;
-      return false;
-    }
-    this.glide.x *= slowed / speed;
-    this.glide.y *= slowed / speed;
-    this.camera.x += this.glide.x * dt;
-    this.camera.y += this.glide.y * dt;
-    return true;
   }
 
   // ---- selection -----------------------------------------------------------------------------------------------
@@ -1393,21 +1204,88 @@ export class GraphController {
   }
 
   // ---- interaction ---------------------------------------------------------------------------------------------
+  //
+  // What pointers and wheels mean is worked out in gestures.js: these are the calls a renderer makes.
 
-  /** A point on the canvas (CSS px from its top-left) in world coordinates. */
-  toWorld(x, y) {
-    return {
-      x: (x - this.width / 2) / this.camera.k + this.camera.x,
-      y: (y - this.height / 2) / this.camera.k + this.camera.y,
-    };
+  /**
+   * A press at canvas point (x, y). The first pointer grabs the node there or starts a pan; a second one turns the
+   * two into a pinch (the drag or pan ends); any more are ignored until those lift.
+   * @param {import("./gestures.js").PointerInput} input
+   */
+  pointerDown(input) {
+    this.gestures.down(input);
   }
 
-  /** A world point on the canvas (CSS px from its top-left). */
-  toScreen(x, y) {
-    return {
-      x: (x - this.camera.x) * this.camera.k + this.width / 2,
-      y: (y - this.camera.y) * this.camera.k + this.height / 2,
-    };
+  /**
+   * A pointer moved to canvas point (x, y): a pressed one drags, pans or pinches; one that isn't pressed (a mouse
+   * or pen hovering) hovers.
+   * @param {import("./gestures.js").PointerInput} input
+   */
+  pointerMove(input) {
+    this.gestures.move(input);
+  }
+
+  /**
+   * The press ended: a dragged node is let go (thrown, if it was moving), a pan glides on, a pinch's other pointer
+   * pans on. A press that didn't wander is a tap (two quick ones a double tap), unless it was a long press.
+   * @param {Partial<import("./gestures.js").PointerInput>} [input]
+   */
+  pointerUp(input) {
+    this.gestures.up(input);
+  }
+
+  /**
+   * The press was taken away (the browser's pointercancel: a system gesture, the pointer lost): like a release, but
+   * nothing is thrown and it's never a tap.
+   * @param {Partial<import("./gestures.js").PointerInput>} [input]
+   */
+  pointerCancel(input) {
+    this.gestures.cancel(input);
+  }
+
+  /** The pointer left the canvas: no more hover (a press in progress carries on). */
+  pointerLeave(input) {
+    this.gestures.leave(input);
+  }
+
+  /**
+   * A wheel or a trackpad at canvas point (x, y). A pinch on a trackpad (ctrl+wheel) zooms about the point, and so
+   * does a mouse wheel; a two-finger scroll on a trackpad pans (see the `wheel` option). Lines and pages
+   * (`deltaMode` 1 and 2) are turned into pixels first, so every browser zooms at the same speed.
+   * @param {import("./gestures.js").WheelInput} input
+   */
+  wheel(input) {
+    this.gestures.wheel(input);
+  }
+
+  /** A double-click at canvas point (x, y): on empty space, frame the graph. (Taps find double taps themselves.) */
+  doubleClick({ x, y }) {
+    if (this.hit(this.toWorld(x, y)) < 0) this.fit();
+  }
+
+  /** Pressed pointers by id (see gestures.js). */
+  get pointers() {
+    return this.gestures.pointers;
+  }
+
+  /** The pressed pointer that's dragging a node or panning (there's at most one), or null. */
+  get pointer() {
+    return this.gestures.primary;
+  }
+
+  /** Two pointers pinching, or null. */
+  get pinch() {
+    return this.gestures.pinch;
+  }
+
+  /**
+   * What the pointer should look like: "grab" over a node, "grabbing" while dragging one, "default" over a
+   * reference (it lights up its ingredient but can't be dragged), "" otherwise.
+   */
+  get cursor() {
+    if (this.pointer?.node >= 0) return "grabbing";
+    if (this.hover < 0) return "";
+    return this.hoverReference ? "default" : "grab";
   }
 
   /**
@@ -1446,23 +1324,6 @@ export class GraphController {
     return { index: -1, reference: false };
   }
 
-  /**
-   * What the pointer should look like: "grab" over a node, "grabbing" while dragging one, "default" over a
-   * reference (it lights up its ingredient but can't be dragged), "" otherwise.
-   */
-  get cursor() {
-    if (this.pointer?.node >= 0) return "grabbing";
-    if (this.hover < 0) return "";
-    return this.hoverReference ? "default" : "grab";
-  }
-
-  /** The pressed pointer that's dragging a node or panning (there's at most one), or null. */
-  get pointer() {
-    for (const ptr of this.pointers.values())
-      if (ptr.role === "drag" || ptr.role === "pan") return ptr;
-    return null;
-  }
-
   /** The node and, when static drags carry subtrees, everything below it. */
   #carried(index) {
     if (this.mode !== "static" || !this.modeOpts.dragSubtree) return [index];
@@ -1473,318 +1334,9 @@ export class GraphController {
   }
 
   /**
-   * A press at canvas point (x, y). The first pointer grabs the node there or starts a pan; a second one turns the
-   * two into a pinch (the drag or pan ends); any more are ignored until those lift.
-   * @param {PointerInput} input
+   * The hover moves to node `index` (-1: none), found directly or through one of its references. Sends hoverLeave
+   * and hoverEnter (the node left is looked up in `graph`, the one it was found in).
    */
-  pointerDown({
-    id = 1,
-    x,
-    y,
-    time = this.clock(),
-    pointerType = "mouse",
-    button = 0,
-    shiftKey = false,
-    ctrlKey = false,
-    metaKey = false,
-  }) {
-    if (button === 2) return; // the secondary button is the page's (a context menu)
-    if (this.pointers.has(id)) this.pointerCancel({ id, time }); // its release was missed
-    /** @type {Pointer} */
-    const ptr = {
-      id,
-      role: "idle",
-      type: pointerType,
-      node: -1,
-      screen: { x, y },
-      start: { x, y, time },
-      t: time,
-      vx: 0,
-      vy: 0,
-      tap: true,
-      long: false,
-      started: false,
-      additive: shiftKey || ctrlKey || metaKey,
-    };
-    const first = this.pinch ? null : this.pointer;
-    this.pointers.set(id, ptr);
-    this.cameraTween = null;
-    this.glide = null;
-    if (this.pinch)
-      ptr.tap = false; // a third finger: ignored
-    else if (first) {
-      // A second finger: whatever the first was doing stops, and the two pinch.
-      this.#endGesture(first, { cancel: true });
-      this.#startPinch(first, ptr);
-    } else {
-      const p = this.toWorld(x, y);
-      const node = this.#pick(p, false).index;
-      if (node >= 0) {
-        const m = this.graph.matrix;
-        Object.assign(ptr, {
-          role: "drag",
-          node,
-          nodeId: this.graph.nodes[node].id,
-          offset: { x: m.x[node] - p.x, y: m.y[node] - p.y },
-          carried: this.#carried(node),
-        });
-        // Held from the press, so a node in motion stops under the finger; the drag starts once it moves.
-        for (const i of ptr.carried) {
-          this.sim.held.add(i);
-          m.vx[i] = m.vy[i] = 0;
-        }
-      } else ptr.role = "pan";
-    }
-    this.#changed();
-  }
-
-  /** Smoothed pointer speed in world px/s, capped so a hard flick can't send anything off into the distance. */
-  #track(ptr, dx, dy, time) {
-    const dt = Math.max((time - ptr.t) / 1000, 1 / 240);
-    ptr.vx += (dx / dt - ptr.vx) * 0.4;
-    ptr.vy += (dy / dt - ptr.vy) * 0.4;
-    const cap = MAX_THROW / this.camera.k;
-    const speed = Math.hypot(ptr.vx, ptr.vy);
-    if (speed > cap) {
-      ptr.vx *= cap / speed;
-      ptr.vy *= cap / speed;
-    }
-    ptr.t = time;
-  }
-
-  /**
-   * A pointer moved to canvas point (x, y): a pressed one drags, pans or pinches; one that isn't pressed (a mouse
-   * or pen hovering) hovers.
-   * @param {PointerInput} input
-   */
-  pointerMove({ id = 1, x, y, time = this.clock() }) {
-    const ptr = this.pointers.get(id);
-    if (!ptr) {
-      const { index, reference } = this.#pick(this.toWorld(x, y));
-      this.#setHover(index, reference);
-      return;
-    }
-    const last = ptr.screen;
-    ptr.screen = { x, y };
-    if (
-      ptr.tap &&
-      Math.hypot(x - ptr.start.x, y - ptr.start.y) >
-        (TAP_SLOP[ptr.type] ?? TAP_SLOP.mouse)
-    )
-      ptr.tap = false;
-    if (ptr.role === "pinch") return this.#pinchMove();
-    if (ptr.role === "pan") {
-      const dx = -(x - last.x) / this.camera.k;
-      const dy = -(y - last.y) / this.camera.k;
-      this.#userCamera();
-      this.camera.x += dx;
-      this.camera.y += dy;
-      this.#track(ptr, dx, dy, time);
-      if (!ptr.tap && !ptr.started) {
-        ptr.started = true;
-        this.#emit("panStart", { x: ptr.start.x, y: ptr.start.y });
-      }
-      this.#changed();
-      return;
-    }
-    if (ptr.role !== "drag") return;
-    const p = this.toWorld(x, y);
-    const m = this.graph.matrix;
-    const dx = p.x + ptr.offset.x - m.x[ptr.node],
-      dy = p.y + ptr.offset.y - m.y[ptr.node];
-    this.#track(ptr, dx, dy, time);
-    this.version++;
-    for (const i of ptr.carried) {
-      m.x[i] += dx;
-      m.y[i] += dy;
-    }
-    if (!ptr.tap && !ptr.started) {
-      ptr.started = true;
-      this.#emit("dragStart", {
-        node: ptr.nodeId,
-        carried: ptr.carried.length,
-      });
-    }
-    this.#changed();
-  }
-
-  /**
-   * The press ended: a dragged node is let go (thrown, if it was moving), a pan glides on, a pinch's other pointer
-   * pans on. A press that didn't wander is a tap (two quick ones a double tap), unless it was a long press.
-   * @param {Partial<PointerInput>} [input]
-   */
-  pointerUp({ id = 1, time = this.clock() } = {}) {
-    const ptr = this.pointers.get(id);
-    if (!ptr) return;
-    this.#longPresses(time);
-    this.pointers.delete(id);
-    if (ptr.role === "pinch") this.#endPinch();
-    else {
-      this.#endGesture(ptr, { time });
-      if (ptr.tap && !ptr.long) this.#tap(ptr, time);
-    }
-    this.#changed();
-  }
-
-  /**
-   * The press was taken away (the browser's pointercancel: a system gesture, the pointer lost): like a release, but
-   * nothing is thrown and it's never a tap.
-   * @param {Partial<PointerInput>} [input]
-   */
-  pointerCancel({ id = 1, time = this.clock() } = {}) {
-    const ptr = this.pointers.get(id);
-    if (!ptr) return;
-    this.pointers.delete(id);
-    if (ptr.role === "pinch") this.#endPinch();
-    else this.#endGesture(ptr, { cancel: true, time });
-    this.#changed();
-  }
-
-  /**
-   * End what a pointer was doing: let a dragged node go (thrown if it was still moving, unless `cancel`), or let a
-   * pan glide on. Sends dragEnd or panEnd if it had started. The pointer is left idle.
-   */
-  #endGesture(ptr, { cancel = false, time = this.clock() } = {}) {
-    const thrown = !cancel && time - ptr.t < 80; // a pointer that stopped before letting go throws nothing
-    if (ptr.role === "drag") {
-      const m = this.graph.matrix;
-      this.sim.wake();
-      for (const i of ptr.carried) {
-        this.sim.held.delete(i);
-        if (this.modeOpts.fling && thrown) {
-          m.vx[i] = ptr.vx;
-          m.vy[i] = ptr.vy;
-        }
-      }
-    } else if (ptr.role === "pan" && thrown && ptr.started) {
-      this.glide = { x: ptr.vx, y: ptr.vy };
-    }
-    if (ptr.started) {
-      const speed = Math.round(Math.hypot(ptr.vx, ptr.vy) * this.camera.k);
-      const drag = ptr.role === "drag";
-      this.#emit(drag ? "dragEnd" : "panEnd", {
-        node: drag ? ptr.nodeId : undefined,
-        thrown: thrown && (!drag || this.modeOpts.fling),
-        screenSpeed: thrown ? speed : 0,
-        ...(cancel && { cancelled: true }),
-      });
-    }
-    Object.assign(ptr, {
-      role: "idle",
-      node: -1,
-      carried: undefined,
-      started: false,
-    });
-  }
-
-  /** Two pointers down: from now on their midpoint pans and their spread zooms. */
-  #startPinch(a, b) {
-    a.role = b.role = "pinch";
-    a.tap = b.tap = false;
-    const mid = {
-      x: (a.screen.x + b.screen.x) / 2,
-      y: (a.screen.y + b.screen.y) / 2,
-    };
-    this.#userCamera();
-    this.pinch = {
-      a: a.id,
-      b: b.id,
-      dist: Math.max(
-        Math.hypot(a.screen.x - b.screen.x, a.screen.y - b.screen.y),
-        1,
-      ),
-      k: this.camera.k,
-      // The world point under the fingers' midpoint stays under it.
-      anchor: this.toWorld(mid.x, mid.y),
-    };
-    this.#emit("pinchStart", { k: this.camera.k });
-  }
-
-  #pinchMove() {
-    const { a, b, dist, k, anchor } = this.pinch;
-    const pa = this.pointers.get(a).screen,
-      pb = this.pointers.get(b).screen;
-    const { min, max } = this.zoomLimits();
-    const spread = Math.max(Math.hypot(pa.x - pb.x, pa.y - pb.y), 1);
-    const scale = Math.min(Math.max((k * spread) / dist, min), max);
-    const mx = (pa.x + pb.x) / 2,
-      my = (pa.y + pb.y) / 2;
-    this.camera = {
-      x: anchor.x - (mx - this.width / 2) / scale,
-      y: anchor.y - (my - this.height / 2) / scale,
-      k: scale,
-    };
-    this.#changed();
-  }
-
-  /** One of a pinch's pointers lifted: the pinch ends, and the one still down pans from where it is. */
-  #endPinch() {
-    const { a, b } = this.pinch;
-    this.pinch = null;
-    for (const id of [a, b]) {
-      const ptr = this.pointers.get(id);
-      if (!ptr) continue;
-      Object.assign(ptr, {
-        role: "pan",
-        start: { ...ptr.screen, time: ptr.t },
-        vx: 0,
-        vy: 0,
-      });
-    }
-    this.#emit("pinchEnd", { k: this.camera.k });
-  }
-
-  /** Long presses: a pointer held still for LONG_PRESS ms, reported once (and then its release isn't a tap). */
-  #longPresses(now) {
-    for (const ptr of this.pointers.values()) {
-      if (!ptr.tap || ptr.long || now - ptr.start.time < LONG_PRESS) continue;
-      ptr.long = true;
-      this.#emit("longPress", this.#at(ptr.screen, ptr.type));
-    }
-  }
-
-  /** What's at a canvas point, for tap and press events: the node (id, or null), and where, on screen and world. */
-  #at({ x, y }, pointerType) {
-    const world = this.toWorld(x, y);
-    const { index, reference } = this.#pick(world);
-    return {
-      node: index >= 0 ? this.graph.nodes[index].id : null,
-      reference,
-      x,
-      y,
-      world,
-      pointerType,
-    };
-  }
-
-  /**
-   * A tap: sends "tap" (and "doubleTap" for the second of two quick ones in about the same place), selects what was
-   * tapped (if `tapSelects`), and frames the graph on a double tap on empty space.
-   */
-  #tap(ptr, time) {
-    const detail = this.#at(ptr.screen, ptr.type);
-    this.#emit("tap", detail);
-    const last = this.lastTap;
-    if (
-      last &&
-      time - last.time <= DOUBLE_TAP.ms &&
-      Math.hypot(detail.x - last.x, detail.y - last.y) <= DOUBLE_TAP.px &&
-      last.node === detail.node
-    ) {
-      this.lastTap = null;
-      this.#emit("doubleTap", detail);
-      if (detail.node === null) this.fit();
-      return;
-    }
-    this.lastTap = { time, x: detail.x, y: detail.y, node: detail.node };
-    if (!this.tapSelects) return;
-    if (detail.node === null) {
-      if (!ptr.additive) this.select(null);
-    } else
-      this.select(detail.node, { toggle: ptr.additive, add: ptr.additive });
-  }
-
-  /** The hover moves to node `index` (-1: none), found directly or through one of its references. */
   #setHover(index, reference, graph = this.graph) {
     const before = this.hover;
     this.hoverReference = index >= 0 && reference;
@@ -1799,70 +1351,4 @@ export class GraphController {
       });
     this.#changed();
   }
-
-  /** The pointer left the canvas: no more hover (a press in progress carries on). */
-  pointerLeave({ id } = {}) {
-    if (this.pointers.has(id) || this.pointer) return;
-    this.#setHover(-1, false);
-  }
-
-  /**
-   * A wheel or a trackpad at canvas point (x, y). A pinch on a trackpad (ctrl+wheel) zooms about the point, and so
-   * does a mouse wheel; a two-finger scroll on a trackpad pans (see the `wheel` option). Lines and pages
-   * (`deltaMode` 1 and 2) are turned into pixels first, so every browser zooms at the same speed.
-   * @param {{ x: number, y: number, deltaX?: number, deltaY?: number, deltaMode?: number, ctrlKey?: boolean,
-   *   wheelDeltaY?: number, time?: number }} input
-   */
-  wheel({
-    x,
-    y,
-    deltaX = 0,
-    deltaY = 0,
-    deltaMode = 0,
-    ctrlKey = false,
-    wheelDeltaY,
-    time = this.clock(),
-  }) {
-    const unit = deltaMode === 1 ? LINE_PX : deltaMode === 2 ? this.height : 1;
-    const dx = deltaX * unit,
-      dy = deltaY * unit;
-    let zoom = ctrlKey || this.wheelMode === "zoom";
-    if (!ctrlKey && this.wheelMode === "auto") {
-      // One gesture is one kind: decided by its first event (a trackpad's later events can look like a wheel's).
-      if (time - this.wheelBurst.time > WHEEL_BURST)
-        this.wheelBurst.zoom = !looksLikeTrackpad(
-          dx,
-          dy,
-          deltaMode,
-          wheelDeltaY,
-        );
-      this.wheelBurst.time = time;
-      zoom = this.wheelBurst.zoom;
-    }
-    if (zoom) this.zoomBy(Math.exp(-dy * (ctrlKey ? 0.01 : 0.0015)), x, y);
-    else {
-      this.#userCamera();
-      this.camera.x += dx / this.camera.k;
-      this.camera.y += dy / this.camera.k;
-      this.#changed();
-    }
-  }
-
-  /** A double-click at canvas point (x, y): on empty space, frame the graph. (Taps find double taps themselves.) */
-  doubleClick({ x, y }) {
-    if (this.hit(this.toWorld(x, y)) < 0) this.fit();
-  }
-}
-
-/**
- * Whether a wheel event (deltas in px) looks like a trackpad's two-finger scroll rather than a mouse wheel's notch.
- * A sideways scroll is a trackpad's (or a tilt wheel's: panning suits both). Chrome and Safari give a mouse wheel's
- * legacy `wheelDeltaY` as multiples of 120, and a trackpad's as exactly -3 × deltaY; Firefox's mouse wheel scrolls
- * by lines. With nothing to tell by, it's a wheel (zoom, as before).
- */
-export function looksLikeTrackpad(dx, dy, deltaMode, wheelDeltaY) {
-  if (deltaMode !== 0) return false;
-  if (dx !== 0 && Math.abs(dx) >= Math.abs(dy)) return true;
-  if (wheelDeltaY) return Math.abs(wheelDeltaY + 3 * dy) < 1;
-  return false;
 }
