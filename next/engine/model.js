@@ -506,14 +506,8 @@ export class GraphModel {
   #queue = [];
   /** Structure worked out from the edges, for the current structure: null until asked for. */
   #adj = null;
-  /** Edge ends as node indices, kept across appends: valid for edges [0, #endsValid). */
-  #source = new Int32Array(0);
-  #target = new Int32Array(0);
-  #endsValid = 0;
   /** The array-of-arrays views (ends, outgoing, incoming), built from #adj when first read. */
   #views = null;
-  /** Node indices whose label width must be measured again, or null when every width must be (see labelWidths). */
-  #widthsDirty = null;
   /** The nodes and edges, in order: the model's own working lists, changed in place. */
   #nodeList = [];
   #edgeList = [];
@@ -646,21 +640,13 @@ export class GraphModel {
     if (this.#adj) return this.#adj;
     const n = this.#nodeList.length,
       m = this.#edgeList.length;
-    // Edge ends: kept across appends (an appended edge or node moves nobody), worked out for the rest. New arrays
-    // each time: the old ones may still be in use by whoever read the old structure.
-    const valid = Math.min(this.#endsValid, m);
     const source = new Int32Array(m),
       target = new Int32Array(m);
-    source.set(this.#source.subarray(0, valid));
-    target.set(this.#target.subarray(0, valid));
-    for (let i = valid; i < m; i++) {
+    for (let i = 0; i < m; i++) {
       const e = this.#edgeList[i];
       source[i] = this.index.get(e.source);
       target[i] = this.index.get(e.target);
     }
-    this.#source = source;
-    this.#target = target;
-    this.#endsValid = m;
     this.#adj = compressedRows(n, source, target);
     return this.#adj;
   }
@@ -710,28 +696,19 @@ export class GraphModel {
     if (this.#widthsAt === this.#nodesStamp) return this.widths;
     const { labelSize: size, labelMaxWidth: max } = this.opts.node;
     const measure = (text) => this.measure(text, size);
-    const width = (label) => {
+    // A new array (the old one may be in a layout job's hands); every label already measured comes from the cache.
+    const widths = new Float64Array(this.#nodeList.length);
+    for (let i = 0; i < widths.length; i++) {
+      const label = this.#nodeList[i].label;
       let w = this.widthCache.get(label);
       if (w === undefined) {
         w = fitLabel(label, max, measure).width;
         this.widthCache.set(label, w);
       }
-      return w;
-    };
-    const count = this.#nodeList.length;
-    const widths = new Float64Array(count);
-    const dirty = this.#widthsDirty;
-    // A copy (the old array may be in a layout job's hands), with only the labels that changed measured again.
-    if (dirty && this.#widthsAt >= 0) {
-      widths.set(this.widths.subarray(0, Math.min(count, this.widths.length)));
-      for (const i of dirty)
-        if (i < count) widths[i] = width(this.#nodeList[i].label);
-    } else
-      for (let i = 0; i < count; i++)
-        widths[i] = width(this.#nodeList[i].label);
+      widths[i] = w;
+    }
     this.widths = widths;
     this.#widthsAt = this.#nodesStamp;
-    this.#widthsDirty = new Set();
     return widths;
   }
 
@@ -754,7 +731,6 @@ export class GraphModel {
   #forgetWidths() {
     this.widthCache.clear();
     this.#widthsAt = -1;
-    this.#widthsDirty = null;
   }
 
   /**
@@ -1019,9 +995,8 @@ export class GraphModel {
       for (let i = 0; i < nodes.length; i++) this.index.set(nodes[i].id, i);
       this.edgeIndex = new Map();
       for (let i = 0; i < edges.length; i++) this.edgeIndex.set(edges[i].id, i);
-      this.#endsValid = 0;
-      this.#newStructure(true);
-    } else this.#relabel(changedAt);
+      this.#newStructure();
+    }
     change.version = ++this.version;
     return change;
   }
@@ -1071,19 +1046,11 @@ export class GraphModel {
   }
 
   /** Nodes or edges came, went or moved: what was worked out from the old structure is dropped. */
-  #newStructure(renumbered) {
+  #newStructure() {
     this.structureVersion++;
     this.#adj = null;
     this.#views = null;
     this.cache = new Map();
-    if (renumbered) this.#widthsDirty = null;
-  }
-
-  /** Labels changed in place (same nodes, same order): only those need measuring again. */
-  #relabel(nodePairs) {
-    if (!this.#widthsDirty) return;
-    for (const [before, after, i] of nodePairs)
-      if (before.label !== after.label) this.#widthsDirty.add(i);
   }
 
   #update(delta) {
@@ -1247,8 +1214,6 @@ export class GraphModel {
 
     // Nodes: removed ones compacted out (the ones after them renumbered), changed ones swapped, added ones appended.
     // The lists change in place; the frozen copies already handed out keep the old ones.
-    const oldNodeCount = oldNodes.length,
-      oldEdgeCount = oldEdges.length;
     const nodes = this.#nodeList,
       edges = this.#edgeList;
     if (goneNodeAt.length) {
@@ -1279,19 +1244,7 @@ export class GraphModel {
       goneEdgeAt.length > 0 || changedEdges.size > 0 || addedEdges.size > 0,
     );
 
-    if (structure) {
-      // Edge ends stay right for the edges before the first removed one, unless nodes were renumbered.
-      const firstEdge = goneEdgeAt.length ? goneEdgeAt[0] : oldEdgeCount;
-      this.#endsValid = goneNodeAt.length
-        ? 0
-        : Math.min(this.#endsValid, firstEdge);
-      this.#newStructure(goneNodeAt.length > 0);
-      // Appended nodes are measured when widths are next asked for (after a removal, every node is).
-      if (this.#widthsDirty)
-        for (let i = oldNodeCount; i < nodes.length; i++)
-          this.#widthsDirty.add(i);
-    }
-    this.#relabel(nodePairs); // their indices are still right: without a removal nothing was renumbered
+    if (structure) this.#newStructure();
     change.version = ++this.version;
     return change;
   }
