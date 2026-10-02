@@ -9,7 +9,7 @@ import {
   SHAPE_IDS,
   packNodes,
   parseColour,
-} from "../../next/engine/webgl.js";
+} from "../../next/engine/gl-pack.js";
 
 test("every node shape the options offer has a shader id", () => {
   const shapes = NODE_OPTIONS.find((o) => o.key === "shape").choices;

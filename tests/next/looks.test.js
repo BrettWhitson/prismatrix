@@ -706,7 +706,7 @@ test("an edge restyle uploads that edge's pieces alone, the same as packing them
     const pieces = painter.layer.gpu;
     const bytes = step();
     assert.equal(painter.layer.gpu, pieces);
-    const g = pieces.data;
+    const g = pieces;
     const mine = [...g.pieceEdge.subarray(0, g.pieceCount)].filter(
       (i) => i === index,
     ).length;

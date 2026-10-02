@@ -153,7 +153,6 @@ test("pieces: one per edge, one more per layered bend; cross-links that bundle a
   const crossLinks = g.edges.filter((e) => !e.tree);
   const bundled = crossLinks.filter((e) => bundlePath(g, e)).length;
   assert.ok(bundled > 0, "the fixture has a cross-link that bundles");
-  assert.equal(packed.cpu.length, 0);
   assert.equal(packed.pieceCount, g.edges.length - bundled);
   assert.equal(packed.shapedPieces, g.edges.length - crossLinks.length);
   const straight = sceneFor(g, treeLayout(g, {}), { shape: "straight" });
@@ -168,7 +167,6 @@ test("pieces: one per edge, one more per layered bend; cross-links that bundle a
   const m = packPieces(merged, { x: 0, y: 0 });
   const bends = [...routing.bends.values()].reduce((n, b) => n + b.length, 0);
   assert.ok(bends > 0, "the fixture has a long edge");
-  assert.equal(m.cpu.length, 0, "a layered layout's edges all go to the GPU");
   assert.equal(m.pieceCount, g.edges.length + bends);
   assert.equal(m.tipCount, g.edges.length);
   // A bend stop sits at its home, relative to the origin, a share of the way along its edge.
@@ -441,7 +439,6 @@ test("bundles: a span per four control points, the ends repeated; cross-links wi
   const routing = treeLayout(g, {});
   const scene = sceneFor(g, routing, { shape: "step", arrow: "dot" });
   const packed = packPieces(scene, { x: 0, y: 0 });
-  assert.equal(packed.cpu.length, 0, "nothing left to the CPU");
   let spans = 0,
     straight = 0;
   for (let ei = 0; ei < g.edges.length; ei++) {

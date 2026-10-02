@@ -28,6 +28,7 @@ import {
   parseColour,
   patchEdges,
   patchNodes,
+  room,
   runsOf,
 } from "./gl-pack.js";
 import { IconAtlas } from "./gl-icons.js";
@@ -35,6 +36,7 @@ import { iconStore } from "./icons.js";
 import { DEFAULT_THEME } from "./theme.js";
 import {
   BUNDLE_TIP_STRIDE,
+  KINDS,
   PIECE_POINTS,
   PIECE_STRIDE,
   POSITION_COLUMNS,
@@ -68,14 +70,6 @@ import {
   SEGMENT_VERTEX,
   TIP_VERTEX,
 } from "./gl-shaders.js";
-
-export {
-  NODE_STRIDE,
-  SHAPE_IDS,
-  packEdges,
-  packNodes,
-  parseColour,
-} from "./gl-pack.js";
 
 /** The texture unit the icon atlas is bound to (labels use 0, the positions texture 1). */
 const ICON_UNIT = 2;
@@ -343,23 +337,21 @@ class GLLayer {
       ],
       4, // brightness
     );
+    // Edge pieces and bundle spans share a layout (PIECE_STRIDE, SPAN_STRIDE).
+    const pieceLayout = [
+      [0, 4, 0], // stop A, or the span's control nodes
+      [1, 4, 4], // stop B, or how far along the path each control node is
+      [2, 2, 8], // source, target
+      [3, 2, 10], // trims
+      [4, 1, 12], // half-width
+      [5, 3, 13], // colour
+    ];
     // Edge pieces: no corner buffer; each instance is up to PIECE_POINTS - 1 capsules of two triangles (how many
     // is chosen per draw: a straight piece needs one, a radial one more).
-    this.pieces = new InstancedQuads(
-      gl,
-      null,
-      PIECE_STRIDE,
-      [
-        [0, 4, 0], // stop A
-        [1, 4, 4], // stop B
-        [2, 2, 8], // source, target
-        [3, 2, 10], // trims
-        [4, 1, 12], // half-width
-        [5, 3, 13], // colour
-      ],
-      6,
-      { mode: gl.TRIANGLES, vertices: (PIECE_POINTS - 1) * 6 },
-    );
+    this.pieces = new InstancedQuads(gl, null, PIECE_STRIDE, pieceLayout, 6, {
+      mode: gl.TRIANGLES,
+      vertices: (PIECE_POINTS - 1) * 6,
+    });
     this.tips = new InstancedQuads(
       gl,
       corners,
@@ -373,21 +365,10 @@ class GLLayer {
       5,
     );
     // Bundled cross-links: a span of the spline per instance, BUNDLE_STEPS capsules each.
-    this.spans = new InstancedQuads(
-      gl,
-      null,
-      SPAN_STRIDE,
-      [
-        [0, 4, 0], // control nodes
-        [1, 4, 4], // how far along the path each is
-        [2, 2, 8], // source, target
-        [3, 2, 10], // trims
-        [4, 1, 12], // half-width
-        [5, 3, 13], // colour
-      ],
-      6,
-      { mode: gl.TRIANGLES, vertices: BUNDLE_STEPS * 6 },
-    );
+    this.spans = new InstancedQuads(gl, null, SPAN_STRIDE, pieceLayout, 6, {
+      mode: gl.TRIANGLES,
+      vertices: BUNDLE_STEPS * 6,
+    });
     this.bundleTips = new InstancedQuads(
       gl,
       corners,
@@ -402,7 +383,8 @@ class GLLayer {
       6,
     );
     this.positions = { texture: gl.createTexture(), rows: 0, data: null };
-    this.gpu = null; // the GPU's edge pieces, and what they were built for
+    this.gpu = null; // the GPU's edge pieces, spans and ends (packPieces)
+    this.gpuAlpha = {}; // their brightness, by kind
     this.geometry = null; // what the origin and the pieces were built for
     this.origin = { x: 0, y: 0 };
     this.labelProgram = program(gl, LABEL_VERTEX, LABEL_FRAGMENT);
@@ -573,7 +555,7 @@ class GLLayer {
       this.edgeData = packEdges(
         scene,
         this.edgeData,
-        this.gpu ? this.gpu.cpu : null,
+        this.gpu ? [] : null,
         this.origin,
       );
       this.segments.upload(this.edgeData.segments, this.edgeData.segmentCount);
@@ -586,12 +568,9 @@ class GLLayer {
     if (restyle?.edges.length && this.gpu && !regeometry) {
       const dirty = new Uint8Array(edgeCount);
       for (const i of restyle.edges) dirty[i] = 1;
-      const g = this.gpu.data;
-      const runs = restylePieces(scene, g, dirty);
-      this.pieces.uploadRuns(g.pieces, runs.pieces);
-      this.tips.uploadRuns(g.tips, runs.tips);
-      this.spans.uploadRuns(g.spans, runs.spans);
-      this.bundleTips.uploadRuns(g.bundleTips, runs.bundleTips);
+      const runs = restylePieces(scene, this.gpu, dirty);
+      for (const [kind] of KINDS)
+        this[kind].uploadRuns(this.gpu[kind], runs[kind]);
     }
     // Icons that came in since the last frame go into the atlas as their nodes are packed again.
     const iconsArrived = this.iconsArrived;
@@ -653,7 +632,7 @@ class GLLayer {
       edges: edgeCount,
     };
     const e = { ...this.edgeData, bright: this.brightness.bright };
-    const g = this.gpu?.data;
+    const g = this.gpu;
     const gpuCount = g
       ? g.pieceCount + g.tipCount + g.spanCount + g.bundleTipCount
       : 0;
@@ -728,21 +707,14 @@ class GLLayer {
 
   /** The GPU's pieces, spans and ends take each edge's brightness. */
   #shadePieces(perEdge) {
-    const g = this.gpu.data;
-    const fill = (index, count, buffer) => {
-      if (!buffer || buffer.length < count) buffer = new Float32Array(count);
-      for (let i = 0; i < count; i++) buffer[i] = perEdge[index[i]];
-      return buffer;
-    };
-    const a = (this.gpu.alpha ??= {});
-    a.pieces = fill(g.pieceEdge, g.pieceCount, a.pieces);
-    this.pieces.uploadAlpha(a.pieces, g.pieceCount);
-    a.tips = fill(g.tipEdge, g.tipCount, a.tips);
-    this.tips.uploadAlpha(a.tips, g.tipCount);
-    a.spans = fill(g.spanEdge, g.spanCount, a.spans);
-    this.spans.uploadAlpha(a.spans, g.spanCount);
-    a.bundleTips = fill(g.bundleTipEdge, g.bundleTipCount, a.bundleTips);
-    this.bundleTips.uploadAlpha(a.bundleTips, g.bundleTipCount);
+    const g = this.gpu;
+    for (const [kind, edgesOf, countOf] of KINDS) {
+      const edges = g[edgesOf],
+        count = g[countOf];
+      const alpha = (this.gpuAlpha[kind] = room(this.gpuAlpha[kind], count));
+      for (let i = 0; i < count; i++) alpha[i] = perEdge[edges[i]];
+      this[kind].uploadAlpha(alpha, count);
+    }
   }
 
   /**
@@ -756,11 +728,9 @@ class GLLayer {
       return;
     }
     const data = packPieces(scene, this.origin);
-    this.pieces.upload(data.pieces, data.pieceCount);
-    this.tips.upload(data.tips, data.tipCount);
-    this.spans.upload(data.spans, data.spanCount);
-    this.bundleTips.upload(data.bundleTips, data.bundleTipCount);
-    this.gpu = { data, cpu: data.cpu };
+    for (const [kind, , countOf] of KINDS)
+      this[kind].upload(data[kind], data[countOf]);
+    this.gpu = data;
   }
 
   /** Every display node's position and home, relative to the origin, into the positions texture. */
@@ -806,7 +776,7 @@ class GLLayer {
    * ends. Each range is drawn with as many vertices as its shape needs (a straight piece is one capsule).
    */
   #drawGpuEdges(scene) {
-    const g = this.gpu.data;
+    const g = this.gpu;
     const capsules = (shape) =>
       shape === 0 ? 1 : (g.radial ? RADIAL_POINTS : PIECE_POINTS) - 1;
     for (const [first, end, shape] of [
@@ -842,7 +812,7 @@ class GLLayer {
     const { gl } = this;
     const u = this.#use(prog, scene);
     const { routing } = scene;
-    const g = this.gpu.data;
+    const g = this.gpu;
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.positions.texture);
     gl.uniform1i(u.u_positions, 1);
@@ -869,21 +839,19 @@ class GLLayer {
   #drawLabels(scene, fresh) {
     const { gl } = this;
     const { node, camera } = scene;
-    this.pending = false;
     // Text is built for the view plus half a view around it: rebuild when the zoom crosses a raster step or the
     // camera has moved about half a view (measured at the step's zoom, so zooming within a step doesn't).
     const step = Math.ceil(Math.log2(camera.k));
     const cellW = scene.width / 2 ** step / 2,
       cellH = scene.height / 2 ** step / 2;
     const key = `${node.labelSize}|${step}|${Math.floor(camera.x / cellW)}|${Math.floor(camera.y / cellH)}|${textKey(scene)}|${scene.foldVersion}`;
-    if (fresh || this.labelPending || key !== this.labelKey) {
+    if (fresh || this.pending || key !== this.labelKey) {
       const built = this.labelLayer.build(scene, this.origin);
       this.labels.upload(built.data, built.count);
       this.labelGroups = built.groups;
-      this.labelPending = built.pending;
+      this.pending = built.pending;
       this.labelKey = key;
     }
-    this.pending = this.labelPending;
     if (!this.labelGroups.length) return;
     const u = this.#use(this.labelProgram, scene);
     gl.uniform1i(u.u_atlas, 0);

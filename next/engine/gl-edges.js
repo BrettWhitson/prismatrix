@@ -77,14 +77,13 @@ export function gpuEdges(scene) {
  * - bundle spans and their ends: cross-links in a tree or radial layout bundle along the tree (bundlePath in
  *   geometry.js), as a B-spline whose control points are nodes on the path. Each span of the spline is an instance
  *   naming its four control nodes; the shader evaluates it from where they are this frame.
- *
- * `cpu` lists the edges left to the CPU (none: every edge this can pack, the GPU draws).
+
  * @param {import("./controller.js").Scene} scene
  * @param {{ x: number, y: number }} origin
  * @returns {{ pieces: Float32Array, pieceEdge: Int32Array, pieceCount: number, shapedPieces: number,
  *   tips: Float32Array, tipEdge: Int32Array, tipCount: number, shapedTips: number, spans: Float32Array,
  *   spanEdge: Int32Array, spanCount: number, bundleTips: Float32Array, bundleTipEdge: Int32Array,
- *   bundleTipCount: number, cpu: number[], shape: number, axis: number[], radial: boolean, points: number }}
+ *   bundleTipCount: number, shape: number, axis: number[], radial: boolean }}
  */
 export function packPieces(scene, origin) {
   const { graph, routing, edge, looks } = scene;
@@ -245,11 +244,9 @@ export function packPieces(scene, origin) {
     bundleTips,
     bundleTipEdge,
     bundleTipCount: b,
-    cpu: [],
     shape: SHAPES[edge.shape],
     axis: AXIS[routing.direction] ?? AXIS.TB,
     radial: routing.kind === "radial",
-    points: routing.kind === "radial" ? RADIAL_POINTS : PIECE_POINTS,
   };
 }
 
@@ -303,6 +300,18 @@ export function packPositions(scene, origin, out) {
 }
 
 /**
+ * The kinds of GPU edge instance: each one's instances in packPieces' data (and its buffer on the WebGL layer), the
+ * keys of their edges and of their count, its stride, and where its half-width (-1: none) and colour are.
+ * @type {[string, string, string, number, number, number][]}
+ */
+export const KINDS = [
+  ["pieces", "pieceEdge", "pieceCount", PIECE_STRIDE, 12, 13],
+  ["tips", "tipEdge", "tipCount", TIP_STRIDE, -1, 9],
+  ["spans", "spanEdge", "spanCount", SPAN_STRIDE, 12, 13],
+  ["bundleTips", "bundleTipEdge", "bundleTipCount", BUNDLE_TIP_STRIDE, -1, 13],
+];
+
+/**
  * New looks for some edges (`dirty`: a flag per edge index) in GPU data from packPieces, in place: their colour and
  * half-width, all a restyle can change without a new layout. Returns, for each kind of instance (pieces, tips,
  * spans, bundleTips), the runs [first, end) that changed, for uploading just those.
@@ -314,32 +323,11 @@ export function packPositions(scene, origin, out) {
 export function restylePieces(scene, data, dirty) {
   const { looks } = scene;
   const colour = palette();
-  /** @type {[string, Float32Array, Int32Array, number, number, number, number][]} */
-  const kinds = [
-    // kind, instances, their edges, count, stride, half-width at (-1: none), colour at
-    [
-      "pieces",
-      data.pieces,
-      data.pieceEdge,
-      data.pieceCount,
-      PIECE_STRIDE,
-      12,
-      13,
-    ],
-    ["tips", data.tips, data.tipEdge, data.tipCount, TIP_STRIDE, -1, 9],
-    ["spans", data.spans, data.spanEdge, data.spanCount, SPAN_STRIDE, 12, 13],
-    [
-      "bundleTips",
-      data.bundleTips,
-      data.bundleTipEdge,
-      data.bundleTipCount,
-      BUNDLE_TIP_STRIDE,
-      -1,
-      13,
-    ],
-  ];
   const out = {};
-  for (const [kind, values, edges, count, stride, half, at] of kinds) {
+  for (const [kind, edgesOf, countOf, stride, half, at] of KINDS) {
+    const values = data[kind],
+      edges = data[edgesOf],
+      count = data[countOf];
     const changed = [];
     for (let i = 0; i < count; i++) {
       const e = edges[i];

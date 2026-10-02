@@ -206,7 +206,6 @@ export class LabelLayer {
     this.current = null;
     this.previous = null;
     this.data = new Float32Array(0);
-    this.pending = false; // text still waiting to be drawn into the atlas
     const measuring = document.createElement("canvas").getContext("2d");
     const widths = new Map();
     this.fit = textFitter((text, size) => {
@@ -316,7 +315,6 @@ export class LabelLayer {
       this.previous.dispose();
       this.previous = null;
     }
-    this.pending = missing;
     return { data, groups, count: at, pending: missing };
   }
 
