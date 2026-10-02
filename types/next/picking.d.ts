@@ -55,10 +55,9 @@ export declare function lineageMask(
 ): Uint8Array;
 /** The last few lineages worked out, for one working graph (hovering back and forth costs nothing). */
 export declare class LineageCache {
-  size: number;
   graph: any;
   /** @type {Map<number, Uint8Array>} newest last */
   masks: Map<number, Uint8Array>;
-  constructor(size?: number);
+  constructor();
   get(graph: any, index: any): Uint8Array<ArrayBufferLike>;
 }

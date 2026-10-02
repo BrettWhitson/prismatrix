@@ -1,5 +1,3 @@
-/** How big a reference is drawn, relative to its ingredient (and never bigger than the room the layout kept). */
-export declare const REFERENCE_SCALE = 0.7;
 /** A reference's chip radius: its ingredient's, scaled down, within the room the layout kept for it. */
 export declare function referenceRadius(
   ref: any,

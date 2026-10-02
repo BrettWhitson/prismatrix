@@ -61,11 +61,11 @@ export declare class Renderer {
   controller: import("./controller.js").GraphController | null;
   frame: number;
   fps: number;
-  frameRate: any;
   /** A label's width at a font size: the model measures its labels with this once a controller connects them. */
   measureText: (text: any, size: any) => number;
   touchAction: string;
   resizer: ResizeObserver;
+  frameRate: string;
   channel: MessageChannel;
   unbind: () => void;
   /**
@@ -100,7 +100,7 @@ export declare class Renderer {
    * show nothing, but the frame rate shows how much headroom the engine has. A hidden page always waits for the
    * display.
    */
-  setFrameRate(mode: any): any;
+  setFrameRate(mode: any): string;
   /** Something changed: draw a frame soon (the controller calls this). */
   invalidate(): void;
 }

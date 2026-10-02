@@ -124,5 +124,3 @@ export type EdgeOptions = {
 export declare const NODE_OPTIONS: import("./schema.js").OptionSpec[];
 /** @type {import("./schema.js").OptionSpec[]} */
 export declare const EDGE_OPTIONS: import("./schema.js").OptionSpec[];
-/** Colours by depth, then wrapping. Picked to read on the dark background. */
-export declare const PALETTE: string[];

@@ -21,8 +21,27 @@ export declare const NODE_STRIDE = 19;
 export declare const SEGMENT_STRIDE = 9;
 /** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour r, g, b. */
 export declare const END_STRIDE = 9;
-/** "#rrggbb" to [r, g, b] in 0–1. */
-export declare function parseColour(hex: any): number[];
+/**
+ * "#rrggbb" to [r, g, b] in 0–1.
+ * @returns {[number, number, number]}
+ */
+export declare function parseColour(hex: any): [number, number, number];
+/**
+ * A typed array (Float32Array unless `Type` says otherwise) of at least `n`: `old` when it's big enough, else a
+ * bigger one holding what `old` held.
+ * @template {Float32Array | Int32Array} T
+ * @param {T | null | undefined} old
+ * @param {number} n
+ * @param {any} [Type]
+ * @returns {T}
+ */
+export declare function room<T extends Float32Array | Int32Array>(
+  old: T | null | undefined,
+  n: number,
+  Type?: any,
+): T;
+/** A cache of parsed colours, so each distinct colour is parsed once per frame. */
+export declare function palette(): (hex: any) => any;
 export type IconAt = (source: any) => {
   u0: number;
   v0: number;
@@ -67,17 +86,16 @@ export declare function patchNodes(
   iconAt?: IconAt | null,
 ): void;
 /**
- * The selected nodes (scene.selected), packed as nodes are, for the halo shader: a handful of instances, refilled
- * when the selection, the shading or the positions change (nothing else is rebuilt for a selection).
+ * The selected nodes (scene.selected), for the halo shader: their rows of `nodeData` (from packNodes), a handful of
+ * instances, refilled when the selection, the shading or the positions change (nothing else is rebuilt for a
+ * selection).
+ * @param {Float32Array} nodeData
  * @returns {{ data: Float32Array, count: number }}
  */
 export declare function packHalos(
   scene: any,
-  out: any,
-  origin?: Readonly<{
-    x: number;
-    y: number;
-  }>,
+  nodeData: Float32Array,
+  out?: any,
 ): {
   data: Float32Array;
   count: number;

@@ -217,16 +217,9 @@ export declare function patchLooks(
   nodes: Int32Array;
   edges: Int32Array;
 };
-/** Node looks only (radius, fill, shape), for callers that don't draw edges. */
-export declare function nodeLooks(graph: any, node: any): Looks;
 /**
- * The node and everything above and below it: every node it can be reached from and every node it reaches, along
- * any edge (so in a merged tree a shared ingredient lights up with every recipe that uses it).
- */
-export declare function lineage(graph: any, index: any): Set<any>;
-/**
- * Draw one whole frame on one 2D canvas: background, edges, nodes, labels. Renderers that split the scene across
- * layers (see webgl.js) call the parts below themselves.
+ * Draw one whole frame on one 2D canvas (the Canvas 2D painter's): background, edges, nodes, selection halos, the
+ * reference chips' link glyphs, text.
  * @param {CanvasRenderingContext2D} ctx
  * @param {import("./controller.js").Scene} scene
  */
@@ -238,8 +231,6 @@ export declare function drawScene(
 /** A selected node's halo: a ring this many CSS px outside its shape, this many wide, in the node's colour. */
 export declare const HALO_GAP = 3;
 export declare const HALO_WIDTH = 2;
-/** Whether node `i` is selected (display-only nodes past the real ones never are). */
-export declare function isSelected(scene: any, i: any): boolean;
 /**
  * A halo round each selected node: the exact outline of its shape pushed out by the gap (so corners come out
  * round), stroked. The WebGL painter draws the same ring as a distance field (HALO_FRAGMENT).
@@ -268,35 +259,10 @@ export declare function nodeAlpha(scene: any, i: any): number;
 export declare function labelAlpha(scene: any, i: any): number;
 export declare function edgeAlpha(scene: any, e: any): number;
 /**
- * Edges go onto their own layer at full strength, and the layer onto the scene at the edge's brightness, so where
- * edges overlap (siblings sharing a trunk, the joints of a tapered edge) they don't add up to brighter lines. Edges
- * at different brightnesses (dimmed by hover, fading in) get a layer pass per brightness step. Fully opaque edges at
- * full brightness skip the layer.
- */
-export declare function drawEdges(ctx: any, scene: any): void;
-/**
  * Every node: its fill, its icon (from `icons`, once loaded, clipped to the shape), its border, its outline. Icons
  * still loading leave the node as it is without one.
  */
 export declare function drawNodes(ctx: any, scene: any, icons?: any): void;
-/**
- * Whether labels show at this zoom. Labels with room kept for them (label collision) show until their text is
- * smaller than LABEL_MIN_PX (a smudge, and with a whole big graph in view, tens of thousands of them to rasterise);
- * others drop out when too small to read (6 px).
- */
-export declare function labelsShown(node: any, camera: any): boolean;
-/** Text smaller than this many CSS px is never drawn. */
-export declare const LABEL_MIN_PX = 2;
-/**
- * All the text (labels.js plans it: node and edge labels, counts, badges, pinned labels), each piece with its halo
- * (or pill) under it, for what's on or near the screen.
- */
-export declare function drawLabels(ctx: any, scene: any): void;
-/**
- * The link glyph inside each reference chip big enough to show one: two interlocked links, turned 45°, in the
- * chip's colour (references.js, LINK). The WebGL painter draws the same as a distance field.
- */
-export declare function drawGlyphs(ctx: any, scene: any): void;
 /** The Canvas 2D painter: everything on the renderer's canvas. Also the reference the WebGL painter is checked against. */
 export declare class CanvasPainter {
   name: string;

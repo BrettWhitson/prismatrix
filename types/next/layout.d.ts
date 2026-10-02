@@ -2,7 +2,7 @@ import { GraphModel } from "./model.js";
 export { GraphModel, GRAPH_FORMAT, GRAPH_VERSION } from "./model.js";
 export { LAYOUTS } from "./layouts.js";
 export { NODE_OPTIONS, EDGE_OPTIONS } from "./style.js";
-export { defaultsOf, resolve } from "./schema.js";
+export { resolve } from "./schema.js";
 export type LayoutGraphOptions = {
   /**
    * "tree" (the default), "merged" or "radial"

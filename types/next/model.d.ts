@@ -1,7 +1,6 @@
+import { isHex } from "./schema.js";
 export declare const GRAPH_FORMAT = "prismatrix-graph";
 export declare const GRAPH_VERSION = 1;
-/** Node options that change how much room a node takes: changing one lays the graph out again. */
-export declare const SIZE_KEYS: string[];
 /** Text width without a browser: about right for a sans-serif face. Renderers measure for real. */
 export declare const roughMeasure: (text: any, size: any) => number;
 export type ModelNode = {
@@ -261,7 +260,6 @@ export type Adjacency = {
    */
   inEdges: Int32Array;
 };
-declare const colour: (v: any) => boolean;
 /**
  * An icon: an image's URL, or an image already in hand (an HTMLImageElement, ImageBitmap, canvas: anything with a
  * width and a height that a canvas can draw). Only a URL survives toJSON.
@@ -269,23 +267,22 @@ declare const colour: (v: any) => boolean;
 declare const icon: (v: any) => boolean;
 /** What a node's `style` may set, and what each value must be. */
 export declare const NODE_STYLE: {
-  color: typeof colour;
+  color: typeof isHex;
   size: (v: any) => boolean;
   shape: (v: any) => boolean;
-  stroke: typeof colour;
+  stroke: typeof isHex;
   strokeWidth: (v: any) => boolean;
   icon: typeof icon;
   badge: (v: any) => boolean;
 };
 /** What an edge's `style` may set. */
 export declare const EDGE_STYLE: {
-  color: typeof colour;
+  color: typeof isHex;
   width: (v: any) => boolean;
 };
 /**
- * Deep equality by value, as structuredClone sees values: NaN equals NaN, dates by time, regular expressions by
- * source and flags, arrays and typed arrays element by element, maps and sets by their entries, objects by their own
- * keys. Cycles are followed once.
+ * Deep equality by value, for JSON-like data: NaN equals NaN, arrays element by element, plain objects by their own
+ * keys. Anything else (a date, a map, an image) is only the same as itself. Cycles are followed once.
  * @param {any} a
  * @param {any} b
  * @param {Map<object, object>} [seen] pairs already being compared (for cycles)
@@ -492,21 +489,6 @@ export declare class GraphModel {
    */
   stats(): any;
   /**
-   * What differs from `previous` (another model, or JSON) to this model, by id: nodes and edges added, removed,
-   * kept, and kept nodes whose label, style or data differ.
-   * @param {GraphModel | GraphJSON} previous
-   * @returns {{ nodesAdded: string[], nodesRemoved: string[], nodesKept: string[], nodesChanged: string[],
-   *   edgesAdded: string[], edgesRemoved: string[] }}
-   */
-  diff(previous: GraphModel | GraphJSON): {
-    nodesAdded: string[];
-    nodesRemoved: string[];
-    nodesKept: string[];
-    nodesChanged: string[];
-    edgesAdded: string[];
-    edgesRemoved: string[];
-  };
-  /**
    * The model as prismatrix-graph JSON: GraphModel.from(model.toJSON()) gives an equal model.
    * @returns {GraphJSON}
    */
@@ -545,5 +527,25 @@ export declare function forestOf(
   descendants: Int32Array<ArrayBuffer>;
   tree: Uint8Array<ArrayBuffer>;
   maxDepth: number;
+};
+/**
+ * A structure read as a DAG (see GraphModel.dag): edges that close a cycle, found depth-first from `roots` (then from
+ * any node still unvisited), are back edges; with them reversed, a topological order and each node's longest path
+ * from a source. For a model, and for a merged layout of a working graph (layered.js).
+ * @param {number} count nodes
+ * @param {Adjacency} adjacency
+ * @param {Iterable<number>} roots where the search starts, in order (the forest's roots)
+ * @returns {{ back: Uint8Array, order: number[], longest: Int32Array, sources: number[], sinks: number[] }}
+ */
+export declare function dagOf(
+  count: number,
+  { source, target, outStart, outEdges }: Adjacency,
+  roots: Iterable<number>,
+): {
+  back: Uint8Array;
+  order: number[];
+  longest: Int32Array;
+  sources: number[];
+  sinks: number[];
 };
 export {};

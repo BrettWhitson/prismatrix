@@ -53,7 +53,7 @@ export type ThemeInput =
  *   name, or colours over a preset (`base`, "dark" by default)
  */
 /**
- * The theme presets. Every palette colour has at least 4:1 contrast with its background (see contrast).
+ * The theme presets. Every palette colour has at least 4:1 contrast (WCAG 2) with its background.
  * @type {Readonly<{ dark: Readonly<Theme>, light: Readonly<Theme> }>}
  */
 export declare const THEMES: Readonly<{
@@ -79,7 +79,3 @@ export declare function resolveTheme(
   theme: ThemeInput | null | undefined,
   warn?: (message: string) => void,
 ): Readonly<Theme>;
-/** A colour's relative luminance (WCAG 2), 0 for black to 1 for white. */
-export declare function luminance(colour: any): number;
-/** The contrast ratio between two colours (WCAG 2): 1 for the same, 21 for black on white. */
-export declare function contrast(a: any, b: any): number;

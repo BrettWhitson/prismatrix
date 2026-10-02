@@ -5,10 +5,6 @@ import { Layouter } from "./layouter.js";
 import { LineageCache } from "./picking.js";
 import { Gestures } from "./gestures.js";
 import * as cam from "./camera.js";
-export { alongRings } from "./transitions.js";
-export { looksLikeTrackpad } from "./gestures.js";
-/** The dark theme's background (themes: theme.js). */
-export declare const BACKGROUND: string;
 export type TickResult = {
   /**
    * something is still moving or fading: keep ticking

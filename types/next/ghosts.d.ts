@@ -22,10 +22,6 @@ export type Ghost = {
    */
   up: Ancestry | null;
   /**
-   * the same, as a list of ids (made when read)
-   */
-  ancestors: string[];
-  /**
    * how many ancestors it has
    */
   depth: number;
@@ -50,12 +46,9 @@ export type Ghost = {
  * @property {number} x0         where it was when it left
  * @property {number} y0
  * @property {Ancestry | null} up its ancestors in the graph it left, from its parent up to its root
- * @property {string[]} ancestors the same, as a list of ids (made when read)
  * @property {number} depth      how many ancestors it has
  * @property {number} start      when it left (ms, the view's clock)
  */
-/** The ids along an ancestry chain, nearest first. */
-export declare function ancestorIds(up: any): any[];
 /**
  * The nodes of `previous` that aren't in `next`, as ghosts starting at `now`. `looks` are previous's radius and
  * fill per node. Linear in the nodes that left: each one's ancestry is its parent's with one link added, made once.
@@ -69,8 +62,7 @@ export declare function departures(
 ): Ghost[];
 /**
  * Where a ghost folds to: its nearest ancestor that `graph` still has (a node), or that is itself a ghost still
- * leaving (a ghost id), or nothing (it fades where it is). Ghosts carry their ancestors as a chain (`up`); a plain
- * list of ids (`ancestors`) works too.
+ * leaving (a ghost id), or nothing (it fades where it is).
  * @returns {{ node: import("./render.js").DisplayNode, ghost?: undefined } | { ghost: string, node?: undefined } | null}
  */
 export declare function foldTarget(

@@ -35,30 +35,6 @@ export declare class Node {
   set homeY(v: any);
   get labelAngle(): any;
   set labelAngle(v: any);
-  get radius(): any;
-  set radius(v: any);
-  /** Its footprint relative to its centre: { x0, y0, x1, y1 } (a copy; set a new one to change it). */
-  get box(): {
-    x0: any;
-    y0: any;
-    x1: any;
-    y1: any;
-  };
-  set box(b: { x0: any; y0: any; x1: any; y1: any });
-  /** A plain copy, for the console and logs. */
-  toJSON(): {
-    id: any;
-    label: any;
-    index: any;
-    x: any;
-    y: any;
-    vx: any;
-    vy: any;
-    homeX: any;
-    homeY: any;
-    depth: any;
-    parent: any;
-  };
 }
 export type Edge = {
   /**
@@ -152,28 +128,10 @@ export declare class Graph {
   order: number[];
   maxDepth: any;
   /**
-   * @param {GraphModel | { id: string | number, label?: string, data?: object }[]} [nodes] a model, or nodes
-   * @param {{ source: string | number, target: string | number, id?: string, data?: object }[] | null} [edges]
-   * @param {Part | null} [part] with a model: show only this part of it (null: all of it)
+   * @param {GraphModel} [model] (an empty one by default)
+   * @param {Part | null} [part] show only this part of it (null: all of it)
    */
-  constructor(
-    nodes?:
-      | GraphModel
-      | {
-          id: string | number;
-          label?: string;
-          data?: object;
-        }[],
-    edges?:
-      | {
-          source: string | number;
-          target: string | number;
-          id?: string;
-          data?: object;
-        }[]
-      | null,
-    part?: Part | null,
-  );
+  constructor(model?: GraphModel, part?: Part | null);
   /** Model node `i`'s index in this graph, or -1 when it isn't shown. */
   indexOf(i: any): any;
   /** Model edge `i`'s index in this graph, or -1 when it isn't shown. */
@@ -185,11 +143,4 @@ export declare class Graph {
    * edges in the same order, so rows and indices still line up.
    */
   refresh(): void;
-  /** The bounding box of the live positions, or of the homes. */
-  bounds(homes?: boolean): {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-  };
 }

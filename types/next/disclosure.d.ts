@@ -31,15 +31,6 @@ export type Disclosure = {
  * @property {boolean} all        everything is shown (nothing collapsed, or nothing collapsed hides anything)
  */
 /**
- * Per model node, 1 when it's in `collapsed` and has edges out (only those fold anything away).
- * @param {import("./model.js").GraphModel} model
- * @param {Iterable<string>} collapsed ids
- */
-export declare function foldFlags(
-  model: import("./model.js").GraphModel,
-  collapsed: Iterable<string>,
-): Uint8Array<ArrayBuffer>;
-/**
  * What a view of `model` shows with the nodes in `collapsed` collapsed. Breadth first from the roots, never past a
  * collapsed node: linear in the model's size.
  * @param {import("./model.js").GraphModel} model

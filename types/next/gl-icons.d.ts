@@ -8,18 +8,15 @@ export declare class IconAtlas {
   texture: WebGLTexture;
   side: number;
   layers: number;
-  version: number;
   moved: number;
   mipsDirty: boolean;
   full: boolean;
-  scratch:
-    | OffscreenCanvas
-    | (HTMLCanvasElement & {
-        width: number;
-        height: number;
-      });
+  scratch: HTMLCanvasElement & {
+    width: number;
+    height: number;
+  };
   empty: WebGLTexture;
-  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+  ctx: CanvasRenderingContext2D;
   /**
    * @param {WebGL2RenderingContext} gl
    * @param {import("./icons.js").IconStore} store
@@ -28,8 +25,6 @@ export declare class IconAtlas {
     gl: WebGL2RenderingContext,
     store: import("./icons.js").IconStore,
   );
-  /** Icons in the atlas. */
-  get count(): number;
   /**
    * Where `source`'s icon is in the atlas (copying it in if it has just loaded), or null: no icon, still loading,
    * failed, or no room left.

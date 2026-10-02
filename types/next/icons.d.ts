@@ -40,17 +40,6 @@ export type IconEntry = {
   width: number;
   height: number;
 };
-/**
- * @typedef {object} IconEntry
- * @property {number} id       small and unique in its store (atlases key on it)
- * @property {"loading" | "ready" | "failed"} state
- * @property {any} source      the URL or image it was asked for by
- * @property {any} image       something a canvas can draw (once ready)
- * @property {number} width    natural size, px (once ready)
- * @property {number} height
- */
-/** Load an image by URL, for drawing on canvases and into textures (so it's asked for with CORS). */
-export declare function loadImage(url: any): Promise<HTMLImageElement>;
 /** Icons by URL (or image object), each loaded once, at most `concurrency` at a time; listeners hear each arrive. */
 export declare class IconStore {
   #private;
@@ -82,13 +71,9 @@ export declare class IconStore {
   get(source: any): IconEntry | null;
   /** Call `listener(entry)` whenever an icon finishes loading (or fails). Returns a function that stops it. */
   onReady(listener: any): () => boolean;
-  /** How many icons are waiting or loading. */
-  get pending(): number;
 }
 /** The store painters share unless they're given their own: an icon is loaded once for every view on the page. */
 export declare function iconStore(): any;
-/** Pixels an icon is kept at in an atlas (each way), and the border of repeated edge pixels around it. */
-export declare const ICON_CELL = 64;
 export declare const ICON_GUTTER = 4;
 /** A cell with its border. */
 export declare const ICON_SLOT: number;
@@ -114,15 +99,14 @@ export declare class AtlasPacker {
     side?: number;
   });
   /**
-   * The next free cell: its page (`layer`) and column and row, and how the atlas grew to make room for it ("page":
-   * pages are bigger, "layer": one more page, null: no change). Null when the atlas is full.
-   * @returns {{ layer: number, x: number, y: number, grew: "page" | "layer" | null } | null}
+   * The next free cell: its page (`layer`) and column and row, the page doubling or a page added first when the
+   * last is full. Null when the atlas is full.
+   * @returns {{ layer: number, x: number, y: number } | null}
    */
   place(): {
     layer: number;
     x: number;
     y: number;
-    grew: "page" | "layer" | null;
   } | null;
 }
 /**

@@ -1,5 +1,3 @@
-export declare const MAX_ZOOM = 8;
-export declare const MIN_ZOOM = 0.05;
 export type Camera = {
   x: number;
   y: number;
@@ -48,22 +46,6 @@ export declare function footprints(
   m: import("./matrix.js").Matrix,
   homes: boolean,
 ): Box;
-/** The scale that fits `box` (world px), with padding, in a `width` × `height` view: at most FIT_MAX. */
-export declare function fitScale(
-  {
-    minX,
-    minY,
-    maxX,
-    maxY,
-  }: {
-    maxX: any;
-    maxY: any;
-    minX: any;
-    minY: any;
-  },
-  width: any,
-  height: any,
-): number;
 /**
  * A camera framing `box`. However wide the graph, it fits: no floor but a tiny one that keeps the arithmetic finite.
  * @returns {Camera}

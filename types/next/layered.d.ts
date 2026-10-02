@@ -54,6 +54,16 @@ export declare function layeredLayout(
     optimal: boolean;
   };
 };
+/**
+ * The shift that moves the first `count` positions least in all (L1) towards where they were: the median of
+ * `now[v] - was[v]` over those with a `was` (NaN: none). `fallback` when none has.
+ */
+export declare function medianShift(
+  now: any,
+  was: any,
+  count: any,
+  fallback: any,
+): any;
 export type Reference = {
   /**
    * the edge it stands in for

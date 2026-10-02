@@ -49,18 +49,25 @@ export declare const BUNDLE_STRENGTH = 0.85;
 export declare function bundlePath(graph: any, e: any): number[] | null;
 /**
  * The route of a cross-link (an edge that isn't a parent → child link in the forest): along the tree path between
- * its ends (bundlePath), as a B-spline pulled towards that path by `strength` (hierarchical edge bundling, Holten
- * 2006). Cross-links that share an ancestor bundle together along the tree instead of cutting across it. Ends in
- * different trees, or a path with nothing between them, go straight.
+ * its ends (bundlePath), as a B-spline pulled towards that path by BUNDLE_STRENGTH (hierarchical edge bundling,
+ * Holten 2006). Cross-links that share an ancestor bundle together along the tree instead of cutting across it. Ends
+ * in different trees, or a path with nothing between them, go straight.
  * @returns {number[]} flat x, y pairs
  */
-export declare function bundledPoints(
-  graph: any,
-  e: any,
-  strength?: number,
-): number[];
+export declare function bundledPoints(graph: any, e: any): number[];
 /** A uniform cubic B-spline through `control`, clamped (the first and last points repeated) so it starts and ends on them. */
 export declare function bspline(control: any): any[];
+/**
+ * A point of a uniform cubic B-spline span with control points p0–p3 (each [x, y]), at t (0–1): the same sum as the
+ * bundle shader's.
+ */
+export declare function splineAt(
+  t: any,
+  p0: any,
+  p1: any,
+  p2: any,
+  p3: any,
+): number[];
 /**
  * The route of edge `e` in `graph`: a cross-link bundles along the tree (unless edges are straight), anything else
  * follows the edge shape.
@@ -71,18 +78,6 @@ export declare function edgeRoute(
   shape: any,
   e: any,
   junction?: any,
-): any[];
-/**
- * A layered layout's edge: through its bend points (one per layer it crosses). Bends were placed for the nodes'
- * homes; when the ends move (a drag, physics), the bends move with them, each in proportion to how far along the
- * edge it is. Straight and fan draw a polyline; step and curve repeat the tree's step or curve between each pair.
- */
-export declare function layeredPoints(
-  routing: any,
-  shape: any,
-  e: any,
-  s: any,
-  t: any,
 ): any[];
 /**
  * How far a radial step edge has turned into a curve, 0 (a step round the ring) to 1 (a smooth curve). A step
@@ -104,22 +99,23 @@ export declare function stepCurveWeight(
   morphing?: boolean,
 ): number;
 /**
- * Points `pts` (flat x, y) slid `w` of the way towards a cubic from p0 to p3 (controls p1, p2): each point to the
- * curve's point as far along it as the point is along `pts`.
- */
-export declare function blendTowardsCubic(
-  pts: any,
-  p0: any,
-  p1: any,
-  p2: any,
-  p3: any,
-  w: any,
-): any[];
-/**
  * Cut `from` off the start and `to` off the end of a polyline, measured along it. Returns null when the cuts
  * meet (the nodes overlap).
  */
 export declare function trim(pts: any, from: any, to: any): any[];
+/** A polyline's length (flat x, y pairs). */
+export declare function pathLength(pts: any): number;
+/**
+ * Edge `ei` of the scene's graph as painters draw it: its route (through its parent's fan junction when `junctions`,
+ * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target and of its
+ * end (an arrow or a dot). Null when nothing is left.
+ */
+export declare function trimmedRoute(
+  scene: any,
+  ei: any,
+  junctions: any,
+  starts: any,
+): any[];
 /**
  * Where each edge starts, as a distance from its source's centre (what `trim` cuts off its route's start, and the
  * GPU pieces' first trim): off the node, and past the node's own label when the edge would leave through it (labels

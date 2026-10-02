@@ -23,7 +23,6 @@ export type PointerInput = {
   shiftKey?: boolean;
   ctrlKey?: boolean;
   metaKey?: boolean;
-  altKey?: boolean;
 };
 export type WheelInput = {
   x: number;
@@ -151,7 +150,6 @@ export type GestureHost = {
  * @property {boolean} [shiftKey]
  * @property {boolean} [ctrlKey]
  * @property {boolean} [metaKey]
- * @property {boolean} [altKey]
  *
  * @typedef {object} WheelInput
  * @property {number} x
@@ -271,15 +269,3 @@ export declare class Gestures {
     time,
   }: WheelInput): void;
 }
-/**
- * Whether a wheel event (deltas in px) looks like a trackpad's two-finger scroll rather than a mouse wheel's notch.
- * A sideways scroll is a trackpad's (or a tilt wheel's: panning suits both). Chrome and Safari give a mouse wheel's
- * legacy `wheelDeltaY` as multiples of 120, and a trackpad's as exactly -3 × deltaY; Firefox's mouse wheel scrolls
- * by lines. With nothing to tell by, it's a wheel (zoom, as before).
- */
-export declare function looksLikeTrackpad(
-  dx: any,
-  dy: any,
-  deltaMode: any,
-  wheelDeltaY: any,
-): boolean;

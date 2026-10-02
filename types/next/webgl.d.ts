@@ -1,12 +1,5 @@
 import { LabelLayer } from "./gl-text.js";
 import { IconAtlas } from "./gl-icons.js";
-export {
-  NODE_STRIDE,
-  SHAPE_IDS,
-  packEdges,
-  packNodes,
-  parseColour,
-} from "./gl-pack.js";
 /**
  * Which nodes and edges to restyle in place since style version `from` (the restyle log the view keeps on its
  * scene: `restyles`, newest last, each `{ version, nodes, edges }`), or null when that can't be told (a restyle of
@@ -64,11 +57,20 @@ declare class InstancedQuads {
   /** Draw instances [first, end), each of `vertices` vertices (default: as constructed). */
   draw(first: any, end: any, vertices?: number): void;
 }
-/** Background, edges and nodes, drawn with WebGL2 on one canvas. */
-declare class GLLayer {
+/**
+ * The WebGL painter for a renderer's canvas: background, edges, nodes and text, drawn with WebGL2 on a canvas of its
+ * own (glCanvas) beneath the renderer's, which stays on top to take the pointer.
+ */
+export declare class WebGLPainter {
   #private;
-  canvas: any;
-  icons: any;
+  name: string;
+  /** Set by the renderer: asks for a frame (an icon came in). */
+  wake: any;
+  top: HTMLCanvasElement;
+  topCtx: CanvasRenderingContext2D;
+  glCanvas: HTMLCanvasElement;
+  previousPosition: string;
+  icons: import("./icons.js").IconStore;
   lost: boolean;
   edgeData: {
     segments: Float32Array;
@@ -80,9 +82,11 @@ declare class GLLayer {
   };
   nodeData: any;
   scene: any;
-  timing: boolean;
+  /** `{ edges, nodes, labels, total }` GPU milliseconds while `timing` is on (null until the first results). */
   gpuTimes: any;
-  gl: any;
+  unlisten: () => boolean;
+  iconsArrived: boolean;
+  gl: WebGL2RenderingContext;
   nodeProgram: {
     program: any;
     uniforms: {};
@@ -133,34 +137,30 @@ declare class GLLayer {
   spans: InstancedQuads;
   bundleTips: InstancedQuads;
   positions: {
-    texture: any;
+    texture: WebGLTexture;
     rows: number;
     data: any;
   };
   gpu: {
-    data: {
-      pieces: Float32Array;
-      pieceEdge: Int32Array;
-      pieceCount: number;
-      shapedPieces: number;
-      tips: Float32Array;
-      tipEdge: Int32Array;
-      tipCount: number;
-      shapedTips: number;
-      spans: Float32Array;
-      spanEdge: Int32Array;
-      spanCount: number;
-      bundleTips: Float32Array;
-      bundleTipEdge: Int32Array;
-      bundleTipCount: number;
-      cpu: number[];
-      shape: number;
-      axis: number[];
-      radial: boolean;
-      points: number;
-    };
-    cpu: number[];
+    pieces: Float32Array;
+    pieceEdge: Int32Array;
+    pieceCount: number;
+    shapedPieces: number;
+    tips: Float32Array;
+    tipEdge: Int32Array;
+    tipCount: number;
+    shapedTips: number;
+    spans: Float32Array;
+    spanEdge: Int32Array;
+    spanCount: number;
+    bundleTips: Float32Array;
+    bundleTipEdge: Int32Array;
+    bundleTipCount: number;
+    shape: number;
+    axis: number[];
+    radial: boolean;
   };
+  gpuAlpha: {};
   geometry: any;
   origin:
     | {
@@ -195,13 +195,8 @@ declare class GLLayer {
       }[];
   labelKey: string;
   pending: boolean;
-  emptyVao: any;
-  target: {
-    width: any;
-    height: any;
-    texture: any;
-    framebuffer: any;
-  };
+  emptyVao: WebGLVertexArrayObject;
+  target: any;
   built: {
     version: any;
     shadeVersion: any;
@@ -217,28 +212,8 @@ declare class GLLayer {
     pending: any[];
     frame: any;
   };
-  iconsArrived: boolean;
-  brightness: any;
-  labelPending: boolean;
-  constructor(canvas: any, icons?: any);
-  draw(scene: any): void;
-  dispose(): void;
-}
-/**
- * The WebGL painter for a renderer's canvas. It adds a GL canvas beneath the renderer's own, which stays on top to
- * take the pointer.
- */
-export declare class WebGLPainter {
-  name: string;
-  /** Set by the renderer: asks for a frame (an icon came in). */
-  wake: any;
-  top: HTMLCanvasElement;
-  topCtx: CanvasRenderingContext2D;
-  glCanvas: HTMLCanvasElement;
-  previousPosition: string;
-  layer: GLLayer;
-  unlisten: () => boolean;
   cleared: boolean;
+  brightness: any;
   /**
    * @param {HTMLCanvasElement} canvas
    * @param {{ icons?: import("./icons.js").IconStore }} [options] where icons come from (default: the page's shared
@@ -253,9 +228,6 @@ export declare class WebGLPainter {
     },
   );
   resize(width: any, height: any, dpr: any): void;
-  draw(scene: any): void;
-  /** True while labels are still being drawn into the atlas: the view keeps frames coming until they're done. */
-  get pending(): boolean;
   /**
    * Debugging: measure how long the GPU spends on each pass (edges, nodes, labels), where the browser offers
    * EXT_disjoint_timer_query_webgl2. In the sandbox's console: `renderer.painter.timing = true`, move something,
@@ -263,7 +235,7 @@ export declare class WebGLPainter {
    */
   get timing(): boolean;
   set timing(on: boolean);
-  /** `{ edges, nodes, labels, total }` GPU milliseconds while `timing` is on (null until the first results). */
-  get gpuTimes(): any;
+  draw(scene: any): void;
   dispose(): void;
 }
+export {};

@@ -37,14 +37,6 @@ export declare function progress(
   f: any;
 };
 /**
- * The positions a morph starts from (every node where it is now). Velocities are cleared: the morph moves them.
- * @param {import("./matrix.js").Matrix} m
- */
-export declare function morphFrom(m: import("./matrix.js").Matrix): {
-  x: Float64Array<ArrayBuffer>;
-  y: Float64Array<ArrayBuffer>;
-};
-/**
  * One morph frame: every node `f` of the way from where it started (`from`) to its home, round the rings in a radial
  * (`routing.kind`), except the `held` ones (under the pointer).
  * @param {import("./matrix.js").Matrix} m

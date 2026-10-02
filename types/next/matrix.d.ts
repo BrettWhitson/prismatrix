@@ -1,5 +1,3 @@
-/** The columns, in order. */
-export declare const COLUMNS: string[];
 export declare class Matrix {
   count: number;
   /** @type {Float64Array} */ x: Float64Array;
@@ -16,6 +14,4 @@ export declare class Matrix {
   /** @type {Float64Array} */ boxY1: Float64Array;
   /** @param {number} count rows (nodes) */
   constructor(count: number);
-  /** Copy row `from` of `other` into row `to` of this matrix. */
-  copyRow(to: any, other: any, from: any): void;
 }

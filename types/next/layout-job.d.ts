@@ -88,11 +88,6 @@ export declare function hintFrom(
   routing?: import("./layouts.js").Routing | null,
 ): LayoutHint | null;
 /**
- * Whether `hint` fits a graph of `nodes` nodes and `edges` edges (one entry each, edge parts optional) and keeps at
- * least one node. A layout is given a hint only when it does.
- */
-export declare function usableHint(hint: any, nodes: any, edges: any): boolean;
-/**
  * What a layout needs to know about sizes, for working graph `graph` of `model`: each node's label width (the
  * model's, measured once each) and how far its shape reaches (from `looks`, render.js's looksOf), and the label
  * settings (the model's node options) that turn those into footprints.
@@ -178,7 +173,5 @@ export declare function runLayout(
   homeY: Float64Array<ArrayBuffer>;
   routing: any;
 };
-/** A routing with its edge-keyed parts (bends, references) by edge index. */
-export declare function packRouting(routing: any, graph: any): any;
 /** The routing again, its bends and references keyed by `graph`'s own edge objects. */
 export declare function unpackRouting(packed: any, graph: any): any;

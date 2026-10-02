@@ -147,11 +147,11 @@ export declare function takeSnapshot(
 export declare function snapshotModel(snapshot: Snapshot): GraphModel;
 /**
  * Put a snapshot's recorded layout state onto a working graph's nodes, by id. Nodes it doesn't mention keep theirs.
- * `state` is an object by id (own keys only: "constructor" isn't every node's state) or a Map.
+ * `state` is an object by id (own keys only: "constructor" isn't every node's state).
  * @param {import("./graph.js").Graph} graph
- * @param {Record<string, NodeState> | Map<string, NodeState>} state
+ * @param {Record<string, NodeState>} state
  */
 export declare function applyState(
   graph: import("./graph.js").Graph,
-  state: Record<string, NodeState> | Map<string, NodeState>,
+  state: Record<string, NodeState>,
 ): void;

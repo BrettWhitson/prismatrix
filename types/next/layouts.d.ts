@@ -251,6 +251,29 @@ export declare const TREE_LABEL_ANGLE: {
   RL: number;
 };
 /**
+ * Every node's footprint (sizing.box, its label pointing the tree's way) in a tree's or a layered drawing's terms,
+ * into the arrays given by node index: how far it reaches `left` and `right` along its level, and `near` and `far`
+ * across levels, in the direction they grow.
+ * @param {{ index: number }[]} nodes
+ * @param {Sizing} sizing
+ * @param {string} direction TB, BT, LR or RL
+ * @param {Float64Array} left
+ * @param {Float64Array} right
+ * @param {Float64Array} near
+ * @param {Float64Array} far
+ */
+export declare function levelFootprints(
+  nodes: {
+    index: number;
+  }[],
+  sizing: Sizing,
+  direction: string,
+  left: Float64Array,
+  right: Float64Array,
+  near: Float64Array,
+  far: Float64Array,
+): void;
+/**
  * Tidy tree: Walker's algorithm in linear time (Buchheim, Jünger & Leipert; see tidy.js), with every node's real
  * footprint (node and label). Subtrees pack as tightly as their outlines allow, small ones between big ones are
  * spread out evenly, and every parent sits centred over its children. Levels are at least `levelGap` apart, and

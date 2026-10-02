@@ -225,10 +225,10 @@ export declare class Simulation {
   /** True once nothing has moved for a while, and nothing will unless touched. */
   get asleep(): boolean;
   /**
-   * Advance by `dt` seconds of wall time in fixed steps. Returns the mean squared speed. Asleep, it does nothing at
-   * all (no forces, no collisions) until something wakes it.
+   * Advance by `dt` seconds of wall time in fixed steps (`energy`: the mean squared speed). Asleep, it does nothing
+   * at all (no forces, no collisions) until something wakes it.
    */
-  advance(dt: any): number;
+  advance(dt: any): void;
   step(h: any): number;
   /** Floating's force strength: full after a wake, easing to nothing over the settle time. */
   get heat(): number;

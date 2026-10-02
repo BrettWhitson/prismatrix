@@ -4,23 +4,6 @@
  */
 export declare function bucketScale(zoom: any, dpr: any): number;
 /**
- * Where a label sits in the world: its left edge, its vertical middle (the middle of the em box, as Canvas 2D's
- * "middle" baseline), and its width, for a node at (x, y) of radius `r`, label direction `angle`, font size `size`
- * and text width `width` (world px). Matches the Canvas 2D renderer's placement.
- */
-export declare function labelBox(
-  x: any,
-  y: any,
-  r: any,
-  angle: any,
-  size: any,
-  width: any,
-): {
-  left: any;
-  middle: any;
-  width: any;
-};
-/**
  * Floats per piece of text: anchor x, y (world, relative to the origin) and whether its units are screen px; box
  * left, middle, width, height (its units, from the anchor); texel rect u0, v0, u1, v1; alpha; text colour r, g, b;
  * halo or pill colour r, g, b.
@@ -36,7 +19,6 @@ export declare class LabelLayer {
   current: any;
   previous: any;
   data: Float32Array<ArrayBuffer>;
-  pending: boolean;
   fit: (text: string, size: number, max: number) => string;
   constructor(gl: any);
   /**

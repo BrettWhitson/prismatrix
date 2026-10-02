@@ -4,28 +4,20 @@ export declare const font: (px: any) => string;
 export declare const TEXT_HALO = 0.2;
 /** Pinned labels are never drawn smaller than this many CSS px. */
 export declare const PINNED_PX = 10;
-/** Roots are pinned only when there are at most this many (a forest of recipes would bury the view). */
-export declare const PINNED_ROOTS = 12;
 /** Edge labels' size as a share of the node label size; hidden when smaller than EDGE_LABEL_MIN_PX on screen. */
 export declare const EDGE_LABEL_SCALE = 0.85;
-export declare const EDGE_LABEL_MIN_PX = 6;
-/** Room between an edge and its label, world px (past the edge's half-width). */
-export declare const EDGE_LABEL_GAP = 3;
 /** How far back from its end an edge's label sits, in its font sizes (clear of the target's badge). */
 export declare const EDGE_LABEL_BACK = 1.6;
-/** Badges' and usage counts' size as a share of the label size; hidden when smaller than SMALL_MIN_PX on screen. */
-export declare const SMALL_SCALE = 0.8;
-export declare const SMALL_MIN_PX = 5;
 /** A badge's pill: padding either side of the text and height, as shares of its font size. */
 export declare const PILL: {
   pad: number;
   height: number;
 };
 /**
- * The colours text is drawn in, from the scene's theme (theme.js): `label` (the theme's text), `quiet` (edge labels
- * and counts: the text a little towards the background), `halo` (the theme's textHalo), `pillText` (a badge's text,
- * the background), `pill` (an app badge's pill: the text colour). Kept per theme.
- * @returns {{ label: string, quiet: string, halo: string, pillText: string, pill: string }}
+ * The colours text is drawn in, from the scene's theme (theme.js): `label` (the theme's text; an app badge's pill
+ * too), `quiet` (edge labels and counts: the text a little towards the background), `halo` (the theme's textHalo),
+ * `pillText` (a badge's text, the background).
+ * @returns {{ label: string, quiet: string, halo: string, pillText: string }}
  */
 export declare function textColours(
   theme?: Readonly<import("./theme.js").Theme>,
@@ -34,7 +26,6 @@ export declare function textColours(
   quiet: string;
   halo: string;
   pillText: string;
-  pill: string;
 };
 export type TextItem = {
   text: string;
@@ -137,6 +128,12 @@ export declare function edgeLabelAt(
   align: string;
   baseline: string;
 } | null;
+/**
+ * Whether labels show at this zoom. Labels with room kept for them (label collision) show until their text is
+ * smaller than LABEL_MIN_PX (a smudge, and with a whole big graph in view, tens of thousands of them to rasterise);
+ * others drop out when too small to read (6 px).
+ */
+export declare function labelsShown(node: any, camera: any): boolean;
 /** What text shows at this zoom: node labels, edge labels, small text (badges, counts), pinned at world size. */
 export declare function textVisibility(scene: any): {
   labels: boolean;
@@ -159,12 +156,13 @@ export declare function pinnedNodes(scene: any): Map<number, boolean>;
 export declare function textFitter(
   measure: (text: string, size: number) => number,
 ): (text: string, size: number, max: number) => string;
-/** About the box an item takes (world px), with text estimated at 0.6 font sizes a character: for keeping clear. */
-export declare function roughBox(item: any): {
-  x0: any;
-  y0: number;
-  x1: any;
-  y1: any;
+/**
+ * Text measurement on 2D context `ctx`: `measure(text, size)`, each width kept, and a label fitter on it
+ * (textFitter).
+ */
+export declare function textMeasurer(ctx: any): {
+  measure: (text: any, size: any) => any;
+  fit: (text: string, size: number, max: number) => string;
 };
 /** Boxes taken so far, hashed into square cells `cell` wide, to find overlaps quickly. */
 export declare class Room {

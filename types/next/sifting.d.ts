@@ -6,11 +6,10 @@
  * @param {number[][]} graph.lower   per layout node, its neighbours one layer down
  * @param {ArrayLike<number>} graph.block per layout node, the block it belongs to (0 … blocks - 1)
  * @param {number} graph.blocks
- * @param {{ rounds?: number, work?: number, movable?: ArrayLike<number> | null }} [options] work: stop starting new
+ * @param {{ rounds: number, work: number, movable?: ArrayLike<number> | null }} options work: stop starting new
  *   blocks after this many steps; movable: per block, nonzero if it may be moved (the others keep their order among
  *   themselves, so a layout that's mostly as it was stays so: see layered.js's hint); all of them when left out
- * @returns {{ layers: number[][], rounds: number, exact: boolean, work: number }} exact: the starting order was
- *   the layers given (so the result has no more crossings than they had); work: the steps it took
+ * @returns {{ layers: number[][] }}
  */
 export declare function globalSifting(
   {
@@ -32,14 +31,11 @@ export declare function globalSifting(
     rounds,
     work,
     movable,
-  }?: {
-    rounds?: number;
-    work?: number;
+  }: {
+    rounds: number;
+    work: number;
     movable?: ArrayLike<number> | null;
   },
 ): {
   layers: number[][];
-  rounds: number;
-  exact: boolean;
-  work: number;
 };
