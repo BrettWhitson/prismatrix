@@ -268,12 +268,13 @@ test("update: removals (with their edges), changes and additions, and exactly wh
   m.onChange((change) => heard.push(change));
   const ore = m.node("ore");
 
-  // A price: no structure, no size, just looks. Untouched nodes keep their records.
+  // A price: no structure, no size, nothing drawn changes (data only). Untouched nodes keep their records.
   let change = m.update({ changeNodes: [{ id: "ingot", data: { price: 3 } }] });
   assert.deepEqual(change.nodesChanged, ["ingot"]);
   assert.equal(change.structure, false);
   assert.equal(change.sizes, false);
-  assert.equal(change.looks, true);
+  assert.equal(change.looks, false);
+  assert.equal(change.dataOnly, true);
   assert.equal(m.node("ingot").data.price, 3);
   assert.equal(m.node("ore"), ore, "unchanged nodes keep their records");
 
