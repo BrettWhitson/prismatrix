@@ -429,16 +429,14 @@ export function layeredLayout(
       level[k - 1] + Math.max(levelGap, farOf[k - 1] - nearOf[k] + gap);
   const depthOf = (v) => level[lay[v]] * (flip ? -1 : 1);
   // Along depth, too, a hint keeps kept nodes where they were (when layers come or go above them).
-  let top = 0;
-  if (was) {
-    const d = new Float64Array(n),
-      wasDepth = new Float64Array(n);
-    for (let v = 0; v < n; v++) {
-      d[v] = depthOf(v);
-      wasDepth[v] = across ? hint.x[v] : hint.y[v];
-    }
-    top = medianShift(d, wasDepth, n, 0);
-  }
+  const top = wasDepth
+    ? medianShift(
+        Float64Array.from({ length: n }, (_, v) => depthOf(v)),
+        wasDepth,
+        n,
+        0,
+      )
+    : 0;
   const place = (v) => {
     const b = x[v] - middle;
     const d = depthOf(v) - top;
@@ -769,7 +767,7 @@ function orderFromHint(dfs, { key, known }, graph, ordering, stability) {
         hi = Math.max(hi, key[v]);
       }
       for (const v of list)
-        if (movable[block[v]]) shuffled[v] = lo + random() * (hi - lo + 1);
+        if (movable[block[v]]) shuffled[v] = lo + random() * (hi - lo);
     }
     const candidate = refine(shuffled);
     if (candidate.crossings < best.crossings) best = candidate;

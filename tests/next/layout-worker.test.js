@@ -12,6 +12,7 @@ import { LAYOUTS } from "../../next/engine/layouts.js";
 import { resolve } from "../../next/engine/schema.js";
 import {
   graphFromStructure,
+  hintFrom,
   runLayout,
   sizingFrom,
   structureOf,
@@ -337,6 +338,61 @@ test("the structure goes to the worker only when it changes, moved rather than c
   fake.flush();
   assert.deepEqual(answers[0], { id: 7, started: true });
   assert.match(answers[1].error, /no structure for this version/);
+});
+
+test("a hint (the layout before) goes to the worker with its job, copied: the layout is the one worked out on the spot", async () => {
+  const { FakeWorker, flush, sent } = await fakeWorkers();
+  await withWorker(FakeWorker, async () => {
+    const layouter = new Layouter({ worker: true });
+    const options = resolve(LAYOUTS.merged.options);
+    const input = recipes(80, 16);
+    const before = graphOf(input);
+    const routing = LAYOUTS.merged.run(
+      before,
+      options,
+      sizingFrom(spec(before)),
+    );
+    // Ten new ingredients under ten of the recipes.
+    const after = graphOf({
+      nodes: [
+        ...input.nodes,
+        ...Array.from({ length: 10 }, (_, k) => ({
+          id: `new${k}`,
+          label: `new ${k}`,
+        })),
+      ],
+      edges: [
+        ...input.edges,
+        ...Array.from({ length: 10 }, (_, k) => ({
+          source: `n${k * 7}`,
+          target: `new${k}`,
+        })),
+      ],
+    });
+    const hint = hintFrom(before, after, routing);
+    const result = layouter.run(after, "merged", options, spec(after), hint);
+    flush();
+    const there = await result;
+    assert.ok(sent[0].hint, "sent with the job");
+    // Copied: still whole here (and for the page's thread, if the worker fails).
+    assert.equal(hint.x.length, 90);
+    assert.equal(hint.bendStart.length, after.edges.length + 1);
+    const here = runLayout(after, "merged", options, spec(after), hint);
+    assert.deepEqual([...there.homeX], [...here.homeX]);
+    assert.deepEqual([...there.homeY], [...here.homeY]);
+    // And it did keep things in place: most of the 80 kept nodes stay where they were (ten changes at once).
+    let stayed = 0;
+    for (let i = 0; i < 80; i++)
+      if (
+        Math.hypot(
+          there.homeX[i] - before.matrix.homeX[i],
+          there.homeY[i] - before.matrix.homeY[i],
+        ) <= 2
+      )
+        stayed++;
+    assert.ok(stayed > 40, `${stayed} of 80 stayed`);
+    layouter.dispose();
+  });
 });
 
 test("if a worker can't be started, layouts run on the spot (said once) and the view and the model agree", async () => {

@@ -4,7 +4,7 @@
 // The graphs are the fixtures in tests/fixtures/graphs (prismatrix-graph JSON; regenerate them with
 // `node tools/make-fixtures.mjs`).
 //
-// Usage:  node tools/bench-layered.mjs [--json]
+// Usage:  node tools/bench-layered.mjs [--json] [--stability=0.5]
 //
 // Metrics (lower is better unless noted):
 //   crossings   edge crossings between neighbouring layers (as the layout counts them)
@@ -14,15 +14,24 @@
 //   centring    mean distance of a parent from the middle of its children (px)
 //   width       drawing width (px); height (px)
 //   ms          layout time
-//   moved       stability: after a one-node change (a new ingredient under one item), the share of the other nodes
-//               whose home moves more than 2 px (%), averaged over three such changes
+//   moved       stability: after a one-leaf change (a new ingredient under an item, or a leaf removed), laid out with
+//               the layout before as its hint, the share of the kept nodes whose home moves more than 2 px (%), over
+//               six such changes
 //   shift       stability: how far they move on average (px)
+//   +x fresh    crossings after those changes, against laying each changed graph out afresh (%): the price of
+//               keeping the old order (it also inherits the old order's luck, good or bad)
+//   +x before   crossings after those changes, against the layout before them (%)
+//   hint ms     layout time with a hint
+//
+// A second table compares moved/shift without a hint and with one, for the merged tree, the tree and the radial
+// tree (the tree and radial layouts' shapes are fixed by the tree: a hint only moves or turns them into place).
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Graph } from "../next/engine/graph.js";
 import { GraphModel } from "../next/engine/model.js";
 import { layeredLayout } from "../next/engine/layered.js";
+import { radialLayout, treeLayout } from "../next/engine/layouts.js";
 import { hintFrom } from "../next/engine/layout-job.js";
 
 const FIXTURES = path.resolve(
@@ -130,7 +139,8 @@ export function stability(
   const before = lay(json);
   const changes = [];
   const outgoing = new Map(json.nodes.map((n) => [n.id, 0]));
-  for (const e of json.edges) outgoing.set(e.source, outgoing.get(e.source) + 1);
+  for (const e of json.edges)
+    outgoing.set(e.source, outgoing.get(e.source) + 1);
   for (const at of [0.25, 0.5, 0.75]) {
     const parent = json.nodes[Math.floor(json.nodes.length * at)].id;
     changes.push({
@@ -155,11 +165,13 @@ export function stability(
     kept = 0,
     crossings = 0,
     fresh = 0,
+    old = 0,
     ms = 0;
   for (const data of changes) {
     const after = lay(data, before);
     ms += after.ms;
     crossings += after.routing.crossings ?? 0;
+    old += before.routing.crossings ?? 0;
     fresh += hint
       ? (lay(data).routing.crossings ?? 0)
       : (after.routing.crossings ?? 0);
@@ -172,24 +184,44 @@ export function stability(
       kept++;
     }
   }
+  const percent = (a, b) =>
+    b ? Math.round(((a - b) / b) * 1000) / 10 : a ? Infinity : 0;
   return {
     moved: Math.round((moved / kept) * 100),
     shift: Math.round(shift / kept),
-    "+cross%": fresh
-      ? Math.round(((crossings - fresh) / fresh) * 1000) / 10
-      : crossings,
+    "+x fresh": percent(crossings, fresh),
+    "+x before": percent(crossings, old),
     "hint ms": Math.round((ms / changes.length) * 10) / 10,
   };
 }
 
-// Run directly (not imported by another script): print the table.
+// Run directly (not imported by another script): print the tables.
 if (process.argv[1]?.endsWith("bench-layered.mjs")) {
-  const rows = fixtures().map(([name, model]) => ({
+  const given = process.argv.find((a) => a.startsWith("--stability="));
+  const options = given ? { stability: Number(given.split("=")[1]) } : {};
+  const all = fixtures();
+  const rows = all.map(([name, model]) => ({
     case: name,
-    ...measure(model),
-    ...stability(model),
+    ...measure(model, layeredLayout, options),
+    ...stability(model, layeredLayout, options),
+  }));
+  // Moved % / mean shift px, without a hint → with one.
+  const pair = (model, layout, opts) => {
+    const a = stability(model, layout, opts, { hint: false }),
+      b = stability(model, layout, opts);
+    return `${a.moved}%/${a.shift} → ${b.moved}%/${b.shift}`;
+  };
+  const kept = all.map(([name, model]) => ({
+    case: name,
+    merged: pair(model, layeredLayout, options),
+    tree: pair(model, treeLayout, {}),
+    radial: pair(model, radialLayout, {}),
   }));
   if (process.argv.includes("--json"))
-    console.log(JSON.stringify(rows, null, 2));
-  else console.table(rows);
+    console.log(JSON.stringify({ rows, kept }, null, 2));
+  else {
+    console.table(rows);
+    console.log("Kept in place (moved / shift px), without a hint → with one:");
+    console.table(kept);
+  }
 }
