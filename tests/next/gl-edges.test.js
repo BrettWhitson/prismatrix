@@ -141,14 +141,23 @@ function sceneFor(g, routing, edge = {}) {
   };
 }
 
-test("pieces: one per edge, one more per layered bend; cross-links that bundle are left to the CPU", () => {
+test("pieces: one per edge, one more per layered bend; cross-links that bundle are spans instead", () => {
   const g = new Graph(recipe());
   const tree = sceneFor(g, treeLayout(g, {}), { shape: "step" });
   assert.ok(gpuEdges(tree));
   const packed = packPieces(tree, { x: 0, y: 0 });
-  const crossLinks = g.edges.filter((e) => !e.tree).length;
-  assert.equal(packed.cpu.length, crossLinks);
-  assert.equal(packed.pieceCount, g.edges.length - crossLinks);
+  const crossLinks = g.edges.filter((e) => !e.tree);
+  const bundled = crossLinks.filter((e) => bundlePath(g, e)).length;
+  assert.ok(bundled > 0, "the fixture has a cross-link that bundles");
+  assert.equal(packed.cpu.length, 0);
+  assert.equal(packed.pieceCount, g.edges.length - bundled);
+  assert.equal(packed.shapedPieces, g.edges.length - crossLinks.length);
+  const straight = sceneFor(g, treeLayout(g, {}), { shape: "straight" });
+  assert.equal(
+    packPieces(straight, { x: 0, y: 0 }).spanCount,
+    0,
+    "straight edges don't bundle",
+  );
 
   const routing = layeredLayout(g, { references: "off" });
   const merged = sceneFor(g, routing, { shape: "step", arrow: "arrow" });
@@ -291,4 +300,212 @@ test("a radial step eases into a curve as its node drifts off its ring: no jumps
   );
   // During a layout morph, being off a ring doesn't count.
   assert.equal(stepCurveWeight(130, 200, 100, 200, 0, 1, true), 0);
+});
+
+// ---- bundled cross-links on the GPU ------------------------------------------------------------------------
+
+import {
+  BUNDLE_STRENGTH,
+  bundlePath,
+  bundledPoints,
+} from "../../next/engine/geometry.js";
+import { radialLayout } from "../../next/engine/layouts.js";
+import { packEdges, END_STRIDE } from "../../next/engine/gl-pack.js";
+import {
+  BUNDLE_TIP_STRIDE,
+  SPAN_STRIDE,
+  bundleSpanCapsules,
+  bundleSteps,
+  bundleTip,
+} from "../../next/engine/gl-edges.js";
+import { readFileSync } from "node:fs";
+
+/** A crafting fixture: a real recipe shape, about a third of its edges shared ingredients. */
+function crafting(name = "crafting-medium") {
+  const url = new URL(`../fixtures/graphs/${name}.json`, import.meta.url);
+  return GraphModel.from(JSON.parse(readFileSync(url, "utf8")));
+}
+
+/** Nudge every node off its home by a deterministic amount (a morph or a drag in progress). */
+function jostle(g, amount) {
+  g.nodes.forEach((n, i) => {
+    n.x = n.homeX + Math.sin(i * 12.9898) * amount;
+    n.y = n.homeY + Math.cos(i * 78.233) * amount;
+  });
+}
+
+/**
+ * A bundled edge as the GPU draws it, from the packed instance data and the positions texture: its spans' capsules
+ * joined into one polyline (world px, relative to the origin), and its end.
+ */
+function gpuBundle(packed, positions, ei, scene, steps = undefined) {
+  const at = (index) => [positions[index * 4], positions[index * 4 + 1]];
+  const line = [];
+  let tip = null;
+  for (let s = 0; s < packed.spanCount; s++) {
+    if (packed.spanEdge[s] !== ei) continue;
+    const o = s * SPAN_STRIDE;
+    const f = packed.spans;
+    const nodes = [0, 1, 2, 3].map((q) => at(f[o + q]));
+    const along = [4, 5, 6, 7].map((q) => f[o + q]);
+    for (const capsule of bundleSpanCapsules(
+      BUNDLE_STRENGTH,
+      nodes,
+      along,
+      at(f[o + 8]),
+      at(f[o + 9]),
+      f[o + 10],
+      f[o + 11],
+      steps,
+    )) {
+      if (!capsule) continue;
+      if (!line.length) line.push(capsule[0]);
+      line.push(capsule[1]);
+    }
+  }
+  for (let b = 0; b < packed.bundleTipCount; b++) {
+    if (packed.bundleTipEdge[b] !== ei) continue;
+    const o = b * BUNDLE_TIP_STRIDE;
+    const f = packed.bundleTips;
+    const end = scene.edge.arrowSize * 0.9;
+    tip = bundleTip(
+      BUNDLE_STRENGTH,
+      [0, 1, 2, 3].map((q) => at(f[o + q])),
+      [4, 5, 6, 7].map((q) => f[o + q]),
+      at(f[o + 8]),
+      at(f[o + 9]),
+      f[o + 10] + end,
+      end,
+    );
+  }
+  return { line, tip };
+}
+
+test("bundled cross-links on the GPU trace the CPU's B-splines, trimmed, with their ends where the CPU puts them", () => {
+  for (const [name, layout] of [
+    ["tree", (g) => treeLayout(g, {})],
+    ["tree LR", (g) => treeLayout(g, { direction: "LR" })],
+    ["radial", (g) => radialLayout(g, {})],
+  ])
+    for (const amount of [0, 25]) {
+      const g = new Graph(crafting());
+      const routing = layout(g);
+      jostle(g, amount);
+      const scene = sceneFor(g, routing, { shape: "curve", arrow: "arrow" });
+      const origin = { x: 1234.5, y: -678.25 };
+      const packed = packPieces(scene, origin);
+      const positions = packPositions(scene, origin);
+      const cpu = packEdges(scene);
+      let checked = 0;
+      for (let ei = 0; ei < g.edges.length; ei++) {
+        const e = g.edges[ei];
+        if (e.tree || !bundlePath(g, e)) continue;
+        const s = g.nodes[e.source],
+          t = g.nodes[e.target];
+        const end = scene.edge.arrowSize * 0.9;
+        const route = trim(
+          bundledPoints(g, e),
+          scene.looks.radius[s.index],
+          scene.looks.radius[t.index] + end,
+        );
+        const { line, tip } = gpuBundle(packed, positions, ei, scene);
+        const world = line.map(([x, y]) => [x + origin.x, y + origin.y]);
+        const where = `${name}, jostled ${amount}, edge ${e.source}→${e.target}`;
+        assert.ok(route, where);
+        const gap = hausdorff(world, route);
+        // The GPU trims each end where the curve leaves the node's disc, the CPU by distance along the curve: the
+        // same on a curve's smooth ends, to within float precision.
+        assert.ok(gap < 0.5, `${where}: ${gap.toFixed(3)} px apart`);
+        const k = cpu.endEdge.indexOf(ei);
+        const o = k * END_STRIDE;
+        const [cx, cy, dx, dy] = cpu.ends.subarray(o, o + 4);
+        assert.ok(
+          Math.hypot(tip.tip[0] + origin.x - cx, tip.tip[1] + origin.y - cy) <
+            0.5,
+          `${where}: the end is off by ${Math.hypot(tip.tip[0] + origin.x - cx, tip.tip[1] + origin.y - cy).toFixed(3)} px`,
+        );
+        assert.ok(
+          tip.dir[0] * dx + tip.dir[1] * dy > 0.999,
+          `${where}: the end points the same way`,
+        );
+        checked++;
+      }
+      assert.ok(checked > 50, `${name}: ${checked} bundled edges checked`);
+    }
+});
+
+test("bundles: a span per four control points, the ends repeated; cross-links with nothing to bend round go straight", () => {
+  const g = new Graph(recipe());
+  const routing = treeLayout(g, {});
+  const scene = sceneFor(g, routing, { shape: "step", arrow: "dot" });
+  const packed = packPieces(scene, { x: 0, y: 0 });
+  assert.equal(packed.cpu.length, 0, "nothing left to the CPU");
+  let spans = 0,
+    straight = 0;
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei];
+    if (e.tree) continue;
+    const path = bundlePath(g, e);
+    if (!path) {
+      straight++;
+      continue;
+    }
+    const mine = [];
+    for (let s = 0; s < packed.spanCount; s++)
+      if (packed.spanEdge[s] === ei) mine.push(s);
+    assert.equal(mine.length, path.length + 1, "m + 2 spans for m + 1 points");
+    const first = packed.spans.subarray(mine[0] * SPAN_STRIDE);
+    assert.deepEqual(
+      [...first.subarray(0, 4)],
+      [path[0], path[0], path[0], path[1]],
+      "the first span starts on the source, repeated",
+    );
+    const last = packed.spans.subarray(mine.at(-1) * SPAN_STRIDE);
+    assert.deepEqual(
+      [...last.subarray(4, 8)],
+      [(path.length - 2) / (path.length - 1), 1, 1, 1],
+    );
+    spans += mine.length;
+  }
+  assert.equal(packed.spanCount, spans);
+  assert.equal(
+    packed.pieceCount - packed.shapedPieces,
+    straight,
+    "straight cross-links come after the shaped pieces",
+  );
+  assert.equal(
+    packed.tipCount + packed.bundleTipCount,
+    g.edges.length,
+    "one end per edge",
+  );
+  for (let i = packed.shapedPieces; i < packed.pieceCount; i++)
+    assert.ok(!g.edges[packed.pieceEdge[i]].tree);
+  for (let i = packed.shapedTips; i < packed.tipCount; i++)
+    assert.ok(!g.edges[packed.tipEdge[i]].tree);
+});
+
+test("zoomed out, bundle spans are drawn with fewer capsules, never more than a pixel off on screen", () => {
+  const g = new Graph(crafting());
+  const routing = treeLayout(g, {});
+  jostle(g, 10);
+  const scene = sceneFor(g, routing, { shape: "step" });
+  const packed = packPieces(scene, { x: 0, y: 0 });
+  const positions = packPositions(scene, { x: 0, y: 0 });
+  assert.equal(bundleSteps(1), 8);
+  for (const zoom of [2, 0.5, 0.2, 0.17, 0.1, 0.05, 0.04, 0.01]) {
+    const steps = bundleSteps(zoom);
+    assert.ok(steps >= 2 && steps <= 8);
+    let worst = 0;
+    for (let ei = 0; ei < g.edges.length; ei++) {
+      const e = g.edges[ei];
+      if (e.tree || !bundlePath(g, e)) continue;
+      const full = gpuBundle(packed, positions, ei, scene).line;
+      const coarse = gpuBundle(packed, positions, ei, scene, steps).line;
+      worst = Math.max(worst, hausdorff(full, coarse) * zoom);
+    }
+    assert.ok(
+      worst < 1,
+      `zoom ${zoom}: ${steps} capsules a span are ${worst.toFixed(2)} screen px off`,
+    );
+  }
 });

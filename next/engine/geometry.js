@@ -179,16 +179,19 @@ export function rounded(pts, radius) {
 }
 
 /** Points per B-spline span when drawing a bundled edge. */
-const BUNDLE_STEPS = 8;
+export const BUNDLE_STEPS = 8;
+/** How closely a bundled edge follows its tree path: 1 follows the tree, 0 goes straight. */
+export const BUNDLE_STRENGTH = 0.85;
 
 /**
- * The route of a cross-link (an edge that isn't a parent → child link in the forest): along the tree path between
- * its ends, up to their lowest common ancestor and back down, as a B-spline pulled towards that path by `strength`
- * (hierarchical edge bundling, Holten 2006). Cross-links that share an ancestor bundle together along the tree
- * instead of cutting across it. Ends in different trees, or a path with nothing between them, go straight.
- * @returns {number[]} flat x, y pairs
+ * The tree path a cross-link bundles along: node indices from its source up to (not including, when there's
+ * anything else on the way) the lowest common ancestor of its ends and back down to its target. Null when the edge
+ * goes straight instead (ends in different trees, or nothing between them). Depends only on the forest, so it
+ * lasts until the structure changes: the WebGL renderer works it out once per layout and traces the curve on the
+ * GPU from it.
+ * @returns {number[] | null}
  */
-export function bundledPoints(graph, e, strength = 0.85) {
+export function bundlePath(graph, e) {
   const nodes = graph.nodes;
   let a = e.source,
     b = e.target;
@@ -200,7 +203,7 @@ export function bundledPoints(graph, e, strength = 0.85) {
   while (a !== b) {
     a = nodes[a].parent;
     b = nodes[b].parent;
-    if (a < 0 || b < 0) return straight(nodes, e);
+    if (a < 0 || b < 0) return null;
     up.push(a);
     down.push(b);
   }
@@ -212,7 +215,20 @@ export function bundledPoints(graph, e, strength = 0.85) {
   const path = [e.source, ...up, ...down.reverse(), e.target];
   if (path.length === 2 && a !== e.source && a !== e.target)
     path.splice(1, 0, a); // nothing else between them: bend via the ancestor after all
-  if (path.length <= 2) return straight(nodes, e);
+  return path.length <= 2 ? null : path;
+}
+
+/**
+ * The route of a cross-link (an edge that isn't a parent → child link in the forest): along the tree path between
+ * its ends (bundlePath), as a B-spline pulled towards that path by `strength` (hierarchical edge bundling, Holten
+ * 2006). Cross-links that share an ancestor bundle together along the tree instead of cutting across it. Ends in
+ * different trees, or a path with nothing between them, go straight.
+ * @returns {number[]} flat x, y pairs
+ */
+export function bundledPoints(graph, e, strength = BUNDLE_STRENGTH) {
+  const nodes = graph.nodes;
+  const path = bundlePath(graph, e);
+  if (!path) return straight(nodes, e);
   const first = nodes[path[0]],
     last = nodes[path.at(-1)];
   const control = path.map((i, k) => {

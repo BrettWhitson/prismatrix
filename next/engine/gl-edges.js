@@ -2,14 +2,16 @@
 // thousands of little segments, the GPU gets each node's position (one texture, every frame) and a list of edge
 // pieces that only changes with the layout or the styles. A piece is the run of an edge between two stops: its
 // source, its target, or one of the bends a layered layout gives a long edge. The vertex shader builds each piece's
-// shape (straight, a step with rounded corners, or a curve) from where its stops are this frame.
+// shape (straight, a step with rounded corners, or a curve) from where its stops are this frame. Cross-links that
+// bundle along the tree are B-splines whose control points are nodes on the tree path between their ends: one
+// instance per span of the spline, naming its four control nodes, so they too move with the positions alone.
 //
-// This module is the CPU side: which edges the GPU can draw, their pieces and ends as instance data, the positions
-// texture's contents, and `piecePoints`, the same geometry as the shader in JavaScript (so tests can check it
-// against the CPU's own edge routes). Pure: no GL.
+// This module is the CPU side: which edges the GPU can draw, their pieces, spans and ends as instance data, the
+// positions texture's contents, and `piecePoints`, `radialPiecePoints`, `bundleSpanCapsules` and `bundleTip`, the
+// same geometry as the shaders in JavaScript (so tests can check it against the CPU's own edge routes). Pure: no GL.
 
 import { parseColour } from "./gl-pack.js";
-import { stepCurveWeight } from "./geometry.js";
+import { BUNDLE_STEPS, bundlePath, stepCurveWeight } from "./geometry.js";
 
 /** Points along each piece: the shader draws the capsules between consecutive ones. */
 export const PIECE_POINTS = 16;
@@ -20,6 +22,16 @@ const ARC_STEP = 0.06; // radians per chord along a ring arc, as the CPU traces 
 export const PIECE_STRIDE = 16;
 /** Floats per edge end: last stop before the target (x, y, f, node?), source, target, radius, size, kind, r, g, b. */
 export const TIP_STRIDE = 12;
+/**
+ * Floats per bundle span: its four control nodes, how far along the path each is (0–1), source, target, trims,
+ * half-width, colour r, g, b.
+ */
+export const SPAN_STRIDE = 16;
+/**
+ * Floats per bundled edge's end: its last four control nodes, how far along the path each is, source, target,
+ * target radius, size, kind, colour r, g, b.
+ */
+export const BUNDLE_TIP_STRIDE = 16;
 /** Texels per row of the positions texture. */
 export const POSITION_COLUMNS = 2048;
 
@@ -48,12 +60,22 @@ export function gpuEdges(scene) {
 }
 
 /**
- * Every edge the GPU draws as pieces and ends, relative to `origin` (world px), and the edges it leaves to the CPU
- * (cross-links that bundle along the tree in a tree or radial layout).
+ * Every edge as GPU instance data, relative to `origin` (world px):
+ *
+ * - pieces and their ends (tips): the edge's own shape first (`shapedPieces`, `shapedTips` of them), then the ones
+ *   drawn straight whatever the shape (cross-links that can't bundle), so each range is drawn with its own shape
+ *   and as few vertices as it needs;
+ * - bundle spans and their ends: cross-links in a tree or radial layout bundle along the tree (bundlePath in
+ *   geometry.js), as a B-spline whose control points are nodes on the path. Each span of the spline is an instance
+ *   naming its four control nodes; the shader evaluates it from where they are this frame.
+ *
+ * `cpu` lists the edges left to the CPU (none: every edge this can pack, the GPU draws).
  * @param {object} scene
  * @param {{ x: number, y: number }} origin
- * @returns {{ pieces: Float32Array, pieceEdge: Int32Array, pieceCount: number, tips: Float32Array,
- *   tipEdge: Int32Array, tipCount: number, cpu: number[], shape: number, axis: number[] }}
+ * @returns {{ pieces: Float32Array, pieceEdge: Int32Array, pieceCount: number, shapedPieces: number,
+ *   tips: Float32Array, tipEdge: Int32Array, tipCount: number, shapedTips: number, spans: Float32Array,
+ *   spanEdge: Int32Array, spanCount: number, bundleTips: Float32Array, bundleTipEdge: Int32Array,
+ *   bundleTipCount: number, cpu: number[], shape: number, axis: number[], radial: boolean, points: number }}
  */
 export function packPieces(scene, origin) {
   const { graph, routing, edge, looks } = scene;
@@ -66,23 +88,47 @@ export function packPieces(scene, origin) {
     if (!rgb) colours.set(hex, (rgb = parseColour(hex)));
     return rgb;
   };
-  // Pieces per edge: one, or one more than its bends.
-  let pieceTotal = 0;
-  const cpu = [];
+  const edges = graph.edges;
+  // Cross-links bundle (unless edges are straight); those whose path has nothing to bend round go straight.
   const bundled = !layered && edge.shape !== "straight";
-  for (let ei = 0; ei < graph.edges.length; ei++) {
-    const e = graph.edges[ei];
-    if (bundled && !e.tree) cpu.push(ei);
-    else pieceTotal += layered ? (routing.bends.get(e)?.length ?? 0) + 1 : 1;
+  const paths = new Array(edges.length).fill(null);
+  let shapedTotal = 0,
+    straightTotal = 0,
+    spanTotal = 0,
+    bundleTotal = 0;
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
+    if (bundled && !e.tree) {
+      const path = bundlePath(graph, e);
+      if (path) {
+        paths[ei] = path;
+        spanTotal += path.length + 1; // a clamped spline through m + 1 points has m + 2 spans
+        bundleTotal++;
+      } else straightTotal++;
+    } else shapedTotal += layered ? (routing.bends.get(e)?.length ?? 0) + 1 : 1;
   }
+  const pieceTotal = shapedTotal + straightTotal;
   const pieces = new Float32Array(pieceTotal * PIECE_STRIDE);
   const pieceEdge = new Int32Array(pieceTotal);
-  const tipTotal = end > 0 ? graph.edges.length - cpu.length : 0;
+  // One end per edge drawn as pieces (an edge with bends has several pieces but one end).
+  const shapedEdges = edges.length - bundleTotal - straightTotal;
+  const tipTotal = end > 0 ? shapedEdges + straightTotal : 0;
   const tips = new Float32Array(tipTotal * TIP_STRIDE);
   const tipEdge = new Int32Array(tipTotal);
+  const spans = new Float32Array(spanTotal * SPAN_STRIDE);
+  const spanEdge = new Int32Array(spanTotal);
+  const bundleTips = new Float32Array(
+    (end > 0 ? bundleTotal : 0) * BUNDLE_TIP_STRIDE,
+  );
+  const bundleTipEdge = new Int32Array(end > 0 ? bundleTotal : 0);
+  // Shaped pieces and tips fill from the start, straight ones from where the shaped ones end.
   let p = 0,
     t = 0,
-    skip = 0;
+    ps = shapedTotal,
+    ts = end > 0 ? shapedEdges : 0,
+    s = 0,
+    b = 0;
+  const shapedTips = ts;
   // A stop: a node (its position this frame) or a bend (where the layout put it, moved with the edge's ends).
   const write = (out, o, stop) => {
     out[o] = stop.x - origin.x;
@@ -90,36 +136,81 @@ export function packPieces(scene, origin) {
     out[o + 2] = stop.f;
     out[o + 3] = stop.node ? 1 : 0;
   };
-  for (let ei = 0; ei < graph.edges.length; ei++) {
-    if (cpu[skip] === ei) {
-      skip++;
-      continue;
-    }
-    const e = graph.edges[ei];
-    const bends = layered ? (routing.bends.get(e) ?? []) : [];
-    const k = bends.length;
-    const stops = [{ x: 0, y: 0, f: 0, node: true }];
-    bends.forEach(([x, y], i) => stops.push({ x, y, f: (i + 1) / (k + 1) }));
-    stops.push({ x: 0, y: 0, f: 1, node: true });
+  const NODE_A = { x: 0, y: 0, f: 0, node: true },
+    NODE_B = { x: 0, y: 0, f: 1, node: true };
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
     const rgb = colour(looks.edgeColour[ei]);
     const half = looks.edgeWidth[ei] / 2;
-    for (let i = 0; i + 1 < stops.length; i++, p++) {
-      const o = p * PIECE_STRIDE;
+    const trimA = looks.radius[e.source],
+      trimB = looks.radius[e.target] + end;
+    const path = paths[ei];
+    if (path) {
+      // A span per four consecutive control points of the clamped spline: points before the first and after the
+      // last repeat the end ones. Each control point is a node on the path, pulled towards the straight line
+      // between the ends by how far along the path it is (`along`).
+      const m = path.length - 1;
+      for (let i = 0; i <= m + 1; i++, s++) {
+        const o = s * SPAN_STRIDE;
+        for (let q = 0; q < 4; q++) {
+          const k = Math.min(m, Math.max(0, i - 2 + q));
+          spans[o + q] = path[k];
+          spans[o + 4 + q] = k / m;
+        }
+        spans[o + 8] = e.source;
+        spans[o + 9] = e.target;
+        spans[o + 10] = trimA;
+        spans[o + 11] = trimB;
+        spans[o + 12] = half;
+        spans[o + 13] = rgb[0];
+        spans[o + 14] = rgb[1];
+        spans[o + 15] = rgb[2];
+        spanEdge[s] = ei;
+      }
+      if (end > 0) {
+        // The end: the last four control points (the last three spans), where the curve reaches the target.
+        const o = b * BUNDLE_TIP_STRIDE;
+        for (let q = 0; q < 4; q++) {
+          const k = Math.max(0, m - 3 + q);
+          bundleTips[o + q] = path[k];
+          bundleTips[o + 4 + q] = k / m;
+        }
+        bundleTips[o + 8] = e.source;
+        bundleTips[o + 9] = e.target;
+        bundleTips[o + 10] = looks.radius[e.target];
+        bundleTips[o + 11] = edge.arrowSize;
+        bundleTips[o + 12] = kind;
+        bundleTips[o + 13] = rgb[0];
+        bundleTips[o + 14] = rgb[1];
+        bundleTips[o + 15] = rgb[2];
+        bundleTipEdge[b++] = ei;
+      }
+      continue;
+    }
+    const straight = bundled && !e.tree;
+    const bends = layered ? (routing.bends.get(e) ?? []) : [];
+    const k = bends.length;
+    const stops = [NODE_A];
+    bends.forEach(([x, y], i) => stops.push({ x, y, f: (i + 1) / (k + 1) }));
+    stops.push(NODE_B);
+    for (let i = 0; i + 1 < stops.length; i++) {
+      const at = straight ? ps++ : p++;
+      const o = at * PIECE_STRIDE;
       write(pieces, o, stops[i]);
       write(pieces, o + 4, stops[i + 1]);
       pieces[o + 8] = e.source;
       pieces[o + 9] = e.target;
-      pieces[o + 10] = i === 0 ? looks.radius[e.source] : 0;
-      pieces[o + 11] =
-        i + 2 === stops.length ? looks.radius[e.target] + end : 0;
+      pieces[o + 10] = i === 0 ? trimA : 0;
+      pieces[o + 11] = i + 2 === stops.length ? trimB : 0;
       pieces[o + 12] = half;
       pieces[o + 13] = rgb[0];
       pieces[o + 14] = rgb[1];
       pieces[o + 15] = rgb[2];
-      pieceEdge[p] = ei;
+      pieceEdge[at] = ei;
     }
     if (end > 0) {
-      const o = t * TIP_STRIDE;
+      const at = straight ? ts++ : t++;
+      const o = at * TIP_STRIDE;
       write(tips, o, stops[stops.length - 2]);
       tips[o + 4] = e.source;
       tips[o + 5] = e.target;
@@ -129,21 +220,159 @@ export function packPieces(scene, origin) {
       tips[o + 9] = rgb[0];
       tips[o + 10] = rgb[1];
       tips[o + 11] = rgb[2];
-      tipEdge[t++] = ei;
+      tipEdge[at] = ei;
     }
   }
   return {
     pieces,
     pieceEdge,
-    pieceCount: p,
+    pieceCount: pieceTotal,
+    shapedPieces: shapedTotal,
     tips,
     tipEdge,
-    tipCount: t,
-    cpu,
+    tipCount: tipTotal,
+    shapedTips,
+    spans,
+    spanEdge,
+    spanCount: s,
+    bundleTips,
+    bundleTipEdge,
+    bundleTipCount: b,
+    cpu: [],
     shape: SHAPES[edge.shape],
     axis: AXIS[routing.direction] ?? AXIS.TB,
     radial: routing.kind === "radial",
     points: routing.kind === "radial" ? RADIAL_POINTS : PIECE_POINTS,
+  };
+}
+
+/**
+ * A point of a uniform cubic B-spline span with control points p0–p3 (each [x, y]), at t (0–1): the same sum as
+ * bspline in geometry.js and the bundle shader.
+ */
+export function splineAt(t, p0, p1, p2, p3) {
+  const t2 = t * t,
+    t3 = t2 * t;
+  const w0 = (1 - 3 * t + 3 * t2 - t3) / 6,
+    w1 = (4 - 6 * t2 + 3 * t3) / 6,
+    w2 = (1 + 3 * t + 3 * t2 - 3 * t3) / 6,
+    w3 = t3 / 6;
+  return [
+    w0 * p0[0] + w1 * p1[0] + w2 * p2[0] + w3 * p3[0],
+    w0 * p0[1] + w1 * p1[1] + w2 * p2[1] + w3 * p3[1],
+  ];
+}
+
+/**
+ * Capsule a → b with the part inside the disc around `c` of radius `r` cut off: how the GPU trims a bundled edge
+ * off its nodes (each capsule on its own, so it needs nothing from the rest of the curve). Null when nothing is
+ * left. Assumes the curve crosses the disc's edge once, as it does near the node it starts or ends at.
+ * @returns {[number[], number[]] | null}
+ */
+export function clipDisc(a, b, c, r) {
+  if (r <= 0) return [a, b];
+  const inA = Math.hypot(a[0] - c[0], a[1] - c[1]) < r,
+    inB = Math.hypot(b[0] - c[0], b[1] - c[1]) < r;
+  if (inA && inB) return null;
+  if (!inA && !inB) return [a, b];
+  // Where the line a + d·s meets the circle: |a + d·s − c| = r.
+  const dx = b[0] - a[0],
+    dy = b[1] - a[1],
+    fx = a[0] - c[0],
+    fy = a[1] - c[1];
+  const A = dx * dx + dy * dy,
+    B = 2 * (fx * dx + fy * dy),
+    C = fx * fx + fy * fy - r * r;
+  const root = Math.sqrt(Math.max(B * B - 4 * A * C, 0));
+  if (inA) {
+    const s = (-B + root) / (2 * A);
+    return [[a[0] + dx * s, a[1] + dy * s], b];
+  }
+  const s = (-B - root) / (2 * A);
+  return [a, [a[0] + dx * s, a[1] + dy * s]];
+}
+
+/** A control point of a bundled edge: node `p` pulled towards the line S → T at `along` by (1 − strength). */
+const controlPoint = (strength, p, along, S, T) => [
+  strength * p[0] + (1 - strength) * (S[0] + (T[0] - S[0]) * along),
+  strength * p[1] + (1 - strength) * (S[1] + (T[1] - S[1]) * along),
+];
+
+/**
+ * How many capsules the GPU draws per bundle span at zoom `zoom`: all `BUNDLE_STEPS` (as the CPU traces them) once
+ * a span is long enough on screen for its curve to show, fewer when spans are only a few pixels long. Bundles are
+ * most of the GPU's edge vertices in real recipe data (a span is 48 vertices), and a zoomed-out view of a big graph
+ * is where there are most of them on screen.
+ */
+export function bundleSteps(zoom) {
+  // A span's chords sit up to about 4 world px inside its curve at half the steps, about 16 at a quarter: under a
+  // screen pixel below these zooms.
+  if (zoom >= 0.18) return BUNDLE_STEPS;
+  return zoom >= 0.045 ? BUNDLE_STEPS / 2 : BUNDLE_STEPS / 4;
+}
+
+/**
+ * The capsules the bundle shader draws for one span, in JavaScript: `steps` of them (null where trimmed away),
+ * from the span's four control nodes `nodes` (each [x, y] this frame) and how far along the path each is
+ * (`along`), the edge's ends S and T, and its trims.
+ * @returns {([number[], number[]] | null)[]}
+ */
+export function bundleSpanCapsules(
+  strength,
+  nodes,
+  along,
+  S,
+  T,
+  trimA,
+  trimB,
+  steps = BUNDLE_STEPS,
+) {
+  const c = nodes.map((p, q) => controlPoint(strength, p, along[q], S, T));
+  const out = [];
+  for (let i = 0; i < steps; i++) {
+    let capsule = [splineAt(i / steps, ...c), splineAt((i + 1) / steps, ...c)];
+    capsule = clipDisc(...capsule, S, trimA);
+    if (capsule) capsule = clipDisc(...capsule, T, trimB);
+    out.push(capsule);
+  }
+  return out;
+}
+
+/**
+ * Where a bundled edge's arrowhead or dot goes, in JavaScript (the bundle tip shader): walking back from the target
+ * along the last three spans (from its last four control nodes), the first point at least `reach` (target radius
+ * plus the end's room) from the target; the tip sits `end` on from where the curve crosses that distance, pointing
+ * the way the curve runs there. As the CPU puts it (packEdges).
+ * @returns {{ tip: number[], dir: number[] }}
+ */
+export function bundleTip(strength, nodes, along, S, T, reach, end) {
+  const [q0, q1, q2, q3] = nodes.map((p, q) =>
+    controlPoint(strength, p, along[q], S, T),
+  );
+  const spans = [
+    [q0, q1, q2, q3],
+    [q1, q2, q3, q3],
+    [q2, q3, q3, q3],
+  ];
+  let previous = T;
+  for (let k = 1; k <= 3 * BUNDLE_STEPS; k++) {
+    const span = spans[2 - Math.floor((k - 1) / BUNDLE_STEPS)];
+    const t = 1 - (((k - 1) % BUNDLE_STEPS) + 1) / BUNDLE_STEPS;
+    const p = splineAt(t, ...span);
+    if (Math.hypot(p[0] - T[0], p[1] - T[1]) >= reach) {
+      const [, cut] = clipDisc(p, previous, T, reach) ?? [p, previous];
+      const len = Math.hypot(previous[0] - p[0], previous[1] - p[1]) || 1;
+      const dir = [(previous[0] - p[0]) / len, (previous[1] - p[1]) / len];
+      return { tip: [cut[0] + dir[0] * end, cut[1] + dir[1] * end], dir };
+    }
+    previous = p;
+  }
+  // The whole end of the curve is inside the target: point along the last stretch.
+  const len = Math.hypot(T[0] - previous[0], T[1] - previous[1]) || 1;
+  const dir = [(T[0] - previous[0]) / len, (T[1] - previous[1]) / len];
+  return {
+    tip: [T[0] - dir[0] * (reach - end), T[1] - dir[1] * (reach - end)],
+    dir,
   };
 }
 

@@ -3,7 +3,11 @@
 // edges at any zoom without multisampling.
 //
 // Shared uniforms: u_view (canvas size, CSS px), u_camera (world x, y at the view's centre, and zoom), u_pixel (one
-// device pixel in world px). All colours are written premultiplied.
+// device pixel in world px). All colours are written premultiplied. World positions are relative to the layer's
+// origin (the middle of the layout), and so is u_camera: 32-bit floats stay precise however far out a drawing
+// reaches.
+
+import { BUNDLE_STEPS } from "./geometry.js";
 
 /** World position to clip space, and the coverage of a pixel whose centre is d world px outside an edge. */
 const COMMON_VERTEX = `
@@ -289,32 +293,80 @@ vec2 stopAt(vec4 stop, vec4 s, vec4 t) {
 }`;
 
 /**
- * An edge piece, built on the GPU: from its two stops (looked up in the positions texture), the shader traces the
- * piece's shape (u_shape: 0 straight, 1 step with rounded corners, 2 curve) in the layout's axis frame (u_axis: y
- * runs from parent to child) as 16 points, and each instance's vertices draw the capsule between two of them
- * (gl_VertexID / 6 picks which). The same geometry as piecePoints in gl-edges.js.
+ * The capsule from a to b that six vertices of an edge instance draw (gl_VertexID % 6 picks the corner), as the
+ * segment shader draws one; nothing when draw is false. Reads the instance's a_half, a_colour and a_alpha.
  */
-export const PIECE_VERTEX = `#version 300 es
-layout(location = 0) in vec4 a_stopA;
-layout(location = 1) in vec4 a_stopB;
-layout(location = 2) in vec2 a_nodes;
-layout(location = 3) in vec2 a_trim;
-layout(location = 4) in float a_half;
-layout(location = 5) in vec3 a_colour;
-layout(location = 6) in float a_alpha;
-${COMMON_VERTEX}
-${STOPS}
-uniform int u_shape;
-uniform mat2 u_axis;
-uniform float u_corner;
-uniform bool u_radial;
-
+const CAPSULE = `
 out vec2 v_world;
 flat out vec4 v_ends;
 flat out vec2 v_half;
 flat out vec4 v_colour;
 
-const float HALF_PI = 1.5707963;
+void capsule(vec2 a, vec2 b, bool draw) {
+  if (!draw) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
+  int corner = gl_VertexID % 6;
+  // Two triangles: corners (-1,-1) (1,-1) (-1,1) / (-1,1) (1,-1) (1,1).
+  vec2 c = vec2(corner == 1 || corner == 4 || corner == 5 ? 1.0 : -1.0,
+                corner == 2 || corner == 3 || corner == 5 ? 1.0 : -1.0);
+  vec2 along = b - a;
+  float length_ = length(along);
+  vec2 dir = length_ > 0.0 ? along / length_ : vec2(1.0, 0.0);
+  vec2 normal = vec2(-dir.y, dir.x);
+  float pad = a_half + 2.0 * u_pixel;
+  float along_ = mix(-pad, length_ + pad, c.x * 0.5 + 0.5);
+  vec2 world = a + dir * along_ + normal * c.y * pad;
+  gl_Position = toClip(world);
+  v_world = world;
+  v_ends = vec4(a, b);
+  v_half = vec2(a_half);
+  v_colour = vec4(a_colour, a_alpha);
+}`;
+
+/**
+ * Bundled edges: control points (a node on the tree path, pulled towards the line between the edge's ends), a
+ * point of a uniform cubic B-spline span, and trimming a capsule off a node's disc (clipDisc in gl-edges.js).
+ */
+const SPLINE = `
+const float STEPS = ${BUNDLE_STEPS}.0;
+uniform float u_strength;
+
+vec2 control(float node, float along, vec2 S, vec2 T) {
+  return mix(mix(S, T, along), nodeAt(node).xy, u_strength);
+}
+
+vec2 splineAt(float t, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
+  float t2 = t * t, t3 = t2 * t;
+  float w0 = (1.0 - 3.0 * t + 3.0 * t2 - t3) / 6.0, w1 = (4.0 - 6.0 * t2 + 3.0 * t3) / 6.0;
+  float w2 = (1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3) / 6.0, w3 = t3 / 6.0;
+  return w0 * p0 + w1 * p1 + w2 * p2 + w3 * p3;
+}
+
+// Cut the part of a to b inside the disc around c of radius r off; false when nothing is left. The curve crosses
+// the disc's edge once near the node it starts or ends at, so a capsule there has one end in and one out.
+bool clipDisc(inout vec2 a, inout vec2 b, vec2 c, float r) {
+  if (r <= 0.0) return true;
+  bool inA = length(a - c) < r, inB = length(b - c) < r;
+  if (inA && inB) return false;
+  if (!inA && !inB) return true;
+  vec2 d = b - a, f = a - c;
+  float A = dot(d, d), B = 2.0 * dot(f, d), C = dot(f, f) - r * r;
+  float root = sqrt(max(B * B - 4.0 * A * C, 0.0));
+  if (inA) a += d * ((-B + root) / (2.0 * A));
+  else b = a + d * ((-B - root) / (2.0 * A));
+  return true;
+}`;
+
+/**
+ * The curves edge pieces and their ends share: a tree curve in the layout's axis frame (leaving and arriving
+ * along the axis, bending halfway between, mid), a general cubic for radial curves, where each is cut a distance
+ * from its end, and how far a radial step has turned into a curve.
+ */
+const CURVES = `
+uniform vec2 u_centre;
+uniform bool u_morphing;
 
 // A curve from A to B leaving and arriving along the axis, at t (0–1).
 vec2 curveAt(float t, vec2 A, vec2 B, float mid) {
@@ -336,6 +388,69 @@ float curveCut(float reach, vec2 A, vec2 B, float mid, bool fromB) {
   }
   return fromB ? 1.0 - lo : lo;
 }
+
+vec2 ray(float angle) {
+  return vec2(cos(angle), sin(angle));
+}
+
+vec2 cubicAt(float t, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
+  float u = 1.0 - t;
+  return u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3;
+}
+
+// The way a cubic runs at t (unnormalised; zero only where the curve stops).
+vec2 cubicTangent(float t, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
+  float u = 1.0 - t;
+  return u * u * (p1 - p0) + 2.0 * u * t * (p2 - p1) + t * t * (p3 - p2);
+}
+
+// Where a cubic is reach from its start (or, fromB, its end).
+float cubicCut(float reach, vec2 p0, vec2 p1, vec2 p2, vec2 p3, bool fromB) {
+  if (reach <= 0.0) return fromB ? 1.0 : 0.0;
+  vec2 end = fromB ? p3 : p0;
+  float lo = 0.0, hi = 0.5;
+  for (int k = 0; k < 12; k++) {
+    float m = (lo + hi) * 0.5;
+    if (length(cubicAt(fromB ? 1.0 - m : m, p0, p1, p2, p3) - end) < reach) lo = m;
+    else hi = m;
+  }
+  return fromB ? 1.0 - lo : lo;
+}
+
+// How far a radial step has turned into a curve (0–1): stepCurveWeight in geometry.js.
+float stepCurveWeight(float rs, float rt, float hs, float ht, float arc, float chord) {
+  float gap = abs(ht - hs);
+  float slack = max(gap / 4.0, 1e-6);
+  float off = u_morphing ? 0.0 : smoothstep(0.5, 1.5, max(abs(rs - hs), abs(rt - ht)) / slack);
+  float inside = smoothstep(-gap / 4.0, 1.0, rs - rt);
+  float loops = smoothstep(0.9, 1.0, arc / (1.75 * chord + 10.0));
+  return max(off, max(inside, loops));
+}`;
+
+/**
+ * An edge piece, built on the GPU: from its two stops (looked up in the positions texture), the shader traces the
+ * piece's shape (u_shape: 0 straight, 1 step with rounded corners, 2 curve) in the layout's axis frame (u_axis: y
+ * runs from parent to child) as 16 points, and each instance's vertices draw the capsule between two of them
+ * (gl_VertexID / 6 picks which). The same geometry as piecePoints in gl-edges.js.
+ */
+export const PIECE_VERTEX = `#version 300 es
+layout(location = 0) in vec4 a_stopA;
+layout(location = 1) in vec4 a_stopB;
+layout(location = 2) in vec2 a_nodes;
+layout(location = 3) in vec2 a_trim;
+layout(location = 4) in float a_half;
+layout(location = 5) in vec3 a_colour;
+layout(location = 6) in float a_alpha;
+${COMMON_VERTEX}
+${STOPS}
+${CAPSULE}
+${CURVES}
+uniform int u_shape;
+uniform mat2 u_axis;
+uniform float u_corner;
+uniform bool u_radial;
+
+const float HALF_PI = 1.5707963;
 
 // Point i (0–15) of the piece from A to B, in the axis frame. Curves run between t0 and t1.
 vec2 pointAt(int i, vec2 A, vec2 B, float mid, float r1, float r2, float sx, float sy, bool straight, vec2 cut) {
@@ -381,31 +496,7 @@ void treePart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
 
 // ---- radial pieces: out along the source's spoke, round the ring halfway between, in along the target's spoke
 
-uniform vec2 u_centre;
-uniform bool u_morphing;
 const float ARC_STEP = 0.06; // radians per chord along a ring arc, as the CPU traces them
-
-vec2 ray(float angle) {
-  return vec2(cos(angle), sin(angle));
-}
-
-vec2 cubicAt(float t, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
-  float u = 1.0 - t;
-  return u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3;
-}
-
-// Where a cubic is reach from its start (or, fromB, its end).
-float cubicCut(float reach, vec2 p0, vec2 p1, vec2 p2, vec2 p3, bool fromB) {
-  if (reach <= 0.0) return fromB ? 1.0 : 0.0;
-  vec2 end = fromB ? p3 : p0;
-  float lo = 0.0, hi = 0.5;
-  for (int k = 0; k < 12; k++) {
-    float m = (lo + hi) * 0.5;
-    if (length(cubicAt(fromB ? 1.0 - m : m, p0, p1, p2, p3) - end) < reach) lo = m;
-    else hi = m;
-  }
-  return fromB ? 1.0 - lo : lo;
-}
 
 // Point i (0–29) of a radial step: the source end, a rounded corner (4 points), the ring arc (20), a rounded
 // corner (4), the target end. Each corner is a quadratic curve through the spoke and ring meeting point.
@@ -428,14 +519,31 @@ vec2 radialStepAt(int i, vec2 A, vec2 B, float as_, float at, float delta, float
   return c + ray(mix(from, to, float(i - 5) / 19.0)) * rm;
 }
 
-// How far a radial step has turned into a curve (0–1): stepCurveWeight in geometry.js.
-float stepCurveWeight(float rs, float rt, float hs, float ht, float arc, float chord) {
-  float gap = abs(ht - hs);
-  float slack = max(gap / 4.0, 1e-6);
-  float off = u_morphing ? 0.0 : smoothstep(0.5, 1.5, max(abs(rs - hs), abs(rt - ht)) / slack);
-  float inside = smoothstep(-gap / 4.0, 1.0, rs - rt);
-  float loops = smoothstep(0.9, 1.0, arc / (1.75 * chord + 10.0));
-  return max(off, max(inside, loops));
+// How far point i of a radial step is along it, as radialStepAt places them: from A, round the first corner (the
+// quadratic q1, j1, r1: points 1-4), along the arc (points 5-24, 19 equal chords; it starts where the corner
+// ends), round the second corner (r2, j2, q2: points 25-28) and on to B.
+float stepAlong(int i, vec2 A, vec2 B, vec2 q1, vec2 j1, vec2 r1, vec2 q2, vec2 j2, vec2 r2, float arcChord) {
+  if (i <= 0) return 0.0;
+  float run = 0.0;
+  vec2 previous = A;
+  for (int k = 0; k < 4; k++) {
+    float f = float(k) / 3.0;
+    vec2 p = mix(mix(q1, j1, f), mix(j1, r1, f), f);
+    run += length(p - previous);
+    previous = p;
+    if (i == k + 1) return run;
+  }
+  if (i <= 24) return run + float(i - 5) * arcChord;
+  run += 19.0 * arcChord;
+  previous = r2;
+  for (int k = 0; k < 4; k++) {
+    float f = float(k) / 3.0;
+    vec2 p = mix(mix(r2, j2, f), mix(j2, q2, f), f);
+    run += length(p - previous);
+    previous = p;
+    if (i == k + 25) return run;
+  }
+  return run + length(B - previous);
 }
 
 void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
@@ -492,50 +600,131 @@ void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   // Partway to a curve: each point slides towards the curve's point as far along it as the point is along the step.
   vec2 c1 = c + ray(as_) * rm, c2 = c + ray(at) * rm;
   float t0 = cubicCut(a_trim.x, S, c1, c2, T, false), t1 = cubicCut(a_trim.y, S, c1, c2, T, true);
-  vec2 previous = A;
-  float run = 0.0, alongA = 0.0, alongB = 0.0;
-  for (int i = 1; i < 30; i++) {
-    vec2 p = radialStepAt(i, A, B, as_, at, delta, rm, f1, f2, turn);
-    run += length(p - previous);
-    previous = p;
-    if (i == part) alongA = run;
-    if (i == part + 1) alongB = run;
-  }
-  float total = max(run, 1e-6);
+  // The corners' points (quadratics through where spoke and ring meet) and the arc's equal chords: enough to
+  // measure along the step without tracing all 30 of its points for every vertex.
+  vec2 q1 = c + ray(as_) * (rm - f1), r1 = c + ray(as_ + turn * f1 / rm) * rm;
+  vec2 q2 = c + ray(at) * (rm + f2), r2 = c + ray(at - turn * f2 / rm) * rm;
+  float from = as_ + turn * f1 / rm, to = as_ + delta - turn * f2 / rm;
+  float arcChord = 2.0 * rm * abs(sin((to - from) / 38.0));
+  float total = max(stepAlong(29, A, B, q1, c1, r1, q2, c2, r2, arcChord), 1e-6);
+  float alongA = stepAlong(part, A, B, q1, c1, r1, q2, c2, r2, arcChord);
+  float alongB = stepAlong(part + 1, A, B, q1, c1, r1, q2, c2, r2, arcChord);
   a = mix(a, cubicAt(mix(t0, t1, alongA / total), S, c1, c2, T), w);
   b = mix(b, cubicAt(mix(t0, t1, alongB / total), S, c1, c2, T), w);
 }
 
 void main() {
   int part = gl_VertexID / 6;
-  int corner = gl_VertexID % 6;
   vec4 s = nodeAt(a_nodes.x), t = nodeAt(a_nodes.y);
   vec2 a, b;
   if (u_radial) radialPart(part, s, t, a, b);
   else treePart(part, s, t, a, b);
-  vec2 along = b - a;
-  float length_ = length(along);
-  if (length_ < 1e-6 && part > 0) {
-    // Nothing to draw here (a straight piece's spare parts, a corner with no radius).
-    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    return;
+  // Nothing to draw past the first capsule when it has no length (a straight piece's spare parts, a corner with
+  // no radius).
+  capsule(a, b, length(b - a) >= 1e-6 || part == 0);
+}`;
+
+/**
+ * A bundled cross-link's span, built on the GPU: a uniform cubic B-spline span whose four control points are nodes
+ * on the tree path between the edge's ends (looked up in the positions texture), each pulled towards the straight
+ * line between the ends by (1 - u_strength). Each instance draws the span as u_steps capsules (BUNDLE_STEPS close
+ * up, fewer zoomed out: bundleSteps in gl-edges.js); each capsule is cut where it enters the disc of its source or
+ * target (the trims), so the edge stops at the nodes. The same geometry as bundleSpanCapsules in gl-edges.js, and
+ * bspline in geometry.js.
+ */
+export const BUNDLE_VERTEX = `#version 300 es
+layout(location = 0) in vec4 a_controls;
+layout(location = 1) in vec4 a_along;
+layout(location = 2) in vec2 a_nodes;
+layout(location = 3) in vec2 a_trim;
+layout(location = 4) in float a_half;
+layout(location = 5) in vec3 a_colour;
+layout(location = 6) in float a_alpha;
+${COMMON_VERTEX}
+${STOPS}
+${CAPSULE}
+${SPLINE}
+uniform float u_steps;
+
+void main() {
+  int part = gl_VertexID / 6;
+  vec2 S = nodeAt(a_nodes.x).xy, T = nodeAt(a_nodes.y).xy;
+  vec2 p0 = control(a_controls.x, a_along.x, S, T), p1 = control(a_controls.y, a_along.y, S, T);
+  vec2 p2 = control(a_controls.z, a_along.z, S, T), p3 = control(a_controls.w, a_along.w, S, T);
+  vec2 a = splineAt(float(part) / u_steps, p0, p1, p2, p3);
+  vec2 b = splineAt(float(part + 1) / u_steps, p0, p1, p2, p3);
+  bool keep = clipDisc(a, b, S, a_trim.x) && clipDisc(a, b, T, a_trim.y);
+  capsule(a, b, keep && length(b - a) >= 1e-6);
+}`;
+
+/**
+ * A bundled cross-link's end (arrowhead or dot): walking back from the target along the curve's last three spans
+ * (its last four control nodes), the first point at least the target's radius plus the end's room from the
+ * target; the tip sits that room on from where the curve crosses that distance, pointing the way the curve runs
+ * there. The same as bundleTip in gl-edges.js.
+ */
+export const BUNDLE_TIP_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_controls;
+layout(location = 2) in vec4 a_along;
+layout(location = 3) in vec2 a_nodes;
+layout(location = 4) in vec3 a_shape;  // target radius, size, kind
+layout(location = 5) in vec3 a_colour;
+layout(location = 6) in float a_alpha;
+${COMMON_VERTEX}
+${STOPS}
+${SPLINE}
+
+out vec2 v_local;
+flat out vec2 v_shape;
+flat out vec4 v_colour;
+
+void main() {
+  vec2 S = nodeAt(a_nodes.x).xy, T = nodeAt(a_nodes.y).xy;
+  vec2 q0 = control(a_controls.x, a_along.x, S, T), q1 = control(a_controls.y, a_along.y, S, T);
+  vec2 q2 = control(a_controls.z, a_along.z, S, T), q3 = control(a_controls.w, a_along.w, S, T);
+  float end = a_shape.y * 0.9;
+  float reach = a_shape.x + end;
+  int steps = int(STEPS);
+  vec2 previous = T, tip, dir;
+  bool found = false;
+  for (int k = 1; k <= 3 * steps; k++) {
+    int span = 2 - (k - 1) / steps;
+    float t = 1.0 - float((k - 1) % steps + 1) / STEPS;
+    vec2 p = span == 2 ? splineAt(t, q2, q3, q3, q3)
+      : span == 1 ? splineAt(t, q1, q2, q3, q3)
+      : splineAt(t, q0, q1, q2, q3);
+    if (length(p - T) >= reach) {
+      vec2 a = p, b = previous;
+      clipDisc(a, b, T, reach);
+      dir = normalize(previous - p + vec2(0.0, 1e-9));
+      tip = b + dir * end;
+      found = true;
+      break;
+    }
+    previous = p;
   }
-  // Two triangles: corners (-1,-1) (1,-1) (-1,1) / (-1,1) (1,-1) (1,1).
-  vec2 c = vec2(corner == 1 || corner == 4 || corner == 5 ? 1.0 : -1.0,
-                corner == 2 || corner == 3 || corner == 5 ? 1.0 : -1.0);
-  vec2 dir = length_ > 0.0 ? along / length_ : vec2(1.0, 0.0);
+  if (!found) {
+    // The whole end of the curve is inside the target: point along the last stretch.
+    dir = normalize(T - previous + vec2(0.0, 1e-9));
+    tip = T - dir * (reach - end);
+  }
+  // As END_VERTEX: x runs back from the tip along the edge, y across it.
   vec2 normal = vec2(-dir.y, dir.x);
-  float pad = a_half + 2.0 * u_pixel;
-  float along_ = mix(-pad, length_ + pad, c.x * 0.5 + 0.5);
-  vec2 world = a + dir * along_ + normal * c.y * pad;
-  gl_Position = toClip(world);
-  v_world = world;
-  v_ends = vec4(a, b);
-  v_half = vec2(a_half);
+  float size = a_shape.y;
+  vec2 local = vec2(0.45 * size, 0.0) + a_corner * (0.75 * size + 2.0 * u_pixel);
+  gl_Position = toClip(tip - dir * local.x + normal * local.y);
+  v_local = local;
+  v_shape = a_shape.yz;
   v_colour = vec4(a_colour, a_alpha);
 }`;
 
-/** An edge's end (arrowhead or dot) on the GPU: the tip is the target's edge, pointing the way the edge arrives. */
+/**
+ * An edge's end (arrowhead or dot) on the GPU: just off the target, pointing the way the edge runs where it's cut
+ * off the target (the target's radius plus the end's room away), as the CPU puts it. A step arrives along the
+ * axis (or the target's spoke); a curve along its tangent there, which a curve that has a long way across still
+ * leans along; a radial step easing into a curve, between the two.
+ */
 export const TIP_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec4 a_stop;   // the last stop before the target
@@ -545,27 +734,66 @@ layout(location = 4) in vec3 a_colour;
 layout(location = 5) in float a_alpha;
 ${COMMON_VERTEX}
 ${STOPS}
+${CURVES}
 uniform int u_shape;
 uniform mat2 u_axis;
 uniform bool u_radial;
-uniform vec2 u_centre;
 
 out vec2 v_local;
 flat out vec2 v_shape;
 flat out vec4 v_colour;
 
+const vec2 TINY = vec2(0.0, 1e-9);
+
 void main() {
   vec4 s = nodeAt(a_nodes.x), t = nodeAt(a_nodes.y);
   vec2 from = stopAt(a_stop, s, t), to = t.xy;
+  float end = a_shape.y * 0.9;
+  float reach = a_shape.x + end;
   vec2 dir;
-  vec2 q = u_axis * (to - from);
-  bool centred = length(s.xy - u_centre) < 1e-6 || length(s.zw - u_centre) < 1e-6;
-  if (u_radial)
-    // Steps and curves arrive along the target's spoke; straight edges and spokes from the centre, from the source.
-    dir = u_shape == 0 || centred ? normalize(to - from + vec2(0.0, 1e-9)) : normalize(to - u_centre + vec2(0.0, 1e-9));
-  else if (u_shape == 0 || abs(q.x) < 1e-6) dir = normalize(to - from + vec2(0.0, 1e-9));
-  else dir = transpose(u_axis) * vec2(0.0, q.y >= 0.0 ? 1.0 : -1.0);
-  vec2 tip = to - dir * a_shape.x;
+  // Where the edge is cut off the target: straight back along dir unless a curve says otherwise.
+  vec2 cut = vec2(0.0);
+  bool curved = false;
+  if (u_radial) {
+    vec2 c = u_centre;
+    float rs = length(from - c), rt = length(to - c);
+    bool centred = rs < 1e-6 || length(s.zw - c) < 1e-6;
+    if (u_shape == 0 || centred) dir = normalize(to - from + TINY);
+    else {
+      // Steps arrive along the target's spoke, curves along their tangent; a step easing into a curve, between.
+      float at = atan(to.y - c.y, to.x - c.x), as_ = atan(from.y - c.y, from.x - c.x);
+      float rm = (rs + rt) * 0.5;
+      float delta = at - as_;
+      if (delta > 3.14159265) delta -= 6.28318531;
+      if (delta < -3.14159265) delta += 6.28318531;
+      float w = u_shape == 2 ? 1.0
+        : stepCurveWeight(rs, rt, length(s.zw - c), length(t.zw - c), rm * abs(delta), length(to - from));
+      vec2 spoke = normalize(to - c + TINY);
+      dir = spoke;
+      if (w > 0.0) {
+        vec2 c1 = c + ray(as_) * rm, c2 = c + ray(at) * rm;
+        float t1 = cubicCut(reach, from, c1, c2, to, true);
+        dir = normalize(mix(spoke, normalize(cubicTangent(t1, from, c1, c2, to) + TINY), w) + TINY);
+        if (w >= 1.0) {
+          cut = cubicAt(t1, from, c1, c2, to);
+          curved = true;
+        }
+      }
+    }
+  } else {
+    vec2 A = u_axis * from, B = u_axis * to;
+    if (u_shape == 0 || abs(B.x - A.x) < 1e-6) dir = normalize(to - from + TINY);
+    else if (u_shape == 1) dir = transpose(u_axis) * vec2(0.0, B.y >= A.y ? 1.0 : -1.0);
+    else {
+      float mid = (A.y + B.y) * 0.5;
+      float t1 = curveCut(reach, A, B, mid, true);
+      vec2 p1 = vec2(A.x, mid), p2 = vec2(B.x, mid);
+      dir = transpose(u_axis) * normalize(cubicTangent(t1, A, p1, p2, B) + TINY);
+      cut = transpose(u_axis) * curveAt(t1, A, B, mid);
+      curved = true;
+    }
+  }
+  vec2 tip = curved ? cut + dir * end : to - dir * a_shape.x;
   vec2 normal = vec2(-dir.y, dir.x);
   float size = a_shape.y;
   vec2 local = vec2(0.45 * size, 0.0) + a_corner * (0.75 * size + 2.0 * u_pixel);

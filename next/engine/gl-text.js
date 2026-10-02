@@ -84,12 +84,19 @@ class Atlas {
 
   /** Draw `text` into the atlas. Returns false when the atlas is full. */
   add(text) {
-    const font = `${this.px}px system-ui, sans-serif`;
+    let font = `${this.px}px system-ui, sans-serif`;
     this.ctx.font = font;
-    const w = Math.min(
-      Math.ceil(this.ctx.measureText(text).width) + PAD * 2,
-      PAGE,
-    );
+    let w = Math.ceil(this.ctx.measureText(text).width) + PAD * 2;
+    // A label wider than a page at this scale (a long name zoomed far in) is drawn at a smaller scale that fits,
+    // rather than cut off: a little softer, but whole.
+    let scale = this.scale;
+    if (w > PAGE) {
+      const fit = (PAGE - PAD * 2 - 2) / (w - PAD * 2);
+      scale = this.scale * fit;
+      font = `${this.px * fit}px system-ui, sans-serif`;
+      this.ctx.font = font;
+      w = Math.min(Math.ceil(this.ctx.measureText(text).width) + PAD * 2, PAGE);
+    }
     const h = this.rowHeight;
     let page = this.pages.at(-1) ?? this.#newPage();
     if (page && this.cursor.x + w > PAGE) {
@@ -132,6 +139,7 @@ class Atlas {
       y: this.cursor.y,
       w,
       h,
+      scale,
     });
     this.cursor.x += w;
     return true;
@@ -163,7 +171,7 @@ export class LabelLayer {
   /**
    * @returns {{ data: Float32Array, groups: { page: any, first: number, count: number }[], pending: boolean }}
    */
-  build(scene, labelAlpha) {
+  build(scene, labelAlpha, origin = { x: 0, y: 0 }) {
     const { graph, node, looks, camera, dpr, width, height } = scene;
     const scale = bucketScale(camera.k, dpr);
     if (
@@ -233,8 +241,10 @@ export class LabelLayer {
       const first = at;
       for (let i = 0; i < list.length; i += 3) {
         const n = list[i],
-          { entry, scale: s } = list[i + 1],
+          { entry } = list[i + 1],
           alpha = list[i + 2];
+        // A label too long for a page at the atlas's scale was drawn smaller (entry.scale): same size in the world.
+        const s = entry.scale;
         const textWidth = (entry.w - PAD * 2) / s;
         const box = labelBox(
           n.x,
@@ -246,8 +256,8 @@ export class LabelLayer {
         );
         const o = at++ * LABEL_STRIDE;
         // The quad covers the whole cell, padding included.
-        this.data[o] = box.left - PAD / s;
-        this.data[o + 1] = box.middle;
+        this.data[o] = box.left - PAD / s - origin.x;
+        this.data[o + 1] = box.middle - origin.y;
         this.data[o + 2] = entry.w / s;
         this.data[o + 3] = entry.h / s;
         this.data[o + 4] = entry.x / PAGE;

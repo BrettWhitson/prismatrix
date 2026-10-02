@@ -382,3 +382,168 @@ test("each node's and edge's own style wins over the view's options", () => {
   assert.equal(packed[7], SHAPE_IDS.diamond);
   assert.equal(packed[NODE_STRIDE + 7], SHAPE_IDS.circle);
 });
+
+test("nodes and CPU-traced edges pack relative to an origin, so far-out graphs keep their precision", () => {
+  const g = small();
+  const routing = treeLayout(g, {});
+  const far = 3e6; // 32-bit floats only land on quarter-pixels out here
+  for (const n of g.nodes) [n.x, n.y] = [n.homeX + far + 0.3, n.homeY - far];
+  const s = scene(g, routing, { shape: "fan", arrow: "arrow" });
+  const origin = { x: far, y: -far };
+  const nodes = packNodes(s, null, origin);
+  const root = g.byId.get("root");
+  // Relative to the origin, the 0.3 survives the 32-bit buffer; at 3,000,000 px it would round to a quarter.
+  assert.ok(Math.abs(nodes[root.index * NODE_STRIDE] - (root.x - far)) < 1e-4);
+  assert.ok(Math.abs(Math.fround(root.x) - root.x) > 0.04);
+  const absolute = packEdges(s);
+  const relative = packEdges(s, {}, null, origin);
+  assert.equal(relative.segmentCount, absolute.segmentCount);
+  for (
+    let i = 0;
+    i < relative.segmentCount * SEGMENT_STRIDE;
+    i += SEGMENT_STRIDE
+  )
+    for (const k of [0, 2])
+      assert.ok(
+        Math.abs(
+          relative.segments[i + k] + origin.x - absolute.segments[i + k],
+        ) < 0.5,
+      );
+});
+
+// ---- the WebGL painter's rebuild logic, with a stand-in GL that only counts what's sent to the GPU -------------
+
+import { GraphModel } from "../../next/engine/model.js";
+import { GraphController } from "../../next/engine/controller.js";
+import { WebGLPainter } from "../../next/engine/webgl.js";
+import { withReferences } from "../../next/engine/references.js";
+import { readFileSync } from "node:fs";
+
+/** A canvas whose WebGL2 context does nothing but count the bytes uploaded; its 2D context does nothing. */
+function fakeCanvas(sent) {
+  const listeners = {};
+  const gl = new Proxy(
+    {},
+    {
+      get(_, name) {
+        if (typeof name !== "string") return undefined;
+        if (/^[A-Z0-9_]+$/.test(name)) return name; // constants
+        if (name === "getShaderParameter") return () => true;
+        if (name === "getProgramParameter")
+          return (_p, k) => (k === "LINK_STATUS" ? true : 0);
+        if (name === "getExtension") return () => null;
+        if (name === "bufferSubData")
+          return (_t, _o, data, _s, length) => {
+            sent.bytes += (length ?? data.length) * data.BYTES_PER_ELEMENT;
+          };
+        if (name === "texSubImage2D" || name === "texImage2D")
+          return (...args) => {
+            const data = args.find((a) => a?.BYTES_PER_ELEMENT);
+            if (data) sent.bytes += data.byteLength;
+          };
+        return () => ({});
+      },
+    },
+  );
+  const ctx2d = new Proxy(
+    {},
+    {
+      get: (_, name) =>
+        name === "measureText"
+          ? (t) => ({ width: t.length * 6 })
+          : name === "getImageData"
+            ? (x, y, w, h) => ({ width: w, height: h })
+            : () => {},
+      set: () => true,
+    },
+  );
+  return {
+    width: 800,
+    height: 600,
+    style: {},
+    parentElement: { insertBefore() {} },
+    addEventListener: (type, f) => (listeners[type] = f),
+    remove() {},
+    getContext: (kind) => (kind === "webgl2" ? gl : ctx2d),
+    fire: (type) => listeners[type]?.({ preventDefault() {} }),
+  };
+}
+
+/** Run `body` with just enough of a DOM for the WebGL painter. */
+function withDom(body) {
+  const saved = [globalThis.document, globalThis.getComputedStyle];
+  const sent = { bytes: 0 };
+  globalThis.document = { createElement: () => fakeCanvas(sent) };
+  globalThis.getComputedStyle = () => ({ position: "relative" });
+  try {
+    body(sent);
+  } finally {
+    [globalThis.document, globalThis.getComputedStyle] = saved;
+  }
+}
+
+/** A small crafting fixture: shared ingredients, so the merged tree draws references to them. */
+function craftingSmall() {
+  const url = new URL(
+    "../fixtures/graphs/crafting-small.json",
+    import.meta.url,
+  );
+  return new GraphModel(JSON.parse(readFileSync(url, "utf8")));
+}
+
+test("the WebGL painter sends nothing new for a frame where only the display graph object is new", () => {
+  withDom((sent) => {
+    const c = new GraphController(craftingSmall(), null, {
+      layout: "merged",
+      worker: false,
+      clock: () => 1000,
+    });
+    c.setViewport(800, 600, 1);
+    c.run(500, { start: 1000 });
+    assert.ok(c.routing.references?.length, "the layout drew references");
+    const painter = new WebGLPainter(
+      globalThis.document.createElement("canvas"),
+    );
+    const scene = c.scene;
+    painter.draw(scene);
+    // The view builds the display graph again every frame (withReferences): same content, new objects.
+    const again = withReferences(c.graph, c.routing.references, {
+      looks: c.looks,
+      shade: c.shade,
+      appear: c.appear,
+    });
+    assert.notEqual(again.graph, scene.graph);
+    sent.bytes = 0;
+    const camera = { ...scene.camera, x: scene.camera.x + 5 };
+    painter.draw({ ...scene, ...again, camera });
+    assert.equal(
+      sent.bytes,
+      0,
+      "a pan with a rebuilt display graph uploads nothing",
+    );
+    painter.draw({ ...scene, version: scene.version + 1 });
+    assert.ok(sent.bytes > 0, "moved nodes do go up");
+  });
+});
+
+test("when a lost WebGL context comes back, the painter draws the last frame again by itself", () => {
+  withDom((sent) => {
+    const c = new GraphController(craftingSmall(), null, {
+      layout: "tree",
+      worker: false,
+      clock: () => 1000,
+    });
+    c.setViewport(800, 600, 1);
+    c.run(300, { start: 1000 });
+    const painter = new WebGLPainter(
+      globalThis.document.createElement("canvas"),
+    );
+    painter.draw(c.scene);
+    painter.glCanvas.fire("webglcontextlost");
+    sent.bytes = 0;
+    painter.draw(c.scene);
+    assert.equal(sent.bytes, 0, "nothing is drawn while the context is lost");
+    painter.glCanvas.fire("webglcontextrestored");
+    assert.ok(sent.bytes > 0, "restored: everything sent again and drawn");
+  });
+});

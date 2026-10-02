@@ -55,19 +55,23 @@ function palette() {
   };
 }
 
+/** World 0, 0: where positions are measured from unless a renderer asks for an origin of its own. */
+const ORIGIN = Object.freeze({ x: 0, y: 0 });
+
 /**
- * Every node as instance data for the node shader, into `out` (grown if too small).
+ * Every node as instance data for the node shader, into `out` (grown if too small), positions relative to
+ * `origin`.
  * @returns {Float32Array}
  */
-export function packNodes(scene, out) {
+export function packNodes(scene, out, origin = ORIGIN) {
   const { graph, looks } = scene;
   out = room(out, graph.nodes.length * NODE_STRIDE);
   const colour = palette();
   for (const n of graph.nodes) {
     const rgb = colour(looks.fill[n.index]);
     const o = n.index * NODE_STRIDE;
-    out[o] = n.x;
-    out[o + 1] = n.y;
+    out[o] = n.x - origin.x;
+    out[o + 1] = n.y - origin.y;
     out[o + 2] = looks.radius[n.index];
     out[o + 3] = rgb[0];
     out[o + 4] = rgb[1];
@@ -85,10 +89,11 @@ export function packNodes(scene, out) {
  * @param {{ segments?: Float32Array, ends?: Float32Array, segmentEdge?: Int32Array, endEdge?: Int32Array }} [reuse]
  *   buffers from the last frame
  * @param {number[] | null} [only] just these edges (by index); all of them when null
+ * @param {{ x: number, y: number }} [origin] where positions are measured from (world 0, 0 by default)
  * @returns {{ segments: Float32Array, ends: Float32Array, segmentEdge: Int32Array, endEdge: Int32Array,
  *   segmentCount: number, endCount: number }}
  */
-export function packEdges(scene, reuse = {}, only = null) {
+export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
   const { graph, routing, edge, looks } = scene;
   const colour = palette();
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
@@ -142,10 +147,10 @@ export function packEdges(scene, reuse = {}, only = null) {
       const length = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
       segmentEdge[segmentCount] = edgeIndex;
       const o = segmentCount++ * SEGMENT_STRIDE;
-      segments[o] = pts[i - 2];
-      segments[o + 1] = pts[i - 1];
-      segments[o + 2] = pts[i];
-      segments[o + 3] = pts[i + 1];
+      segments[o] = pts[i - 2] - origin.x;
+      segments[o + 1] = pts[i - 1] - origin.y;
+      segments[o + 2] = pts[i] - origin.x;
+      segments[o + 3] = pts[i + 1] - origin.y;
       segments[o + 4] = half(walked);
       walked += length;
       segments[o + 5] = half(walked);
@@ -165,8 +170,8 @@ export function packEdges(scene, reuse = {}, only = null) {
       endEdge = roomInt(endEdge, endCount + 1);
       endEdge[endCount] = edgeIndex;
       const o = endCount++ * END_STRIDE;
-      ends[o] = pts[n - 2] + dx * end;
-      ends[o + 1] = pts[n - 1] + dy * end;
+      ends[o] = pts[n - 2] + dx * end - origin.x;
+      ends[o + 1] = pts[n - 1] + dy * end - origin.y;
       ends[o + 2] = dx;
       ends[o + 3] = dy;
       ends[o + 4] = edge.arrowSize;
