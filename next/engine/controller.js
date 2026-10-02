@@ -113,6 +113,9 @@ export class GraphController {
     // frame until it moves (panning and zooming redraw without rebuilding).
     this.version = 0;
     this.shadeVersion = 0; // bumped when only brightness changes (hover, fades): no geometry to rebuild
+    // Bumped when the layout, the styles or the graph change, not when nodes move: what a renderer builds from
+    // homes and looks (edge pieces) lasts until then.
+    this.geometryVersion = 0;
     this.focusCache = { key: -1, set: null };
     /** @type {import("./ghosts.js").Ghost[]} nodes that left the graph, folding away */
     this.ghosts = [];
@@ -186,6 +189,7 @@ export class GraphController {
   #restyle() {
     this.looks = looksOf(this.graph, this.node, this.edge);
     this.version++;
+    this.geometryVersion++;
     this.#changed();
   }
 
@@ -445,6 +449,7 @@ export class GraphController {
 
   #relayout({ fit, arrive = undefined }) {
     this.version++;
+    this.geometryVersion++;
     this.looks = looksOf(this.graph, this.node, this.edge);
     const sizing = this.#sizing();
     this.routing = LAYOUTS[this.layout].run(
@@ -689,6 +694,7 @@ export class GraphController {
         this.anim.transition,
         EASINGS[this.anim.easing] ?? EASINGS.smooth,
       );
+      if (shown.live.length !== this.ghosts.length) this.geometryVersion++;
       this.ghosts = shown.live;
       this.version++; // ghosts move every frame
       busy = true;
@@ -703,8 +709,10 @@ export class GraphController {
       shade: shown.shade,
       appear: shown.appear,
       dim: this.anim.hoverDim,
+      matrix: this.graph.matrix,
       version: this.version,
       shadeVersion: this.shadeVersion,
+      geometryVersion: this.geometryVersion,
       width: this.width,
       height: this.height,
       dpr: this.dpr,

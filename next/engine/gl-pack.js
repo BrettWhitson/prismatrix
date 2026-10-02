@@ -84,10 +84,11 @@ export function packNodes(scene, out) {
  * @param {object} scene
  * @param {{ segments?: Float32Array, ends?: Float32Array, segmentEdge?: Int32Array, endEdge?: Int32Array }} [reuse]
  *   buffers from the last frame
+ * @param {number[] | null} [only] just these edges (by index); all of them when null
  * @returns {{ segments: Float32Array, ends: Float32Array, segmentEdge: Int32Array, endEdge: Int32Array,
  *   segmentCount: number, endCount: number }}
  */
-export function packEdges(scene, reuse = {}) {
+export function packEdges(scene, reuse = {}, only = null) {
   const { graph, routing, edge, looks } = scene;
   const colour = palette();
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
@@ -102,7 +103,9 @@ export function packEdges(scene, reuse = {}) {
   let segmentCount = 0,
     endCount = 0;
 
-  for (let edgeIndex = 0; edgeIndex < graph.edges.length; edgeIndex++) {
+  const count = only ? only.length : graph.edges.length;
+  for (let k = 0; k < count; k++) {
+    const edgeIndex = only ? only[k] : k;
     const e = graph.edges[edgeIndex];
     const s = graph.nodes[e.source],
       t = graph.nodes[e.target];
@@ -191,14 +194,11 @@ export function packEdges(scene, reuse = {}) {
  * @param {{ segmentAlpha?: Float32Array, endAlpha?: Float32Array }} [reuse]
  * @returns {{ segmentAlpha: Float32Array, endAlpha: Float32Array, bright: boolean }}
  */
-export function edgeBrightness(scene, packed, reuse = {}) {
+export function edgeBrightness(scene, packed, reuse = {}, perEdge = null) {
   const { edges } = scene.graph;
-  const perEdge = new Float32Array(edges.length);
+  perEdge ??= Float32Array.from(edges, (e) => edgeAlpha(scene, e));
   let bright = true;
-  for (let i = 0; i < edges.length; i++) {
-    perEdge[i] = edgeAlpha(scene, edges[i]);
-    if (perEdge[i] < 1) bright = false;
-  }
+  for (let i = 0; i < edges.length; i++) if (perEdge[i] < 1) bright = false;
   let segmentAlpha = reuse.segmentAlpha;
   if (!segmentAlpha || segmentAlpha.length < packed.segmentCount)
     segmentAlpha = new Float32Array(Math.ceil(packed.segmentCount * 1.5) + 16);

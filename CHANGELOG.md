@@ -26,7 +26,10 @@ draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the packa
   (`replace`), which reuse every unchanged node; it stores label widths (each label measured once) and reports
   exactly what changed. The controller listens and does only what a change needs (a restyle, a layout, a morph);
   node positions and velocities live in its matrix of typed-array columns. The renderer owns the screen (canvas,
-  input, frames, text measurement). `GraphView` is gone. A 30k → 40k node update freezes for 0.46 s instead of 0.91.
+  input, frames, text measurement). `GraphView` is gone.
+- **Speed at 40k nodes:** edges are traced on the GPU from a positions texture (straight, step and curve, in every
+  layout), so a morph frame takes 8–12 ms instead of 105–199; the merged tree lays out in about 0.4 s instead of
+  0.65, and network-simplex layering has a time budget instead of running for minutes.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
   writes a rolling 30-second engine log to `logs/engine-stats.log`.
 
