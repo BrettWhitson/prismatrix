@@ -74,6 +74,15 @@ export const NODE_OPTIONS = [
   ),
   range("labelSize", "Label size", 6, 24, 1, 11),
   range(
+    "labelMaxWidth",
+    "Label width",
+    0,
+    400,
+    10,
+    160,
+    "Longer labels are cut short with an ellipsis (shown whole on hover). 0: no limit.",
+  ),
+  range(
     "collisionRadius",
     "Collision radius",
     0,
@@ -128,6 +137,17 @@ export const EDGE_OPTIONS = [
     "none",
   ),
   range("arrowSize", "End size", 2, 16, 0.5, 6),
+  select(
+    "labels",
+    "Labels",
+    [
+      { value: "off", label: "Off" },
+      { value: "target", label: "Near the target" },
+      { value: "middle", label: "Middle" },
+    ],
+    "target",
+    "Where an edge's own label (a quantity, say) is drawn. Shown once zoomed in far enough to read.",
+  ),
 ];
 
 /** Colours by depth, then wrapping. Picked to read on the dark background. */

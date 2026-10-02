@@ -1,6 +1,8 @@
 // Edge geometry: the polyline an edge follows, from its source node's centre to its target's, for a routing and a
 // shape. Pure functions, no drawing.
 
+import { LINE, reach, startTrim } from "./boxes.js";
+
 const ARC_STEP = 0.06; // radians per point along a ring arc
 const FAN_STUB = 0.4; // how far a fan's junction sits towards the children, as a share of the way
 
@@ -468,6 +470,107 @@ export function trim(pts, from, to) {
     total += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
   if (from + to >= total) return null;
   return slice(pts, from, total - to);
+}
+
+/** The last startTrims worked out, and what for: painters ask every frame, and it changes only with the layout. */
+let trimsMemo = null;
+
+/**
+ * Where each edge starts, as a distance from its source's centre (what `trim` cuts off its route's start, and the
+ * GPU pieces' first trim): off the node, and past the node's own label when the edge would leave through it (labels
+ * below in a top-to-bottom tree or merged tree: every parent's edges), so labels stay clear of their own edges.
+ * Worked out from where the layout put the nodes (homes), so it holds while they move: a step or curve leaves
+ * along the layout's axis (a radial's spokes), a straight edge towards its first stop. At most 45% of the way to
+ * that stop (35% for a fan, whose trunk splits early). Cross-links that bundle along the tree start off the node
+ * only (they rarely leave through the label, and the GPU clips them to a disc). Needs `scene.labelWidths` (each
+ * real node's label width as the layout kept room for it); without it, every edge starts at its node's radius.
+ * @returns {Float64Array} per edge of the scene's graph
+ */
+export function startTrims(scene) {
+  const { graph, routing, edge, looks, node, labelWidths } = scene;
+  const m = trimsMemo;
+  if (
+    m &&
+    scene.geometryVersion !== undefined &&
+    m.version === scene.geometryVersion &&
+    m.edges === graph.edges &&
+    m.looks === looks &&
+    m.widths === labelWidths &&
+    m.routing === routing
+  )
+    return m.trims;
+  const edges = graph.edges;
+  const out = new Float64Array(edges.length);
+  for (let i = 0; i < edges.length; i++) out[i] = looks.radius[edges[i].source];
+  if (labelWidths && node && node.labels !== "off") {
+    const h = node.labelSize * LINE;
+    const radial = routing.kind === "radial";
+    const layered = routing.kind === "layered";
+    const axis = TREE_AXIS[routing.direction] ?? TREE_AXIS.TB;
+    const shaped = edge.shape !== "straight";
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i];
+      const w = labelWidths[e.source];
+      if (!(w > 0)) continue;
+      if (!layered && !e.tree && shaped) continue; // bundled
+      const s = graph.nodes[e.source],
+        t = graph.nodes[e.target];
+      const sx = s.homeX ?? s.x,
+        sy = s.homeY ?? s.y;
+      const bend = layered ? routing.bends.get(e)?.[0] : null;
+      const fx = bend ? bend[0] : (t.homeX ?? t.x),
+        fy = bend ? bend[1] : (t.homeY ?? t.y);
+      let dx = fx - sx,
+        dy = fy - sy;
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-6) continue;
+      let reachOut = len;
+      if (shaped && radial) {
+        // Out along the source's spoke (in, towards a child nearer the centre); from the centre, at the child.
+        const rx = sx - routing.cx,
+          ry = sy - routing.cy;
+        const rs = Math.hypot(rx, ry);
+        const rt = Math.hypot(fx - routing.cx, fy - routing.cy);
+        if (rs > 1e-6) {
+          const sign = rt >= rs ? 1 : -1;
+          dx = (rx / rs) * sign;
+          dy = (ry / rs) * sign;
+          reachOut = Math.abs(rt - rs) || len;
+        } else {
+          dx /= len;
+          dy /= len;
+        }
+      } else if (shaped) {
+        const along = dx * axis[0] + dy * axis[1];
+        const sign = Math.sign(along) || 1;
+        dx = axis[0] * sign;
+        dy = axis[1] * sign;
+        reachOut = Math.abs(along) || len;
+      } else {
+        dx /= len;
+        dy /= len;
+      }
+      out[i] = startTrim(
+        looks.radius[e.source],
+        looks.radius[e.source] * reach(looks.shape[e.source]),
+        s.labelAngle ?? Math.PI / 2,
+        w,
+        h,
+        dx,
+        dy,
+        reachOut * (edge.shape === "fan" ? 0.35 : 0.45),
+      );
+    }
+  }
+  trimsMemo = {
+    version: scene.geometryVersion,
+    edges,
+    looks,
+    widths: labelWidths,
+    routing,
+    trims: out,
+  };
+  return out;
 }
 
 /** The part of a polyline between two distances along it. */

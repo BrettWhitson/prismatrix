@@ -14,7 +14,7 @@
 // Layout state (positions, velocities) is not here: a controller keeps that in its matrix (one model can be shown by
 // several controllers at once), and a snapshot (snapshot.js) records it by id.
 
-import { LINE } from "./boxes.js";
+import { LINE, fitLabel } from "./boxes.js";
 import { closest, resolve } from "./schema.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "./style.js";
 
@@ -30,6 +30,7 @@ export const SIZE_KEYS = [
   "labelSize",
   "collisionRadius",
   "labelCollide",
+  "labelMaxWidth",
 ];
 
 /** Text width without a browser: about right for a sans-serif face. Renderers measure for real. */
@@ -46,6 +47,8 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @property {string} [color]  "#rrggbb"
  * @property {number} [size]   diameter, world px
  * @property {string} [shape]  one of the node shapes (circle, square, rounded, diamond, hexagon, ring)
+ * @property {string} [badge]  up to 12 characters in a pill at the node's top right ("!", "new"); top left when the
+ *   node is collapsed (its "+N" takes the right)
  *
  * @typedef {object} EdgeStyle
  * @property {string} [color]  "#rrggbb"
@@ -55,6 +58,7 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @property {string} id       given, or "source>target" (with "#2", "#3"… for repeats)
  * @property {string} source   node id
  * @property {string} target   node id
+ * @property {string} label    drawn small near the target end ("×3"), or "" for none
  * @property {EdgeStyle} style how this edge looks, overriding the model's edge options (see EDGE_STYLE)
  * @property {object} data
  *
@@ -70,7 +74,7 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @property {object[]} [changeNodes]  `{ id, label?, style?, data? }`: the fields given replace the node's own
  * @property {object[]} [addEdges]     new edges, as in the JSON format
  * @property {string[]} [removeEdges]  ids
- * @property {object[]} [changeEdges]  `{ id, style?, data? }`
+ * @property {object[]} [changeEdges]  `{ id, label?, style?, data? }`
  *
  * @typedef {object} Change
  * @property {number} version      the model's version after the change
@@ -160,6 +164,7 @@ export const NODE_STYLE = {
   stroke: colour,
   strokeWidth: number(0, 100),
   icon,
+  badge: (v) => typeof v === "string" && v.length <= 12,
 };
 /** What an edge's `style` may set. */
 export const EDGE_STYLE = {
@@ -332,8 +337,14 @@ const sameNode = (raw, node) =>
   same(raw?.style, node.style) &&
   same(raw?.data, node.data);
 
+/** An edge's label: "" when it has none. */
+const edgeLabelOf = (raw) =>
+  raw?.label === undefined || raw?.label === null ? "" : String(raw.label);
+
 const sameEdge = (raw, edge) =>
-  same(raw?.style, edge.style) && same(raw?.data, edge.data);
+  edgeLabelOf(raw) === edge.label &&
+  same(raw?.style, edge.style) &&
+  same(raw?.data, edge.data);
 
 function makeNode(id, raw, problem) {
   return Object.freeze({
@@ -351,6 +362,7 @@ function makeEdge(id, source, target, raw, problem) {
     id,
     source,
     target,
+    label: edgeLabelOf(raw),
     style: checkStyle(raw?.style, EDGE_STYLE, `edge "${id}"`, (k, m) =>
       problem(k, m, id),
     ),
@@ -692,14 +704,18 @@ export class GraphModel {
     return this.#arrays().incoming;
   }
 
-  /** Each node's label width at the current label size (world px): every distinct label is measured once and kept. */
+  /**
+   * Each node's label width at the current label size (world px): every distinct label is measured once and kept.
+   * A label wider than the `labelMaxWidth` option is cut short with an ellipsis (fitLabel), as the painters draw it.
+   */
   labelWidths() {
     if (this.#widthsAt === this.#nodesStamp) return this.widths;
-    const size = this.opts.node.labelSize;
+    const { labelSize: size, labelMaxWidth: max } = this.opts.node;
+    const measure = (text) => this.measure(text, size);
     const width = (label) => {
       let w = this.widthCache.get(label);
       if (w === undefined) {
-        w = this.measure(label, size);
+        w = fitLabel(label, max, measure).width;
         this.widthCache.set(label, w);
       }
       return w;
@@ -1028,7 +1044,7 @@ export class GraphModel {
     }
     for (const [before, after] of edgePairs) {
       change.edgesChanged.push(after.id);
-      if (!same(after.style, before.style)) {
+      if (before.label !== after.label || !same(after.style, before.style)) {
         change.edgesRestyled.push(after.id);
         drawn = true;
       }
@@ -1163,6 +1179,7 @@ export class GraphModel {
       }
       const old = changedEdges.get(i) ?? oldEdges[i];
       const raw = {
+        label: "label" in c ? c.label : old.label,
         style: "style" in c ? c.style : old.style,
         data: "data" in c ? c.data : old.data,
       };
@@ -1320,7 +1337,8 @@ export class GraphModel {
     }
     this.opts = next;
     this.issues = issues;
-    if ("labelSize" in nodeChanged) this.#forgetWidths();
+    if ("labelSize" in nodeChanged || "labelMaxWidth" in nodeChanged)
+      this.#forgetWidths();
     return {
       ...noChange(),
       issues,
@@ -1531,6 +1549,7 @@ export class GraphModel {
         id: e.id,
         source: e.source,
         target: e.target,
+        ...(e.label && { label: e.label }),
         ...(Object.keys(e.style).length && { style: e.style }),
         ...(Object.keys(e.data).length && { data: e.data }),
       })),

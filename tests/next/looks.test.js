@@ -37,6 +37,7 @@ import {
 } from "../../next/engine/gl-pack.js";
 import { PIECE_STRIDE, packPieces } from "../../next/engine/gl-edges.js";
 import { WebGLPainter, restylesSince } from "../../next/engine/webgl.js";
+import { LABEL_STRIDE } from "../../next/engine/gl-text.js";
 
 const NODE = defaultsOf(NODE_OPTIONS);
 const EDGE = defaultsOf(EDGE_OPTIONS);
@@ -110,9 +111,11 @@ function recorder() {
       get: (target, name) =>
         name in target
           ? target[name]
-          : (...args) => {
-              calls.push([name, ...args]);
-            },
+          : name === "measureText"
+            ? (text) => ({ width: text.length * 6 })
+            : (...args) => {
+                calls.push([name, ...args]);
+              },
       set: (_, name, value) => (calls.push([`=${name}`, value]), true),
     },
   );
@@ -236,11 +239,17 @@ test("WebGL: the theme's background clears the canvas and its text colour tints 
     const bg = parseColour(THEMES.light.background);
     const clear = sent.calls.find(([n]) => n === "clearColor");
     assert.ok(close(clear.slice(1, 4), bg));
+    // Each piece of text carries its colours (gl-text.js, LABEL_STRIDE): text, then halo.
     const text = parseColour(THEMES.light.text);
-    assert.ok(
-      sent.calls.some(([n, , ...v]) => n === "uniform3f" && close(v, text)),
-      "labels in the theme's text colour",
-    );
+    const halo = parseColour(THEMES.light.textHalo);
+    const { data } = painter.layer.labelLayer;
+    const count = painter.layer.labelGroups.reduce((n, g) => n + g.count, 0);
+    assert.ok(count > 0);
+    for (let k = 0; k < count; k++) {
+      const row = data.subarray(k * LABEL_STRIDE, (k + 1) * LABEL_STRIDE);
+      assert.ok(close([...row.subarray(12, 15)], text), "the theme's text");
+      assert.ok(close([...row.subarray(15, 18)], halo), "on its halo");
+    }
   });
 });
 

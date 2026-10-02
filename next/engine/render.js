@@ -1,7 +1,8 @@
 // Canvas 2D drawing. Deliberately plain for now: the look is what's being worked out, speed comes later.
 
-import { labelAnchor, reach } from "./boxes.js";
-import { edgeRoute, fanJunctions, trim } from "./geometry.js";
+import { edgeRoute, fanJunctions, startTrims, trim } from "./geometry.js";
+import { TEXT_HALO, font, planText, textBox, textFitter } from "./labels.js";
+import { LINK, linkGlyphs } from "./references.js";
 import {
   ROUNDED_CORNER,
   TILE_CORNER,
@@ -164,6 +165,7 @@ export function drawScene(ctx, scene, icons = iconStore()) {
   drawEdges(ctx, scene);
   drawNodes(ctx, scene, icons);
   drawHalos(ctx, scene);
+  drawGlyphs(ctx, scene);
   drawLabels(ctx, scene);
 }
 
@@ -328,6 +330,7 @@ export function drawEdges(ctx, scene) {
   const world = worldTransform(scene);
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
   const index = new Map(graph.edges.map((e, i) => [e, i]));
+  const starts = startTrims(scene); // past each source's own label
   const draw = (target, e) =>
     drawEdge(
       target,
@@ -343,6 +346,7 @@ export function drawEdges(ctx, scene) {
       graph.nodes[e.source],
       graph.nodes[e.target],
       index.get(e),
+      starts[index.get(e)],
     );
   const style = (target) => {
     target.setTransform(...world);
@@ -461,16 +465,104 @@ export function labelsShown(node, camera) {
 /** Text smaller than this many CSS px is never drawn. */
 export const LABEL_MIN_PX = 2;
 
+/** Each canvas's text measurement (and label fitting), kept with it. */
+const fitters = new WeakMap();
+
+/**
+ * All the text (labels.js plans it: node and edge labels, counts, badges, pinned labels), each piece with its halo
+ * (or pill) under it, for what's on or near the screen.
+ */
 export function drawLabels(ctx, scene) {
-  const { graph, node, looks, camera } = scene;
-  if (!labelsShown(node, camera)) return;
+  const { node, camera, width, height } = scene;
+  let fitter = fitters.get(ctx);
+  if (!fitter) {
+    const widths = new Map();
+    const measure = (text, size) => {
+      const key = `${size}|${text}`;
+      let w = widths.get(key);
+      if (w === undefined) {
+        if (widths.size > 50000) widths.clear();
+        ctx.font = font(size);
+        w = ctx.measureText(text).width;
+        widths.set(key, w);
+      }
+      return w;
+    };
+    fitter = { measure, fit: textFitter(measure) };
+    fitters.set(ctx, fitter);
+  }
+  const k = camera.k;
+  // The view, and room round it for text reaching in from nodes just outside.
+  const margin = (node.labelMaxWidth || 400) + 40;
+  const near = {
+    x0: camera.x - width / 2 / k - margin,
+    x1: camera.x + width / 2 / k + margin,
+    y0: camera.y - height / 2 / k - margin,
+    y1: camera.y + height / 2 / k + margin,
+  };
+  const items = planText(scene, { fit: fitter.fit, near });
+  if (!items.length) return;
   ctx.setTransform(...worldTransform(scene));
-  ctx.font = `${node.labelSize}px system-ui, sans-serif`;
-  ctx.fillStyle = (scene.theme ?? DEFAULT_THEME).text;
-  for (const n of graph.nodes) {
-    ctx.globalAlpha = labelAlpha(scene, n.index);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  for (const item of items) {
+    const u = item.screen ? 1 / k : 1; // world px per unit
+    const box = textBox(item, fitter.measure(item.text, item.size));
+    const size = item.size * u;
+    const y = item.y + box.middle * u;
+    ctx.globalAlpha = item.alpha;
+    ctx.font = font(size);
+    if (item.pill) {
+      ctx.fillStyle = item.under;
+      ctx.beginPath();
+      ctx.roundRect(
+        item.x + box.left * u,
+        y - (box.height * u) / 2,
+        box.width * u,
+        box.height * u,
+        (box.height * u) / 2,
+      );
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = item.under;
+      ctx.lineWidth = 2 * TEXT_HALO * size;
+      ctx.strokeText(item.text, item.x + box.text * u, y);
+    }
+    ctx.fillStyle = item.colour;
+    ctx.fillText(item.text, item.x + box.text * u, y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * The link glyph inside each reference chip big enough to show one: two interlocked links, turned 45°, in the
+ * chip's colour (references.js, LINK). The WebGL painter draws the same as a distance field.
+ */
+export function drawGlyphs(ctx, scene) {
+  const glyphs = linkGlyphs(scene);
+  if (!glyphs.length) return;
+  const world = worldTransform(scene);
+  for (const g of glyphs) {
+    ctx.globalAlpha = nodeAlpha(scene, g.index);
     if (!ctx.globalAlpha) continue;
-    drawLabel(ctx, n, looks.radius[n.index] * reach(looks.shape[n.index]));
+    const R = g.radius;
+    ctx.setTransform(...world);
+    ctx.translate(g.x, g.y);
+    ctx.rotate(-Math.PI / 4);
+    ctx.strokeStyle = g.colour;
+    ctx.lineWidth = LINK.stroke * R;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.roundRect(
+        (side * LINK.offset - LINK.length / 2) * R,
+        (-LINK.height / 2) * R,
+        LINK.length * R,
+        LINK.height * R,
+        (LINK.height / 2) * R,
+      );
+      ctx.stroke();
+    }
   }
   ctx.globalAlpha = 1;
 }
@@ -495,9 +587,9 @@ function edgeLayer(canvas, kept = layers) {
   return layer;
 }
 
-function drawEdge(ctx, route, edge, looks, s, t, ei) {
+function drawEdge(ctx, route, edge, looks, s, t, ei, from) {
   const end = edge.arrow === "none" ? 0 : edge.arrowSize * 0.9;
-  const pts = trim(route, looks.radius[s.index], looks.radius[t.index] + end);
+  const pts = trim(route, from, looks.radius[t.index] + end);
   if (!pts) return;
   const colour = looks.edgeColour[ei];
   const width = looks.edgeWidth[ei];
@@ -662,14 +754,6 @@ function nodePath(ctx, shape, x, y, r) {
     default:
       ctx.arc(x, y, r, 0, Math.PI * 2);
   }
-}
-
-/** A label in the direction the view gave its node (`labelAngle`), which is also where its footprint is. */
-function drawLabel(ctx, n, r) {
-  const a = labelAnchor(n.labelAngle, r);
-  ctx.textAlign = a.align;
-  ctx.textBaseline = a.baseline;
-  ctx.fillText(n.label, n.x + a.x, n.y + a.y);
 }
 
 /** The Canvas 2D painter: everything on the renderer's canvas. Also the reference the WebGL painter is checked against. */

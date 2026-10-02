@@ -11,7 +11,12 @@
 // same geometry as the shaders in JavaScript (so tests can check it against the CPU's own edge routes). Pure: no GL.
 
 import { parseColour, runsOf } from "./gl-pack.js";
-import { BUNDLE_STEPS, bundlePath, stepCurveWeight } from "./geometry.js";
+import {
+  BUNDLE_STEPS,
+  bundlePath,
+  startTrims,
+  stepCurveWeight,
+} from "./geometry.js";
 
 /** Points along each piece: the shader draws the capsules between consecutive ones. */
 export const PIECE_POINTS = 16;
@@ -89,6 +94,7 @@ export function packPieces(scene, origin) {
     return rgb;
   };
   const edges = graph.edges;
+  const starts = startTrims(scene);
   // Cross-links bundle (unless edges are straight); those whose path has nothing to bend round go straight.
   const bundled = !layered && edge.shape !== "straight";
   const paths = new Array(edges.length).fill(null);
@@ -142,7 +148,8 @@ export function packPieces(scene, origin) {
     const e = edges[ei];
     const rgb = colour(looks.edgeColour[ei]);
     const half = looks.edgeWidth[ei] / 2;
-    const trimA = looks.radius[e.source],
+    // A piece's first stop is trimmed past its source's label (startTrims); a bundle's only off its node (a disc).
+    const trimA = starts[ei],
       trimB = looks.radius[e.target] + end;
     const path = paths[ei];
     if (path) {
@@ -159,7 +166,7 @@ export function packPieces(scene, origin) {
         }
         spans[o + 8] = e.source;
         spans[o + 9] = e.target;
-        spans[o + 10] = trimA;
+        spans[o + 10] = looks.radius[e.source];
         spans[o + 11] = trimB;
         spans[o + 12] = half;
         spans[o + 13] = rgb[0];

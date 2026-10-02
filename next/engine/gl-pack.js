@@ -1,6 +1,13 @@
 // What the WebGL renderer sends the GPU each frame, worked out on the CPU. Pure: no GL, so it can be tested.
 
-import { edgeRoute, fanJunctions, rounded, trim } from "./geometry.js";
+import {
+  edgeRoute,
+  fanJunctions,
+  rounded,
+  startTrims,
+  trim,
+} from "./geometry.js";
+import { linkGlyphs } from "./references.js";
 import { edgeAlpha, nodeAlpha } from "./render.js";
 import { iconBox } from "./icons.js";
 
@@ -206,13 +213,13 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
   let endEdge = reuse.endEdge ?? null;
   let segmentCount = 0,
     endCount = 0;
+  const starts = startTrims(scene); // past each source's own label
 
   const count = only ? only.length : graph.edges.length;
   for (let k = 0; k < count; k++) {
     const edgeIndex = only ? only[k] : k;
     const e = graph.edges[edgeIndex];
-    const s = graph.nodes[e.source],
-      t = graph.nodes[e.target];
+    const t = graph.nodes[e.target];
     let junction = null;
     if (junctions && e.tree) {
       const jx = junctions[e.source * 2];
@@ -221,7 +228,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
     }
     let pts = trim(
       edgeRoute(graph, routing, edge.shape, e, junction),
-      looks.radius[s.index],
+      starts[edgeIndex],
       looks.radius[t.index] + end,
     );
     if (!pts) continue;
@@ -314,6 +321,32 @@ export function edgeBrightness(scene, packed, reuse = {}, perEdge = null) {
   for (let i = 0; i < packed.endCount; i++)
     endAlpha[i] = perEdge[packed.endEdge[i]];
   return { segmentAlpha, endAlpha, bright };
+}
+
+/** Floats per link glyph: centre x, y; radius; colour r, g, b; alpha. */
+export const GLYPH_STRIDE = 7;
+
+/**
+ * Every reference chip's link glyph (linkGlyphs), whatever its size on screen (the shader leaves out the ones too
+ * small to see, so a zoom needs nothing new), relative to `origin`.
+ * @returns {{ data: Float32Array, count: number }}
+ */
+export function packGlyphs(scene, out, origin = ORIGIN) {
+  const glyphs = linkGlyphs(scene, 0);
+  out = room(out, glyphs.length * GLYPH_STRIDE);
+  const colour = palette();
+  glyphs.forEach((g, k) => {
+    const o = k * GLYPH_STRIDE;
+    const rgb = colour(g.colour);
+    out[o] = g.x - origin.x;
+    out[o + 1] = g.y - origin.y;
+    out[o + 2] = g.radius;
+    out[o + 3] = rgb[0];
+    out[o + 4] = rgb[1];
+    out[o + 5] = rgb[2];
+    out[o + 6] = nodeAlpha(scene, g.index);
+  });
+  return { data: out, count: glyphs.length };
 }
 
 /**

@@ -1,8 +1,15 @@
 // References: in a layered layout, a cross-link into a busy shared ingredient can end at a reference (a small
 // hollow chip in the ingredient's colour, just below the node that uses it) instead of running all the way to the
 // ingredient. The layout decides which edges, where, and how big a chip it kept room for (layered.js,
-// `routing.references`); this draws them. A chip has no label: the layout keeps it compact (a busy recipe can have
-// many side by side), and hovering one lights up its ingredient.
+// `routing.references`); this draws them. A chip has no label of its own: the layout keeps it compact (a busy
+// recipe can have many side by side). What makes it read as a reference rather than a fourth "Copper Ore":
+//
+// - a link glyph inside the ring (two interlocked links, drawn as a shape: LINK below), once it's big enough to see;
+// - hovering it hovers its ingredient (the controller's pick): the ingredient's lineage lights up (the real node
+//   and every recipe that uses it), its label shows at any zoom, and each of its chips shows its name (labels.js);
+// - the real, shared node carries "×N", N its in-degree (how many recipes use it), whenever it has chips;
+// - a tap on a chip is a tap on its ingredient, with `reference: true` in the detail. To fly to the real node:
+//   `view.on("tap", ({ node, reference }) => reference && view.focus(node))` (focus glides the camera there).
 //
 // Like ghosts, references are only drawn: the view hands the renderer a display graph (the real graph with a node
 // per reference appended, and each referenced edge ending at its reference), while physics, hover and hit-testing
@@ -19,8 +26,45 @@ export function referenceRadius(ref, ingredientRadius) {
 }
 
 /**
+ * The link glyph, in units of its radius, before it's turned 45° (lying from lower left to upper right): two
+ * stadiums (rounded bars) `length` × `height`, their centres `offset` either side of the middle, stroked `stroke`
+ * wide. The Canvas 2D painter strokes them as rounded rectangles; the WebGL one draws the same as a distance field
+ * (GLYPH_FRAGMENT).
+ */
+export const LINK = { offset: 0.32, length: 1, height: 0.52, stroke: 0.18 };
+
+/** A chip's ring is this wide (as Canvas 2D strokes a ring node; the node shader's ringHalfStroke is half). */
+export const ringStroke = (r) => Math.max(1.5, r * 0.35);
+
+/** The link glyph's radius inside a chip of radius `r`: the ring's hole, less a little room. */
+export const glyphRadius = (r) => (r - ringStroke(r) / 2) * 0.92;
+
+/** A glyph is drawn once it's at least this many CSS px across (radius), else the chip is just its ring. */
+export const GLYPH_MIN_PX = 2.5;
+
+/**
+ * Where to draw link glyphs this frame: one per chip (display-only node with a `reference`) whose glyph is at
+ * least `minimum` CSS px (radius) on screen, in its ingredient's colour.
+ * @returns {{ index: number, x: number, y: number, radius: number, colour: string }[]}
+ */
+export function linkGlyphs(scene, minimum = GLYPH_MIN_PX) {
+  const { graph, looks, camera } = scene;
+  const out = [];
+  const first = scene.matrix?.count ?? 0;
+  for (let i = first; i < graph.nodes.length; i++) {
+    const n = graph.nodes[i];
+    if (n.reference === undefined) continue;
+    const radius = glyphRadius(looks.radius[i]);
+    if (radius * camera.k < minimum) continue;
+    out.push({ index: i, x: n.x, y: n.y, radius, colour: looks.fill[i] });
+  }
+  return out;
+}
+
+/**
  * The display graph with references: `graph`'s nodes plus one per reference, and its edges with each referenced
  * one ending at its reference (same index, so per-edge looks still line up). Per-node arrays are extended to match.
+ * The display graph's `uses` maps each referenced ingredient's index to its in-degree.
  * @param {object} graph   the real graph
  * @param {{ edge: object, source: number, target: number, x: number, y: number, radius?: number }[]} references
  *   from the layout (layered.js)
@@ -78,6 +122,11 @@ export function withReferences(graph, references, base) {
     if (ei !== undefined)
       edges[ei] = { ...ref.edge, target: i, reference: true };
   });
+  // How many use each referenced ingredient (its in-degree), for the "×N" on the real node.
+  const uses = new Map();
+  for (const ref of references)
+    if (!uses.has(ref.target))
+      uses.set(ref.target, graph.incoming?.[ref.target]?.length ?? 0);
   return {
     graph: {
       nodes,
@@ -85,6 +134,7 @@ export function withReferences(graph, references, base) {
       byId: graph.byId,
       roots: graph.roots,
       order: graph.order,
+      uses,
     },
     looks: { ...base.looks, radius, fill, shape },
     shade,

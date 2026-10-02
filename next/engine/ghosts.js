@@ -216,6 +216,7 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
       byId: graph.byId,
       roots: graph.roots,
       order: graph.order,
+      uses: graph.uses,
     },
     looks: { ...base.looks, radius, fill, shape, edgeColour, edgeWidth },
     shade,

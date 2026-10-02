@@ -363,35 +363,105 @@ void main() {
   outColour = texture(u_texture, v_uv) * u_alpha;
 }`;
 
-/** A label: a quad cut from the label atlas, tinted. The atlas holds white text, premultiplied. */
+/**
+ * A piece of text: a quad cut from the text atlas (gl-text.js), placed from its anchor in its own units (world px,
+ * or screen px for text pinned to a size on screen, divided by the zoom here).
+ */
 export const LABEL_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
-layout(location = 1) in vec4 a_box;    // left, middle, width, height (world)
-layout(location = 2) in vec4 a_uv;     // u0, v0, u1, v1
-layout(location = 3) in float a_alpha;
+layout(location = 1) in vec3 a_anchor; // x, y (world), units are screen px when z is 1
+layout(location = 2) in vec4 a_box;    // left, middle, width, height (from the anchor, in its units)
+layout(location = 3) in vec4 a_uv;     // u0, v0, u1, v1
+layout(location = 4) in float a_alpha;
+layout(location = 5) in vec3 a_colour; // the text
+layout(location = 6) in vec3 a_under;  // the halo or pill
 ${COMMON_VERTEX}
 
 out vec2 v_uv;
 flat out float v_alpha;
+flat out vec3 v_colour;
+flat out vec3 v_under;
 
 void main() {
   vec2 t = a_corner * 0.5 + 0.5;
-  gl_Position = toClip(vec2(a_box.x + t.x * a_box.z, a_box.y + a_corner.y * 0.5 * a_box.w));
+  vec2 offset = vec2(a_box.x + t.x * a_box.z, a_box.y + a_corner.y * 0.5 * a_box.w);
+  if (a_anchor.z > 0.5) offset /= u_camera.z;
+  gl_Position = toClip(a_anchor.xy + offset);
   v_uv = mix(a_uv.xy, a_uv.zw, t);
   v_alpha = a_alpha;
+  v_colour = a_colour;
+  v_under = a_under;
 }`;
 
+/**
+ * The atlas holds coverages, premultiplied: red the glyphs, green what's under them (a halo round the glyphs, or a
+ * pill). The text is laid over the halo, both in their own colours.
+ */
 export const LABEL_FRAGMENT = `#version 300 es
 precision highp float;
 in vec2 v_uv;
 flat in float v_alpha;
+flat in vec3 v_colour;
+flat in vec3 v_under;
 uniform sampler2D u_atlas;
-uniform vec3 u_colour;
 out vec4 outColour;
 
 void main() {
-  float coverage = texture(u_atlas, v_uv).a * v_alpha;
-  outColour = vec4(u_colour * coverage, coverage);
+  vec4 texel = texture(u_atlas, v_uv);
+  float text = texel.r;
+  float under = max(texel.g, texel.r) * (1.0 - text);
+  outColour = vec4(v_colour * text + v_under * under, text + under) * v_alpha;
+}`;
+
+/**
+ * A reference chip's link glyph: two interlocked links (stadiums, stroked), turned 45 degrees, as a distance field.
+ * The shapes are in units of the glyph's radius (u_link: offset of each link's centre, length, height, stroke),
+ * as the Canvas 2D painter strokes them. Glyphs smaller on screen than u_minimum CSS px are left out.
+ */
+export const GLYPH_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec3 a_glyph;  // centre x, y, radius (world)
+layout(location = 2) in vec4 a_colour; // r, g, b, alpha
+${COMMON_VERTEX}
+uniform float u_minimum;
+
+out vec2 v_local;
+flat out float v_radius;
+flat out vec4 v_colour;
+
+void main() {
+  float r = a_glyph.z;
+  vec2 local = a_corner * (r + 2.0 * u_pixel);
+  gl_Position = r * u_camera.z < u_minimum ? vec4(0.0) : toClip(a_glyph.xy + local);
+  v_local = local;
+  v_radius = r;
+  v_colour = a_colour;
+}`;
+
+export const GLYPH_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_local;
+flat in float v_radius;
+flat in vec4 v_colour;
+${COMMON_FRAGMENT}
+uniform vec4 u_link;
+out vec4 outColour;
+
+// Distance to a stadium centred at (cx, 0): a bar hl long each way, rounded at radius r.
+float stadium(vec2 q, float cx, float hl, float r) {
+  vec2 p = q - vec2(cx, 0.0);
+  p.x = max(abs(p.x) - (hl - r), 0.0);
+  return length(p) - r;
+}
+
+void main() {
+  vec2 p = v_local / v_radius;
+  // Undo the turn: the links lie along x before it.
+  vec2 q = vec2(p.x - p.y, p.x + p.y) * 0.70710678;
+  float hl = u_link.y * 0.5, r = u_link.z * 0.5;
+  float d = min(abs(stadium(q, -u_link.x, hl, r)), abs(stadium(q, u_link.x, hl, r))) - u_link.w * 0.5;
+  float alpha = cover(d * v_radius) * v_colour.a;
+  outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
 /**

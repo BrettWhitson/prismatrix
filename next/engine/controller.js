@@ -341,6 +341,7 @@ export class GraphController {
       const i = graph.edgeIndexOf(model.edgeIndex.get(id));
       if (i < 0) continue;
       const record = model.edge(id);
+      graph.edges[i].label = record.label;
       graph.edges[i].style = record.style;
       graph.edges[i].data = record.data;
     }
@@ -1147,6 +1148,7 @@ export class GraphController {
   /** Fix each node's label direction from its home, and the footprint that goes with it. */
   #placeLabels(spec) {
     const m = this.graph.matrix;
+    this.labelWidths = spec.widths; // painters start edges past these (startTrims)
     for (let i = 0; i < m.count; i++) {
       const angle = labelAngle(
         this.node.labels,
@@ -1259,6 +1261,7 @@ export class GraphController {
       appear: shown.appear,
       dim: this.anim.hoverDim,
       matrix: this.graph.matrix,
+      labelWidths: this.labelWidths ?? null, // each real node's label width, as the layout kept room for it
       // Interaction state for painters to show: the hovered node (an index into the real graph, -1 for none), and a
       // flag per real node for the selection (null when nothing's selected). Display-only nodes (references, ghosts)
       // come after the real ones and are never selected.

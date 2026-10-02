@@ -124,6 +124,7 @@ export class Node {
  * @property {number} source index of the source node
  * @property {number} target index of the target node
  * @property {boolean} tree  true when this edge is the target's parent link in the forest
+ * @property {string} label  the model edge's label ("" for none)
  * @property {object} style  the model edge's style overrides (frozen)
  * @property {object} data   the model edge's data (frozen)
  */
@@ -213,6 +214,7 @@ export class Graph {
         source,
         target,
         tree: !!forest.tree[i],
+        label: e.label,
         style: e.style,
         data: e.data,
       };
@@ -259,6 +261,7 @@ export class Graph {
       this.nodes[i].record = nodes[part ? part.nodes[i] : i];
     for (let i = 0; i < this.edges.length; i++) {
       const e = edges[part ? part.edges[i] : i];
+      this.edges[i].label = e.label;
       this.edges[i].style = e.style;
       this.edges[i].data = e.data;
     }

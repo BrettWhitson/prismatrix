@@ -366,7 +366,10 @@ test("label widths are measured once per distinct label, and again only when the
     measured.push(text);
     return text.length * size;
   };
-  const m = GraphModel.from(recipe(), { measure, node: { labelSize: 10 } });
+  const m = GraphModel.from(recipe(), {
+    measure,
+    node: { labelSize: 10, labelMaxWidth: 0 }, // no cutting short: one measure per label
+  });
   assert.deepEqual([...m.labelWidths()], [70, 150, 130, 30]);
   assert.equal(measured.length, 4);
   m.update({ addNodes: [{ id: "ore2", label: "ore" }] });

@@ -13,21 +13,16 @@
 // Everything is drawn relative to an origin in the middle of the layout (nodes, labels, CPU segments and GPU
 // pieces alike), so 32-bit floats stay precise far from the world's 0, 0.
 
-import {
-  HALO_GAP,
-  HALO_WIDTH,
-  clearTo,
-  edgeAlpha,
-  labelAlpha,
-  labelsShown,
-} from "./render.js";
-import { LABEL_STRIDE, LabelLayer } from "./gl-text.js";
+import { HALO_GAP, HALO_WIDTH, clearTo, edgeAlpha } from "./render.js";
+import { LABEL_STRIDE, LabelLayer, textKey } from "./gl-text.js";
 import {
   END_STRIDE,
+  GLYPH_STRIDE,
   NODE_STRIDE,
   SEGMENT_STRIDE,
   edgeBrightness,
   packEdges,
+  packGlyphs,
   packHalos,
   packNodes,
   parseColour,
@@ -35,6 +30,7 @@ import {
   patchNodes,
   runsOf,
 } from "./gl-pack.js";
+import { GLYPH_MIN_PX, LINK } from "./references.js";
 import { IconAtlas } from "./gl-icons.js";
 import { iconStore } from "./icons.js";
 import { DEFAULT_THEME } from "./theme.js";
@@ -60,6 +56,8 @@ import {
   COMPOSITE_VERTEX,
   END_FRAGMENT,
   END_VERTEX,
+  GLYPH_FRAGMENT,
+  GLYPH_VERTEX,
   HALO_FRAGMENT,
   HALO_VERTEX,
   LABEL_FRAGMENT,
@@ -409,10 +407,20 @@ class GLLayer {
     this.origin = { x: 0, y: 0 };
     this.labelProgram = program(gl, LABEL_VERTEX, LABEL_FRAGMENT);
     this.labels = new InstancedQuads(gl, corners, LABEL_STRIDE, [
-      [1, 4, 0], // box
-      [2, 4, 4], // uv
-      [3, 1, 8], // alpha
+      [1, 3, 0], // anchor, units
+      [2, 4, 3], // box
+      [3, 4, 7], // uv
+      [4, 1, 11], // alpha
+      [5, 3, 12], // text colour
+      [6, 3, 15], // halo or pill colour
     ]);
+    // Reference chips' link glyphs.
+    this.glyphProgram = program(gl, GLYPH_VERTEX, GLYPH_FRAGMENT);
+    this.glyphs = new InstancedQuads(gl, corners, GLYPH_STRIDE, [
+      [1, 3, 0], // centre, radius
+      [2, 4, 3], // colour, alpha
+    ]);
+    this.glyphData = { data: null, count: 0 };
     // A new context has none of the old one's textures: the atlas starts again.
     this.labelLayer = new LabelLayer(gl);
     this.labelGroups = [];
@@ -632,6 +640,8 @@ class GLLayer {
       if (this.gpu && changed) this.#shadePieces(perEdge);
       this.haloData = packHalos(scene, this.haloData.data, this.origin);
       this.halos.upload(this.haloData.data, this.haloData.count);
+      this.glyphData = packGlyphs(scene, this.glyphData.data, this.origin);
+      this.glyphs.upload(this.glyphData.data, this.glyphData.count);
     }
     this.built = {
       version: scene.version,
@@ -690,6 +700,18 @@ class GLLayer {
       const k = scene.camera.k;
       gl.uniform2f(h.u_halo, HALO_GAP / k, HALO_WIDTH / k);
       this.halos.draw(0, this.haloData.count);
+    }
+    if (this.glyphData.count) {
+      const g = this.#use(this.glyphProgram, scene);
+      gl.uniform1f(g.u_minimum, GLYPH_MIN_PX);
+      gl.uniform4f(
+        g.u_link,
+        LINK.offset,
+        LINK.length,
+        LINK.height,
+        LINK.stroke,
+      );
+      this.glyphs.draw(0, this.glyphData.count);
     }
 
     this.#time("labels");
@@ -850,33 +872,30 @@ class GLLayer {
   }
 
   /**
-   * Labels, when they show at this zoom (labelsShown, as Canvas 2D). They're rebuilt when anything moved, the zoom
-   * crossed a raster step, or some are still waiting for the atlas.
+   * Text (labels.js plans it, as for Canvas 2D: node and edge labels, counts, badges, pinned labels). It's rebuilt
+   * when anything moved or was shaded, the zoom crossed a raster step or changed what shows (textKey), or some is
+   * still waiting for the atlas.
    */
   #drawLabels(scene, fresh) {
     const { gl } = this;
     const { node, camera } = scene;
     this.pending = false;
-    if (!labelsShown(node, camera)) return;
-    // Labels are built for the view plus half a view around it: rebuild when the zoom crosses a raster step or
-    // the camera has moved about half a view (measured at the step's zoom, so zooming within a step doesn't).
+    // Text is built for the view plus half a view around it: rebuild when the zoom crosses a raster step or the
+    // camera has moved about half a view (measured at the step's zoom, so zooming within a step doesn't).
     const step = Math.ceil(Math.log2(camera.k));
     const cellW = scene.width / 2 ** step / 2,
       cellH = scene.height / 2 ** step / 2;
-    const key = `${node.labelSize}|${step}|${Math.floor(camera.x / cellW)}|${Math.floor(camera.y / cellH)}`;
+    const key = `${node.labelSize}|${step}|${Math.floor(camera.x / cellW)}|${Math.floor(camera.y / cellH)}|${textKey(scene)}|${scene.foldVersion}`;
     if (fresh || this.labelPending || key !== this.labelKey) {
-      const built = this.labelLayer.build(scene, labelAlpha, this.origin);
+      const built = this.labelLayer.build(scene, this.origin);
       this.labels.upload(built.data, built.count);
       this.labelGroups = built.groups;
       this.labelPending = built.pending;
       this.labelKey = key;
     }
     this.pending = this.labelPending;
+    if (!this.labelGroups.length) return;
     const u = this.#use(this.labelProgram, scene);
-    gl.uniform3f(
-      u.u_colour,
-      ...parseColour((scene.theme ?? DEFAULT_THEME).text),
-    );
     gl.uniform1i(u.u_atlas, 0);
     gl.activeTexture(gl.TEXTURE0);
     for (const group of this.labelGroups) {
