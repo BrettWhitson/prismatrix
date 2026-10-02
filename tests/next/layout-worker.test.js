@@ -329,12 +329,13 @@ test("the structure goes to the worker only when it changes, moved rather than c
   assert.match(answers[1].error, /no structure for this version/);
 });
 
-test("if a worker can't be started, layouts run on the spot (said once) and the view and the model agree", async (t) => {
-  const warn = t.mock.method(console, "warn", () => {});
+test("if a worker can't be started, layouts run on the spot (said once) and the view and the model agree", async () => {
   const { FakeWorker } = await fakeWorkers({ throws: "blocked by policy" });
   await withWorker(FakeWorker, async () => {
+    const errors = [];
     const c = new GraphController(new GraphModel(recipes(50, 5)), null, {
       worker: true,
+      onEvent: (type, detail) => type === "error" && errors.push(detail),
     });
     c.setViewport(800, 600);
     assert.equal(c.graph.nodes.length, 50, "laid out at once");
@@ -344,9 +345,9 @@ test("if a worker can't be started, layouts run on the spot (said once) and the 
     });
     assert.ok(c.graph.byId.has("fresh"));
     assert.equal(c.layoutPending, false);
-    await settle(); // the report comes just after
-    assert.equal(warn.mock.callCount(), 1);
-    assert.match(warn.mock.calls[0].arguments[0], /blocked by policy/);
+    await settle(); // the report comes just after, as an "error" event
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, /blocked by policy/);
     c.destroy();
 
     const reports = [];
@@ -366,14 +367,13 @@ test("if a worker can't be started, layouts run on the spot (said once) and the 
 });
 
 for (const how of ["onerror", "onmessageerror"])
-  test(`a worker that fails mid-job (${how}) is given up on, and the layout waiting is worked out on the spot`, async (t) => {
-    t.mock.method(console, "warn", () => {});
+  test(`a worker that fails mid-job (${how}) is given up on, and the layout waiting is worked out on the spot`, async () => {
     const { FakeWorker, workers, flush } = await fakeWorkers();
     const errors = [];
     await withWorker(FakeWorker, async () => {
       const c = new GraphController(new GraphModel(recipes(50, 5)), null, {
         worker: true,
-        onEvent: (type) => type === "error" && errors.push(type),
+        onEvent: (type, detail) => type === "error" && errors.push(detail),
       });
       c.setViewport(800, 600);
       flush();
@@ -391,7 +391,12 @@ for (const how of ["onerror", "onmessageerror"])
       c.setGraph(recipes(90, 5));
       assert.equal(c.graph.nodes.length, 90);
       assert.equal(workers.length, 1, "no new worker");
-      assert.deepEqual(errors, []);
+      // Said once, as an "error" event; the layout itself didn't fail.
+      assert.equal(errors.length, 1);
+      assert.match(
+        errors[0].message,
+        /^layout worker .*page.s thread instead$/,
+      );
       c.destroy();
     });
   });
