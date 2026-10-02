@@ -62,6 +62,9 @@ export type Sizing = {
 };
 export type LayoutHint = import("./layout-job.js").LayoutHint;
 export type TreeLayoutOptions = {
+  /**
+   * which way the tree grows from its roots
+   */
   direction: "TB" | "BT" | "LR" | "RL";
   /**
    * at least this far between levels, world px
@@ -81,6 +84,9 @@ export type TreeLayoutOptions = {
   parentAlign: "centres" | "edges";
 };
 export type MergedLayoutOptions = {
+  /**
+   * which way the layers run from the sources
+   */
   direction: "TB" | "BT" | "LR" | "RL";
   /**
    * at least this far between layers, world px
@@ -98,6 +104,10 @@ export type MergedLayoutOptions = {
    * how each layer is ordered to cut crossings
    */
   ordering: "sifting" | "barycenter";
+  /**
+   * where nodes sit along their layer: balanced keeps long edges straight
+   * (an exact L1 placement), median sits each node at the median of its neighbours
+   */
   placement: "balanced" | "median";
   /**
    * busy shared ingredients get reference chips, or long edges
@@ -122,9 +132,12 @@ export type RadialLayoutOptions = {
    */
   sweep: number;
   /**
-   * degrees
+   * degrees the drawing is turned
    */
   rotation: number;
+  /**
+   * how the circle is shared out
+   */
   spacing: "tidy" | "leaves";
 };
 export type LayoutOptions =
@@ -188,19 +201,20 @@ export type LayoutSpec = {
  */
 /**
  * @typedef {object} TreeLayoutOptions The tree layout's options (LAYOUTS.tree.options).
- * @property {"TB" | "BT" | "LR" | "RL"} direction
+ * @property {"TB" | "BT" | "LR" | "RL"} direction which way the tree grows from its roots
  * @property {number} levelGap   at least this far between levels, world px
  * @property {number} siblingGap between neighbours with the same parent
  * @property {number} subtreeGap between neighbours with different parents (separate trees get twice this)
  * @property {"centres" | "edges"} parentAlign a parent over its children's centres, or their whole span
  *
  * @typedef {object} MergedLayoutOptions The merged tree's options (LAYOUTS.merged.options).
- * @property {"TB" | "BT" | "LR" | "RL"} direction
+ * @property {"TB" | "BT" | "LR" | "RL"} direction which way the layers run from the sources
  * @property {number} levelGap   at least this far between layers, world px
  * @property {number} nodeGap    between neighbours on a layer
  * @property {"longest" | "simplex"} ranking layers by depth from the top, or fewest long edges
  * @property {"sifting" | "barycenter"} ordering how each layer is ordered to cut crossings
- * @property {"balanced" | "median"} placement
+ * @property {"balanced" | "median"} placement where nodes sit along their layer: balanced keeps long edges straight
+ *   (an exact L1 placement), median sits each node at the median of its neighbours
  * @property {"hubs" | "off"} references busy shared ingredients get reference chips, or long edges
  * @property {number} shareMin   how many users make an ingredient busy
  * @property {number} stability  0–1: how firmly a change keeps everything else in its place
@@ -208,8 +222,8 @@ export type LayoutSpec = {
  * @typedef {object} RadialLayoutOptions The radial layout's options (LAYOUTS.radial.options).
  * @property {number} ringGap    at least this far between rings, world px
  * @property {number} sweep      degrees of the circle the tree fans over
- * @property {number} rotation   degrees
- * @property {"tidy" | "leaves"} spacing
+ * @property {number} rotation   degrees the drawing is turned
+ * @property {"tidy" | "leaves"} spacing how the circle is shared out
  *
  * @typedef {Partial<TreeLayoutOptions> | Partial<MergedLayoutOptions> | Partial<RadialLayoutOptions>} LayoutOptions
  *   Options for one of the layouts (all or some)

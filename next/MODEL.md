@@ -8,7 +8,7 @@ reports carry, and the shape the public API will hand around.
   exactly what was on screen again.
 
 In code: `GraphModel` (`next/engine/model.js`) and `controller.snapshot()` / `controller.restore()`
-(`next/engine/snapshot.js`, `next/engine/controller.js`).
+(`next/engine/snapshot.js`, `next/engine/controller.js`). The full API reference is [API.md](API.md).
 
 ## Model, controller, renderer
 
@@ -62,6 +62,7 @@ floats can only land on sixteenths of a pixel.
       "id": "mjolnir>mithril-ore",
       "source": "mjolnir",
       "target": "mithril-ore",
+      "label": "×2",
       "data": { "count": 2 }
     }
   ]
@@ -78,18 +79,23 @@ floats can only land on sixteenths of a pixel.
 | `nodes[].data`              | no       | Anything else (icon, rarity, prices…). The engine keeps it and never reads it.   |
 | `edges[].source`, `.target` | yes      | Node ids. Direction matters: for recipes, from the thing made to its ingredient. |
 | `edges[].id`                | no       | Defaults to `source>target`, with `#2`, `#3`… for repeats of the same pair.      |
+| `edges[].label`             | no       | Drawn small beside the edge ("×2"), where the `labels` edge option says.         |
 | `edges[].style`             | no       | How this edge looks, over the view's edge options: see below.                    |
 | `edges[].data`              | no       | Anything else (quantity, recipe kind…).                                          |
 
 **Style** is per element and wins over the view's options; anything not set comes from them.
 
-| Element | Key     | Value                                                          |
-| ------- | ------- | -------------------------------------------------------------- |
-| node    | `color` | `"#rrggbb"`                                                    |
-| node    | `size`  | Diameter in world px, 1–400.                                   |
-| node    | `shape` | `circle`, `square`, `rounded`, `diamond`, `hexagon` or `ring`. |
-| edge    | `color` | `"#rrggbb"`                                                    |
-| edge    | `width` | World px, 0.1–40.                                              |
+| Element | Key           | Value                                                                                            |
+| ------- | ------------- | ------------------------------------------------------------------------------------------------ |
+| node    | `color`       | `"#rrggbb"`                                                                                      |
+| node    | `size`        | Diameter in world px, 1–400.                                                                     |
+| node    | `shape`       | `circle`, `square`, `rounded`, `diamond`, `hexagon`, `ring` or `tile` (a node that is its icon). |
+| node    | `stroke`      | A border's colour, `"#rrggbb"`.                                                                  |
+| node    | `strokeWidth` | The border's width in world px, 0–100 (default: the `strokeWidth` node option).                  |
+| node    | `icon`        | An image drawn in the node: a URL, or an image already in hand (only a URL survives `toJSON`).   |
+| node    | `badge`       | Up to 12 characters in a pill at the node's top right ("!", "new").                              |
+| edge    | `color`       | `"#rrggbb"`                                                                                      |
+| edge    | `width`       | World px, 0.1–40.                                                                                |
 
 An unknown key or a bad value is left out and reported as a `bad-style` issue; the rest of the style still applies.
 
@@ -97,6 +103,17 @@ An unknown key or a bad value is left out and reported as a `bad-style` issue; t
 from a node to itself, is left out; a delta that changes or removes something that isn't there skips it. Each
 becomes an entry in `model.issues` (`kind`, `message`, `id`) for the latest load or change, and the controller logs
 it as a `graphIssue` event. `new GraphModel(input, { strict: true })` throws on the first instead.
+
+| Kind                            | What happened                                                                                      |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `missing-id`                    | A node with no id, or one that isn't a non-empty string or a number (left out).                    |
+| `duplicate-node`                | A node id already used (the first is kept).                                                        |
+| `missing-endpoint`, `self-loop` | An edge to a node that isn't there, or from a node to itself (left out).                           |
+| `bad-id`, `duplicate-edge-id`   | An edge id that isn't a non-empty string or a number (one is made), or one already used (renamed). |
+| `missing-node`, `missing-edge`  | A delta changes or removes something that isn't there (skipped).                                   |
+| `bad-style`                     | An unknown style key or a bad value (left out).                                                    |
+| `bad-option`                    | An unknown node or edge option, a bad value (the default is used) or one out of range (clamped).   |
+| `bad-input`                     | A graph or delta that isn't an object, nodes or edges that aren't arrays, an unknown delta field.  |
 
 **Models change only through their own methods.** Records and the node and edge lists are frozen, and `data` is the
 model's own copy (the caller's objects are never frozen or shared). Flat data (a price, a rarity) is a quick
@@ -111,9 +128,29 @@ shallow copy; nested data is cloned.
 | `changeNodes` | `{ id, label?, style?, data? }`: each field given replaces the node's own.   |
 | `addEdges`    | New edges, as in the JSON format (an id is made for them if they have none). |
 | `removeEdges` | Ids.                                                                         |
-| `changeEdges` | `{ id, style?, data? }`.                                                     |
+| `changeEdges` | `{ id, label?, style?, data? }`.                                             |
 
-Removals apply first, then changes, then additions. `update` returns the Change (null when nothing changed).
+Each field takes a list (any iterable) or a single item. Removals apply first, then changes, then additions.
+`update` returns the Change (null when nothing changed).
+
+### A change
+
+What `update`, `replace` and `setOptions` return, and what `onChange` listeners hear:
+
+| Field                                        | What it says                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `version`                                    | The model's version after the change.                                                |
+| `structure`                                  | Nodes or edges came, went or were reordered: lay out again.                          |
+| `sizes`                                      | Something changed how much room a node takes (a shown label, a size, a shape).       |
+| `looks`                                      | Anything drawn changed.                                                              |
+| `dataOnly`                                   | Only `data` (or `meta`) changed: nothing is drawn differently and nothing moves.     |
+| `nodesAdded`, `nodesRemoved`                 | Ids.                                                                                 |
+| `nodesChanged`                               | Every kept node with a new record (label, style or data).                            |
+| `nodesRestyled`                              | The part of `nodesChanged` whose label or style changed (what's drawn).              |
+| `edgesAdded`, `edgesRemoved`, `edgesChanged` | The same for edges.                                                                  |
+| `edgesRestyled`                              | The part of `edgesChanged` whose label or style changed.                             |
+| `options`                                    | For `setOptions`: `{ node, edge }`, the options that changed, with their new values. |
+| `issues`                                     | The problems in this change.                                                         |
 
 ### What a model computes (`next/engine/model.js`)
 
@@ -129,8 +166,9 @@ Removals apply first, then changes, then additions. `update` returns the Change 
 | `stats()`              | `nodes`, `edges`, `roots`, `depth`, `layers`, `crossLinks`, `sharedNodes` (more than one parent), `maxInDegree`, `maxOutDegree`, `backEdges`, `issues`. Logged with every graph change.                                                                                                    |
 | `diff(previous)`       | `nodesAdded`, `nodesRemoved`, `nodesKept`, `nodesChanged` (label, style or data), `edgesAdded`, `edgesRemoved`, by id.                                                                                                                                                                     |
 | `toJSON()`             | prismatrix-graph JSON. `GraphModel.from(model.toJSON())` gives an equal model.                                                                                                                                                                                                             |
-| `labelWidths()`        | Each node's label width at the current label size, measured once per distinct label and kept; `labelHeight` is one line.                                                                                                                                                                   |
+| `labelWidths()`        | Each node's label width at the current label size, measured once per distinct label and kept, and cut to the `labelMaxWidth` node option (as the painters cut labels, with an ellipsis); `labelHeight` is one line.                                                                        |
 | `opts`                 | `{ node, edge }`: the resolved appearance options (NODE_OPTIONS, EDGE_OPTIONS).                                                                                                                                                                                                            |
+| `explicit`             | `{ node, edge }`: the option keys set on purpose (given to the constructor or `setOptions`). The rest are defaults, and a view may show its own in their place (a layout's `edgeDefaults`).                                                                                                |
 | `version`              | Bumped by every change.                                                                                                                                                                                                                                                                    |
 
 Computed views are worked out once per structure and kept until nodes or edges come, go or move.
@@ -158,10 +196,13 @@ Computed views are worked out once per structure and kept until nodes or edges c
     "physicsOptions": {},
     "node": {},
     "edge": {},
+    "explicit": { "node": ["labelSize"], "edge": [] },
     "animation": {},
     "renderer": "webgl"
   },
   "camera": { "x": 0, "y": 0, "k": 1 },
+  "selection": ["mjolnir"],
+  "collapsed": ["gift-of-mastery"],
   "state": {
     "mjolnir": { "x": 0, "y": 0, "homeX": 0, "homeY": 0, "vx": 0, "vy": 0 }
   }
@@ -170,11 +211,32 @@ Computed views are worked out once per structure and kept until nodes or edges c
 
 - `graph` is a prismatrix-graph; `stats` and `issues` are what the model said about it (for reading the file
   without loading it).
-- `settings` are the view's resolved options: everything that decides how it looks and moves.
+- `settings` are the view's resolved options: everything that decides how it looks and moves. `explicit` lists the
+  node and edge options set on purpose; `restore` sets only those again (over the defaults), so a layout's own
+  defaults still apply to the rest. A snapshot without it sets every option it has.
+- `selection` is the selected node ids, in the order they were selected; `collapsed` the collapsed node ids (their
+  hidden descendants have no `state`).
 - `state` is every node's layout state by id: where it is (`x`, `y`), where its layout wants it (`homeX`, `homeY`)
   and how fast it's moving (`vx`, `vy`), rounded to hundredths.
-- `view.restore(snapshot)` shows it again exactly: same graph, settings, camera and positions, without a morph.
-  The renderer isn't restored (it depends on the machine).
+- `view.restore(snapshot)` shows it again exactly: same graph, settings, camera, selection, collapsed nodes and
+  positions, without a morph. The renderer isn't restored (it depends on the machine).
+
+## Layouts, hints and routing
+
+A layout (`LAYOUTS[name].run(graph, options, sizing, hint)`, `next/engine/layouts.js`) sets every node's home and
+returns its **routing**: how edges bend. `kind` is `"tree"` (with its `direction`), `"radial"` (with its centre
+`cx`, `cy`) or `"layered"` for the merged tree, which adds `bends` (the points each long edge passes through),
+`references` (edges drawn to a chip under their source: `{ edge, source, target, x, y, radius }`), `crossings`,
+`initialCrossings` and `layerOf`, and with ranking `"simplex"`, `simplex`: `{ pivots, optimal }`, how many exchanges
+network simplex made and whether it reached the fewest long edges or stopped at its work budget (very big graphs).
+
+When nodes or edges come or go, the layout is given a **hint**: the layout before the change, by index into the new
+graph (`next/engine/layout-job.js`, `LayoutHint`). `x`, `y` are each node's previous home (NaN for a new node);
+for the merged tree, `refX`, `refY` are where each edge's reference chip was, and `bendStart`, `bendXY` its bends.
+Layouts use it to keep the mental map: a tree and a radial tree move as a whole so kept nodes stay put; the merged
+tree also keeps its old order (only what's new is sifted in) and pulls kept nodes, chips and bends back towards where
+they were, as firmly as its `stability` option says (0: laid out afresh, then only moved into place). Hints are
+plain typed arrays, so they cross to the layout worker as cheaply as the sizing spec.
 
 ## Where they're used
 

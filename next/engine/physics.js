@@ -59,7 +59,7 @@ const collide = bool(
  *
  * @typedef {object} FloatingPhysicsOptions
  * @property {number} repulsion    how hard nodes push each other apart
- * @property {number} links
+ * @property {number} links        how hard edges hold their length
  * @property {number} linkLength   edge length relative to the layout's
  * @property {number} memory       a faint pull back to the layout (0 forgets it)
  * @property {number} friction

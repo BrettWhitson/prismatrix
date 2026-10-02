@@ -318,39 +318,42 @@ export type ControllerEvents = {
    */
   edgeStyle: Partial<import("./style.js").EdgeOptions>;
   /**
-   * setLayout: the layout and all its options
+   * the layout changed (setLayout): it, and all its
+   * options
    */
   layout: {
     layout: LayoutName;
   } & Record<string, any>;
   /**
-   * setPhysics: the mode and all its options
+   * the physics changed (setPhysics): the mode, and all
+   * its options
    */
   physics: {
     mode: PhysicsMode;
   } & Record<string, any>;
   /**
-   * setAnimation: every animation option
+   * the animation options changed (setAnimation): all
+   * of them
    */
   animation: import("./animation.js").AnimationOptions;
   /**
-   * setTheme: "dark", "light" or "custom"
+   * the theme changed (setTheme): "dark", "light" or "custom"
    */
   theme: {
     name: string;
   };
   /**
-   * setRenderer: "webgl" or "canvas"
+   * the renderer changed (setRenderer): "webgl" or "canvas"
    */
   renderer: {
     renderer: string;
   };
   /**
-   * reset: everything is going back to its home
+   * everything is going back to its home (reset)
    */
   reset: undefined;
   /**
-   * restore: the snapshot is shown
+   * a snapshot is shown (restore): its node count and time
    */
   restore: {
     nodes: number;
@@ -412,6 +415,9 @@ export type ControllerEvents = {
   hoverLeave: {
     node: string;
   };
+  /**
+   * a press that didn't wander (with `tapSelects`, it also selects)
+   */
   tap: PointDetail;
   /**
    * the second of two quick taps in about the same place
@@ -428,6 +434,10 @@ export type ControllerEvents = {
     node: string;
     carried: number;
   };
+  /**
+   * the drag ended:
+   * whether the node was thrown (and how fast, screen px/s), or the drag was cancelled (a pinch began, the node left)
+   */
   dragEnd: {
     node: string;
     thrown: boolean;
@@ -435,12 +445,16 @@ export type ControllerEvents = {
     cancelled?: boolean;
   };
   /**
-   * where the pan started, CSS px
+   * a pan began: where it started, CSS px
    */
   panStart: {
     x: number;
     y: number;
   };
+  /**
+   * the pan ended
+   * (thrown: the camera glides on)
+   */
   panEnd: {
     node?: undefined;
     thrown: boolean;
@@ -453,6 +467,9 @@ export type ControllerEvents = {
   pinchStart: {
     k: number;
   };
+  /**
+   * the pinch ended: the scale it left
+   */
   pinchEnd: {
     k: number;
   };
@@ -570,13 +587,16 @@ export type ControllerEvents = {
  * @property {{ nodes: number, edges: number }} graphRestyle nodes' or edges' labels or styles changed
  * @property {Partial<import("./style.js").NodeOptions>} nodeStyle node options changed: the new values
  * @property {Partial<import("./style.js").EdgeOptions>} edgeStyle edge options changed: the new values
- * @property {{ layout: LayoutName } & Record<string, any>} layout setLayout: the layout and all its options
- * @property {{ mode: PhysicsMode } & Record<string, any>} physics setPhysics: the mode and all its options
- * @property {import("./animation.js").AnimationOptions} animation setAnimation: every animation option
- * @property {{ name: string }} theme    setTheme: "dark", "light" or "custom"
- * @property {{ renderer: string }} renderer setRenderer: "webgl" or "canvas"
- * @property {undefined} reset           reset: everything is going back to its home
- * @property {{ nodes: number, time: string }} restore restore: the snapshot is shown
+ * @property {{ layout: LayoutName } & Record<string, any>} layout the layout changed (setLayout): it, and all its
+ *   options
+ * @property {{ mode: PhysicsMode } & Record<string, any>} physics the physics changed (setPhysics): the mode, and all
+ *   its options
+ * @property {import("./animation.js").AnimationOptions} animation the animation options changed (setAnimation): all
+ *   of them
+ * @property {{ name: string }} theme    the theme changed (setTheme): "dark", "light" or "custom"
+ * @property {{ renderer: string }} renderer the renderer changed (setRenderer): "webgl" or "canvas"
+ * @property {undefined} reset           everything is going back to its home (reset)
+ * @property {{ nodes: number, time: string }} restore a snapshot is shown (restore): its node count and time
  * @property {{ layout: LayoutName, nodes: number, edges: number }} laidOut a layout is in place
  * @property {{ nodes: number }} settled the view has come to rest (see `settled()`)
  * @property {{ k: number, pending?: boolean }} fit the camera frames the graph (pending: a layout is on its way, and
@@ -587,15 +607,17 @@ export type ControllerEvents = {
  * @property {DisclosureDetail} collapse nodes were collapsed (collapse, collapseTo)
  * @property {{ node: string, reference: boolean }} hoverEnter the pointer is over a node (or one of its chips)
  * @property {{ node: string }} hoverLeave the pointer left it
- * @property {PointDetail} tap
+ * @property {PointDetail} tap          a press that didn't wander (with `tapSelects`, it also selects)
  * @property {PointDetail} doubleTap     the second of two quick taps in about the same place
  * @property {PointDetail} longPress     a press held still for half a second (its release isn't a tap)
  * @property {{ node: string, carried: number }} dragStart a node is being dragged (`carried`: it and its subtree)
- * @property {{ node: string, thrown: boolean, screenSpeed: number, cancelled?: boolean }} dragEnd
- * @property {{ x: number, y: number }} panStart where the pan started, CSS px
- * @property {{ node?: undefined, thrown: boolean, screenSpeed: number, cancelled?: boolean }} panEnd
+ * @property {{ node: string, thrown: boolean, screenSpeed: number, cancelled?: boolean }} dragEnd the drag ended:
+ *   whether the node was thrown (and how fast, screen px/s), or the drag was cancelled (a pinch began, the node left)
+ * @property {{ x: number, y: number }} panStart a pan began: where it started, CSS px
+ * @property {{ node?: undefined, thrown: boolean, screenSpeed: number, cancelled?: boolean }} panEnd the pan ended
+ *   (thrown: the camera glides on)
  * @property {{ k: number }} pinchStart  two pointers are zooming: the scale they started at
- * @property {{ k: number }} pinchEnd
+ * @property {{ k: number }} pinchEnd    the pinch ended: the scale it left
  * @property {{ message: string }} error a layout failed, or the layout worker was given up on
  */
 export declare class GraphController {

@@ -3,13 +3,17 @@ export type AnimationOptions = {
    * ms a morph to a new layout takes
    */
   transition: number;
+  /**
+   * the curve morphs and camera moves follow (EASINGS)
+   */
   easing: "smooth" | "out" | "back" | "linear";
   /**
    * ms the camera takes to frame or focus
    */
   camera: number;
   /**
-   * how new nodes arrive
+   * how new nodes arrive: growing out of their parent, fading in where they
+   * land, or at once
    */
   enter: "grow" | "fade" | "none";
   /**
@@ -24,9 +28,10 @@ export type AnimationOptions = {
 /**
  * @typedef {object} AnimationOptions How the view moves between states (ANIMATION_OPTIONS), resolved.
  * @property {number} transition  ms a morph to a new layout takes
- * @property {"smooth" | "out" | "back" | "linear"} easing
+ * @property {"smooth" | "out" | "back" | "linear"} easing the curve morphs and camera moves follow (EASINGS)
  * @property {number} camera      ms the camera takes to frame or focus
- * @property {"grow" | "fade" | "none"} enter how new nodes arrive
+ * @property {"grow" | "fade" | "none"} enter how new nodes arrive: growing out of their parent, fading in where they
+ *   land, or at once
  * @property {number} hoverFade   ms the hover's emphasis takes to change
  * @property {number} hoverDim    0–1: how far everything outside the hovered lineage fades
  */

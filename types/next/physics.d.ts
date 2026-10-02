@@ -41,6 +41,9 @@ export type FloatingPhysicsOptions = {
    * how hard nodes push each other apart
    */
   repulsion: number;
+  /**
+   * how hard edges hold their length
+   */
   links: number;
   /**
    * edge length relative to the layout's
@@ -83,7 +86,7 @@ export type PhysicsOptions =
  *
  * @typedef {object} FloatingPhysicsOptions
  * @property {number} repulsion    how hard nodes push each other apart
- * @property {number} links
+ * @property {number} links        how hard edges hold their length
  * @property {number} linkLength   edge length relative to the layout's
  * @property {number} memory       a faint pull back to the layout (0 forgets it)
  * @property {number} friction
