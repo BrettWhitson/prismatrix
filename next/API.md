@@ -519,7 +519,6 @@ pen, 5 for a mouse) is a tap, two within 300 ms and 24 px a double tap, and one 
 | `shiftKey` | `boolean` |  |
 | `ctrlKey` | `boolean` |  |
 | `metaKey` | `boolean` |  |
-| `altKey` | `boolean` |  |
 
 <!-- /generated:pointer-input -->
 
