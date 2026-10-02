@@ -25,8 +25,16 @@ import {
   zOrder,
 } from "../src/icons.js";
 import { IconAtlas } from "../src/gl-icons.js";
-import { NODE_STRIDE, packNodes, parseColour, runsOf } from "../src/gl-pack.js";
-import { PIECE_STRIDE, packPieces } from "../src/gl-edges.js";
+import {
+  END_STRIDE,
+  NODE_STRIDE,
+  SEGMENT_STRIDE,
+  packEdges,
+  packNodes,
+  parseColour,
+  runsOf,
+} from "../src/gl-pack.js";
+import { PIECE_STRIDE, TIP_STRIDE, packPieces } from "../src/gl-edges.js";
 import { WebGLPainter, restylesSince } from "../src/webgl.js";
 import { LABEL_STRIDE } from "../src/gl-text.js";
 import { pinnedNodes } from "../src/labels.js";
@@ -875,4 +883,116 @@ test("restyles with references and CPU-traced edges patch the same as a full reb
       );
     }
   });
+});
+
+// ---- edge looks: colour by parent, dashes, glow, ends at either end -------------------------------------------------
+
+/** A small tree at rest, headless, with these edge options. */
+function edgesAtRest(edge, layout = "tree") {
+  const c = new GraphController(
+    new GraphModel(craftingSmall().toJSON(), { edge }),
+    null,
+    { layout, worker: false, clock: () => 0 },
+  );
+  c.setViewport(800, 600, 1);
+  c.run(1500, { start: 0 });
+  return c;
+}
+
+test("edges can take their parent's colour, and follow it when it's restyled", () => {
+  const c = edgesAtRest({ colorBy: "source" });
+  const { graph, looks } = c.scene;
+  for (let i = 0; i < graph.edges.length; i++)
+    assert.equal(looks.edgeColour[i], looks.fill[graph.edges[i].source]);
+  const parent = graph.edges[0].source;
+  looks.fill[parent] = "#123456";
+  const redone = patchLooks(looks, graph, c.node, c.edge, [parent]);
+  for (const e of graph.outgoing[parent]) {
+    assert.ok(redone.edges.includes(e));
+    assert.equal(looks.edgeColour[e], looks.fill[parent]);
+  }
+});
+
+test("an edge's style can dash, dot or make it glow; CPU segments and GPU pieces carry it", () => {
+  const c = edgesAtRest({ dash: "dashed", shape: "step" });
+  const first = c.model.edges[0].id;
+  c.update({
+    changeEdges: [{ id: first, style: { dash: "dotted", glow: true } }],
+  });
+  c.run(100, { start: 2000 });
+  const { looks } = c.scene;
+  assert.equal(looks.edgeDash[0], 2);
+  assert.equal(looks.edgeGlow[0], 1);
+  assert.equal(looks.edgeDash[1], 1, "the option's dashes");
+  const gpu = packPieces(c.scene, { x: 0, y: 0 });
+  for (let k = 0; k < gpu.pieceCount; k++) {
+    const o = k * PIECE_STRIDE;
+    const e = gpu.pieceEdge[k];
+    assert.deepEqual(
+      [gpu.pieces[o + 16], gpu.pieces[o + 17]],
+      [looks.edgeDash[e], looks.edgeGlow[e]],
+    );
+  }
+  // Fans are traced on the CPU: each segment knows how far along its edge it starts.
+  c.setEdgeStyle({ shape: "fan" });
+  c.run(100, { start: 4000 });
+  const cpu = packEdges(c.scene);
+  let previous = -1,
+    walked = 0;
+  for (let k = 0; k < cpu.segmentCount; k++) {
+    const o = k * SEGMENT_STRIDE;
+    const e = cpu.segmentEdge[k];
+    if (e !== previous) walked = 0;
+    previous = e;
+    assert.ok(Math.abs(cpu.segments[o + 9] - walked) < 1e-3);
+    walked += Math.hypot(
+      cpu.segments[o + 2] - cpu.segments[o],
+      cpu.segments[o + 3] - cpu.segments[o + 1],
+    );
+    assert.equal(cpu.segments[o + 10], c.scene.looks.edgeDash[e]);
+  }
+});
+
+test("an edge can end at its source, or at both ends: the edge is held off each, the end points away from it", () => {
+  const c = edgesAtRest({ arrow: "arrow", arrowAt: "both", shape: "fan" });
+  const { graph } = c.scene;
+  const cpu = packEdges(c.scene);
+  assert.equal(cpu.endCount, graph.edges.length * 2);
+  // The end at the source points back at the source.
+  const o = 1 * END_STRIDE;
+  const e = graph.edges[cpu.endEdge[1]];
+  const s = graph.nodes[e.source];
+  const toSource = [s.x - cpu.ends[o], s.y - cpu.ends[o + 1]];
+  assert.ok(toSource[0] * cpu.ends[o + 2] + toSource[1] * cpu.ends[o + 3] > 0);
+  // On the GPU, an end at the source names the edge's nodes the other way round.
+  c.setEdgeStyle({ shape: "step", arrowAt: "source" });
+  c.run(100, { start: 4000 });
+  const gpu = packPieces(c.scene, { x: 0, y: 0 });
+  assert.equal(gpu.tipCount + gpu.bundleTipCount, graph.edges.length);
+  for (let k = 0; k < gpu.tipCount; k++) {
+    const edge = graph.edges[gpu.tipEdge[k]];
+    const t = k * TIP_STRIDE;
+    assert.deepEqual(
+      [gpu.tips[t + 4], gpu.tips[t + 5]],
+      [edge.target, edge.source],
+    );
+  }
+});
+
+test("Canvas 2D dashes and dots edges, and draws ends at the source", () => {
+  const c = edgesAtRest({
+    dash: "dashed",
+    arrow: "dot",
+    arrowAt: "source",
+    opacity: 1,
+  });
+  const { ctx, calls } = recorder();
+  drawScene(ctx, { ...c.scene, theme: THEMES.dark });
+  const dashes = calls.filter(([n, d]) => n === "setLineDash" && d.length);
+  assert.ok(dashes.length >= c.scene.graph.edges.length);
+  assert.ok(calls.some(([n, v]) => n === "=lineCap" && v === "butt"));
+  assert.ok(
+    calls.filter(([n]) => n === "arc").length >= c.scene.graph.edges.length,
+    "a dot at each source",
+  );
 });

@@ -9,18 +9,26 @@ export declare const RADIAL_ARC_POINTS = 20;
 export declare const RADIAL_POINTS: number;
 /** Halvings that find where a curve is cut off the node it starts or ends at. */
 export declare const CUT_STEPS = 12;
-/** Floats per piece: stop A (x, y, f, node?), stop B, source and target index, trims, half-width, colour r, g, b. */
-export declare const PIECE_STRIDE = 16;
-/** Floats per edge end: last stop before the target (x, y, f, node?), source, target, radius, size, kind, r, g, b. */
+/**
+ * Floats per piece: stop A (x, y, f, node?), stop B, source and target index, trims, half-width, colour r, g, b,
+ * dash style (0 solid, 1 dashed, 2 dotted), glow (1: yes).
+ */
+export declare const PIECE_STRIDE = 18;
+/**
+ * Floats per edge end: the last stop before the node it's at (x, y, f, node?), the edge's other node and that node
+ * (an end at the source names them the other way round, as if the edge ran backwards), how far the edge is cut off
+ * that node, size, kind, r, g, b.
+ */
 export declare const TIP_STRIDE = 12;
 /**
  * Floats per bundle span: its four control nodes, how far along the path each is (0–1), source, target, trims,
- * half-width, colour r, g, b.
+ * half-width, colour r, g, b, dash style, glow.
  */
-export declare const SPAN_STRIDE = 16;
+export declare const SPAN_STRIDE = 18;
 /**
  * Floats per bundled edge's end: its last four control nodes, how far along the path each is, source, target,
- * target radius, size, kind, colour r, g, b.
+ * target radius, size, kind, colour r, g, b. An end at the source is the path backwards: its first four control
+ * nodes in reverse, how far along each is from the target, and the ends swapped.
  */
 export declare const BUNDLE_TIP_STRIDE = 16;
 /** Texels per row of the positions texture. */
@@ -99,13 +107,22 @@ export declare function packPositions(
 ): Float32Array;
 /**
  * The kinds of GPU edge instance: each one's instances in packPieces' data (and its buffer on the WebGL layer), the
- * keys of their edges and of their count, its stride, and where its half-width (-1: none) and colour are.
- * @type {[string, string, string, number, number, number][]}
+ * keys of their edges and of their count, its stride, and where its half-width (-1: none), colour, and dash style
+ * and glow (-1: none) are.
+ * @type {[string, string, string, number, number, number, number][]}
  */
-export declare const KINDS: [string, string, string, number, number, number][];
+export declare const KINDS: [
+  string,
+  string,
+  string,
+  number,
+  number,
+  number,
+  number,
+][];
 /**
- * New looks for some edges (`dirty`: a flag per edge index) in GPU data from packPieces, in place: their colour and
- * half-width, all a restyle can change without a new layout. Returns, for each kind of instance (pieces, tips,
+ * New looks for some edges (`dirty`: a flag per edge index) in GPU data from packPieces, in place: their colour,
+ * half-width, dashes and glow, all a restyle can change without a new layout. Returns, for each kind of instance (pieces, tips,
  * spans, bundleTips), the runs [first, end) that changed, for uploading just those.
  * @param {import("./controller.js").Scene} scene
  * @param {ReturnType<typeof packPieces>} data

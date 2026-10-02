@@ -23,7 +23,14 @@ import {
   RADIAL_POINTS,
 } from "./gl-edges.js";
 import { GLYPH_MIN_PX, LINK } from "./references.js";
-import { AURA_ALPHA, AURA_RINGS, MARKS, STACK_FADE } from "./render.js";
+import {
+  AURA_ALPHA,
+  AURA_RINGS,
+  GLOW_ALPHA,
+  MARKS,
+  STACK_FADE,
+  EDGE_DASH,
+} from "./render.js";
 import {
   ICON_FADE_PX,
   ICON_MIN_PX,
@@ -371,15 +378,28 @@ void main() {
   outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
+/** How far past its side an edge's glow reaches (render.js glowReach), for vertex and fragment shaders alike. */
+const EDGE_GLOW = `
+float glowReach(float halfWidth) {
+  return max(2.5, halfWidth * 3.0);
+}`;
+
 /**
  * What an edge capsule hands SEGMENT_FRAGMENT, and corner c (x and y each -1 or 1) of the quad round the capsule
  * from a to b, pad past it all round.
  */
 const CAPSULE_CORNER = `
+${EDGE_GLOW}
 out vec2 v_world;
 flat out vec4 v_ends;
 flat out vec2 v_half;
 flat out vec4 v_colour;
+flat out vec3 v_style; // how far along its edge the capsule starts (world px), dash style, glow
+
+// How far round a capsule its quad must reach: its half-width, its glow, and a couple of pixels.
+float capsulePad(float halfWidth, float glow) {
+  return halfWidth + (glow > 0.0 ? glowReach(halfWidth) : 0.0) + 2.0 * u_pixel;
+}
 
 vec2 capsuleCorner(vec2 a, vec2 b, vec2 c, float pad) {
   vec2 along = b - a;
@@ -397,16 +417,18 @@ layout(location = 1) in vec4 a_ends;
 layout(location = 2) in vec2 a_half;
 layout(location = 3) in vec3 a_colour;
 layout(location = 4) in float a_alpha;
+layout(location = 5) in vec3 a_style; // how far along its edge it starts, dash style, glow
 ${COMMON_VERTEX}
 ${CAPSULE_CORNER}
 
 void main() {
-  vec2 world = capsuleCorner(a_ends.xy, a_ends.zw, a_corner, max(a_half.x, a_half.y) + 2.0 * u_pixel);
+  vec2 world = capsuleCorner(a_ends.xy, a_ends.zw, a_corner, capsulePad(max(a_half.x, a_half.y), a_style.z));
   gl_Position = toClip(world);
   v_world = world;
   v_ends = a_ends;
   v_half = a_half;
   v_colour = vec4(a_colour, a_alpha);
+  v_style = a_style;
 }`;
 
 export const SEGMENT_FRAGMENT = `#version 300 es
@@ -415,14 +437,42 @@ in vec2 v_world;
 flat in vec4 v_ends;
 flat in vec2 v_half;
 flat in vec4 v_colour;
+flat in vec3 v_style;
 ${COMMON_FRAGMENT}
+${EDGE_GLOW}
 out vec4 outColour;
 
 void main() {
   vec2 a = v_ends.xy, ab = v_ends.zw - a;
+  float len = length(ab);
   float t = clamp(dot(v_world - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
-  float d = length(v_world - (a + ab * t)) - mix(v_half.x, v_half.y, t);
-  float alpha = cover(d) * v_colour.a;
+  float side = length(v_world - (a + ab * t));
+  float halfWidth = mix(v_half.x, v_half.y, t);
+  float d = side - halfWidth;
+  float alpha = cover(d);
+  if (v_style.y > 0.0) {
+    // Dashes (square-ended) or dots (round), spaced by distance along the edge (render.js edgeDashes).
+    float along = v_style.x + dot(v_world - a, ab) / max(len, 1e-6);
+    float width = 2.0 * halfWidth;
+    if (v_style.y < 1.5) {
+      float period = max(${float(EDGE_DASH.dashMin)}, width * ${float(EDGE_DASH.dashPerWidth)});
+      float on = period * ${float(EDGE_DASH.dashOn)};
+      float f = mod(along, period);
+      float aa = max(fwidth(along), 1e-4);
+      float mask = clamp(f / aa, 0.0, 1.0) * clamp((on - f) / aa, 0.0, 1.0);
+      // Dashes smaller than a pixel blur into their average.
+      alpha *= mix(mask, on / period, clamp(aa / on - 0.5, 0.0, 1.0));
+    } else {
+      float period = max(${float(EDGE_DASH.dotMin)}, width * ${float(EDGE_DASH.dotPerWidth)});
+      float centre = floor(along / period + 0.5) * period;
+      alpha = cover(length(vec2(along - centre, side)) - halfWidth);
+    }
+  }
+  if (v_style.z > 0.0) {
+    // A faint band either side, as wide as the glow reaches (the Canvas 2D painter's wide stroke under the edge).
+    alpha = max(alpha, cover(d - glowReach(halfWidth)) * ${float(GLOW_ALPHA / 2)});
+  }
+  alpha *= v_colour.a;
   outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
@@ -640,7 +690,7 @@ vec2 stopAt(vec4 stop, vec4 s, vec4 t) {
  */
 const CAPSULE = `${CAPSULE_CORNER}
 
-void capsule(vec2 a, vec2 b, bool draw) {
+void capsule(vec2 a, vec2 b, bool draw, float along) {
   if (!draw) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
@@ -649,12 +699,13 @@ void capsule(vec2 a, vec2 b, bool draw) {
   // Two triangles: corners (-1,-1) (1,-1) (-1,1) / (-1,1) (1,-1) (1,1).
   vec2 c = vec2(corner == 1 || corner == 4 || corner == 5 ? 1.0 : -1.0,
                 corner == 2 || corner == 3 || corner == 5 ? 1.0 : -1.0);
-  vec2 world = capsuleCorner(a, b, c, a_half + 2.0 * u_pixel);
+  vec2 world = capsuleCorner(a, b, c, capsulePad(a_half, a_style.y));
   gl_Position = toClip(world);
   v_world = world;
   v_ends = vec4(a, b);
   v_half = vec2(a_half);
   v_colour = vec4(a_colour, a_alpha);
+  v_style = vec3(along, a_style);
 }`;
 
 /**
@@ -777,6 +828,7 @@ layout(location = 3) in vec2 a_trim;
 layout(location = 4) in float a_half;
 layout(location = 5) in vec3 a_colour;
 layout(location = 6) in float a_alpha;
+layout(location = 7) in vec2 a_style;  // dash style, glow
 ${COMMON_VERTEX}
 ${STOPS}
 ${CAPSULE}
@@ -939,9 +991,22 @@ void main() {
   vec2 a, b;
   if (u_radial) radialPart(part, s, t, a, b);
   else treePart(part, s, t, a, b);
+  // How far along the edge this capsule starts, for dashes: where the piece starts (past a bend, about that share of
+  // the way between the nodes) and the capsules before it in the piece.
+  float along = 0.0;
+  if (a_style.x > 0.0) {
+    along = a_stopA.w > 0.5 ? 0.0 : a_stopA.z * length(t.xy - s.xy);
+    for (int k = 0; k < ${RADIAL_POINTS}; k++) {
+      if (k >= part) break;
+      vec2 ka, kb;
+      if (u_radial) radialPart(k, s, t, ka, kb);
+      else treePart(k, s, t, ka, kb);
+      along += length(kb - ka);
+    }
+  }
   // Nothing to draw past the first capsule when it has no length (a straight piece's spare parts, a corner with
   // no radius).
-  capsule(a, b, length(b - a) >= 1e-6 || part == 0);
+  capsule(a, b, length(b - a) >= 1e-6 || part == 0, along);
 }`;
 
 /**
@@ -960,6 +1025,7 @@ layout(location = 3) in vec2 a_trim;
 layout(location = 4) in float a_half;
 layout(location = 5) in vec3 a_colour;
 layout(location = 6) in float a_alpha;
+layout(location = 7) in vec2 a_style;  // dash style, glow
 ${COMMON_VERTEX}
 ${STOPS}
 ${CAPSULE}
@@ -974,7 +1040,19 @@ void main() {
   vec2 a = splineAt(float(part) / u_steps, p0, p1, p2, p3);
   vec2 b = splineAt(float(part + 1) / u_steps, p0, p1, p2, p3);
   bool keep = clipDisc(a, b, S, a_trim.x) && clipDisc(a, b, T, a_trim.y);
-  capsule(a, b, keep && length(b - a) >= 1e-6);
+  // How far along the edge, for dashes: about where the span starts on the path, and the capsules before it.
+  float along = 0.0;
+  if (a_style.x > 0.0) {
+    along = a_along.y * length(T - S) * 1.2;
+    vec2 previous = splineAt(0.0, p0, p1, p2, p3);
+    for (int k = 1; k <= ${BUNDLE_STEPS}; k++) {
+      if (k > part) break;
+      vec2 p = splineAt(float(k) / u_steps, p0, p1, p2, p3);
+      along += length(p - previous);
+      previous = p;
+    }
+  }
+  capsule(a, b, keep && length(b - a) >= 1e-6, along);
 }`;
 
 /**
@@ -1064,7 +1142,9 @@ void main() {
     vec2 c = u_centre;
     float as_, at, rm, delta, w;
     bool centred = radialFrame(from, to, s, t, as_, at, rm, delta, w);
-    if (u_shape == 0 || centred) dir = normalize(to - from + TINY);
+    // An end at a source in the middle (the edge read backwards): straight in.
+    bool toCentre = length(to - c) < 1e-6 || length(t.zw - c) < 1e-6;
+    if (u_shape == 0 || centred || toCentre) dir = normalize(to - from + TINY);
     else {
       // Steps arrive along the target's spoke, curves along their tangent; a step easing into a curve, between.
       vec2 spoke = normalize(to - c + TINY);

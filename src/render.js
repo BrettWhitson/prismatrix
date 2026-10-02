@@ -2,6 +2,7 @@
 
 import {
   END_ROOM,
+  endRooms,
   fanJunctions,
   pathLength,
   rounded,
@@ -39,7 +40,10 @@ import {
  * @property {Uint8Array} stack        per node, 1 for a stacked copy behind it
  * @property {string[]} edgeColour     per edge
  * @property {Float64Array} edgeWidth  per edge, world px
- * @property {{ colour: string, width: number, byTarget: boolean }} edgeDefault an edge's look without a style of its own
+ * @property {Uint8Array} edgeDash     per edge, 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
+ * @property {Uint8Array} edgeGlow     per edge, 1 for a glow along it
+ * @property {{ colour: string, width: number, byTarget: boolean, bySource: boolean, dash: number }} edgeDefault an
+ *   edge's look without a style of its own
  * @property {import("./theme.js").Theme} theme
  * @property {string} iconFit          the node option
  * @property {Int32Array | null} branch per node, which branch of its root it's on (colouring by branch), or null
@@ -120,10 +124,14 @@ export function looksOf(graph, node, edge, theme = DEFAULT_THEME) {
     stack: new Uint8Array(count),
     edgeColour: new Array(graph.edges.length),
     edgeWidth: new Float64Array(graph.edges.length),
+    edgeDash: new Uint8Array(graph.edges.length),
+    edgeGlow: new Uint8Array(graph.edges.length),
     edgeDefault: {
       colour: edge.color === EDGE_COLOUR_DEFAULT ? theme.edge : edge.color,
       width: edge.width,
       byTarget: edge.colorBy === "target",
+      bySource: edge.colorBy === "source",
+      dash: STROKE_STYLES[edge.dash] ?? 0,
     },
     theme,
     iconFit: node.iconFit ?? "cover",
@@ -137,7 +145,7 @@ export function looksOf(graph, node, edge, theme = DEFAULT_THEME) {
 
 /**
  * Redo the looks of nodes `nodes` and edges `edges` (indices) in place, after their own styles changed: a restyle of
- * a few elements costs what they do, not the whole graph. Edges coloured by their child follow a restyled child.
+ * a few elements costs what they do, not the whole graph. Edges coloured by their child (or parent) follow it.
  * The options and theme must be the ones `looks` was made with (new ones need a whole new looksOf).
  * @returns {{ nodes: Int32Array, edges: Int32Array }} every node and edge whose look was redone, ascending
  */
@@ -148,6 +156,9 @@ export function patchLooks(looks, graph, node, edge, nodes, edges = []) {
   if (looks.edgeDefault.byTarget && graph.incoming)
     for (const i of doneNodes)
       for (const e of graph.incoming[i]) doneEdges.add(e);
+  if (looks.edgeDefault.bySource && graph.outgoing)
+    for (const i of doneNodes)
+      for (const e of graph.outgoing[i]) doneEdges.add(e);
   const sortedEdges = Int32Array.from(doneEdges).sort();
   for (const e of sortedEdges) edgeLook(looks, graph.edges[e], e, edge);
   return { nodes: doneNodes, edges: sortedEdges };
@@ -224,13 +235,43 @@ export const ringOf = (r) => [
 export const auraOf = (r) => Math.max(MARKS.auraReachMin, r * MARKS.auraReach);
 
 function edgeLook(looks, e, i, edge) {
+  const d = looks.edgeDefault;
   looks.edgeColour[i] =
     e.style?.color ??
-    (looks.edgeDefault.byTarget
+    (d.byTarget
       ? looks.fill[e.target]
-      : looks.edgeDefault.colour);
+      : d.bySource
+        ? looks.fill[e.source]
+        : d.colour);
   looks.edgeWidth[i] = e.style?.width ?? edge.width;
+  looks.edgeDash[i] = STROKE_STYLES[e.style?.dash] ?? d.dash;
+  looks.edgeGlow[i] = e.style?.glow ? 1 : 0;
 }
+
+/**
+ * How edges are dashed and dotted: a dash's period (world px: at least dashMin, or dashPerWidth times the edge's
+ * width) and the part of it that's drawn; a dot's spacing likewise. Both painters use these.
+ */
+export const EDGE_DASH = {
+  dashMin: 6,
+  dashPerWidth: 5,
+  dashOn: 0.6,
+  dotMin: 3,
+  dotPerWidth: 2.5,
+};
+
+/** For an edge `width` wide (world px): its dash period and the part drawn, and its dot spacing. */
+export function edgeDashes(width) {
+  return {
+    dashPeriod: Math.max(EDGE_DASH.dashMin, width * EDGE_DASH.dashPerWidth),
+    dashOn: EDGE_DASH.dashOn,
+    dotPeriod: Math.max(EDGE_DASH.dotMin, width * EDGE_DASH.dotPerWidth),
+  };
+}
+
+/** How far an edge's glow reaches past its side, for an edge `width` wide (world px), and how strong it starts. */
+export const glowReach = (width) => Math.max(2.5, width * 1.5);
+export const GLOW_ALPHA = 0.45;
 
 /** Which of its root's children each node descends from (roots get their own number). */
 function branches(graph) {
@@ -640,68 +681,108 @@ function edgeLayer(canvas, kept = layers) {
   return layer;
 }
 
-/** Edge `ei` along `pts` (trimmedRoute), with its end. */
+/** Edge `ei` along `pts` (trimmedRoute), dashed or dotted by its look, with its glow and its ends. */
 function drawEdge(ctx, pts, edge, looks, ei) {
   if (!pts) return;
   const colour = looks.edgeColour[ei];
   const width = looks.edgeWidth[ei];
+  const dash = looks.edgeDash?.[ei] ?? 0;
   ctx.strokeStyle = colour;
   ctx.fillStyle = colour;
+  const dashes = edgeDashes(width);
+  // A dot is a dash of no length with round caps; a dash has square ends.
+  const pattern =
+    dash === 1
+      ? [
+          dashes.dashPeriod * dashes.dashOn,
+          dashes.dashPeriod * (1 - dashes.dashOn),
+        ]
+      : dash === 2
+        ? [0, dashes.dotPeriod]
+        : [];
+  const line = (lineWidth, offset = 0) => {
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash(pattern);
+    ctx.lineDashOffset = -offset;
+    ctx.lineCap = dash === 1 ? "butt" : "round";
+  };
+
+  if (looks.edgeGlow?.[ei]) {
+    // A wide, faint stroke under the edge, in its colour.
+    const reach = glowReach(width);
+    ctx.save();
+    ctx.globalAlpha *= GLOW_ALPHA / 2;
+    ctx.lineWidth = width + reach * 2;
+    ctx.lineCap = "round";
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    const glow = rounded(pts, edge.corner);
+    for (let i = 0; i < glow.length; i += 2) ctx.lineTo(glow[i], glow[i + 1]);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   if (edge.taper) {
-    // Segment by segment, narrowing along the length.
+    // Segment by segment, narrowing along the length; the dashes carry on from one segment to the next.
     const total = pathLength(pts);
     let walked = 0;
     for (let i = 2; i < pts.length; i += 2) {
       const len = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
       const f = (walked + len / 2) / total;
+      line(width * (2 - 1.7 * f), walked);
       walked += len;
-      ctx.lineWidth = width * (2 - 1.7 * f);
       ctx.beginPath();
       ctx.moveTo(pts[i - 2], pts[i - 1]);
       ctx.lineTo(pts[i], pts[i + 1]);
       ctx.stroke();
     }
   } else {
-    ctx.lineWidth = width;
+    line(width);
     ctx.beginPath();
-    const line = rounded(pts, edge.corner);
-    for (let i = 0; i < line.length; i += 2) ctx.lineTo(line[i], line[i + 1]);
+    const path = rounded(pts, edge.corner);
+    for (let i = 0; i < path.length; i += 2) ctx.lineTo(path[i], path[i + 1]);
     ctx.stroke();
   }
+  ctx.setLineDash([]);
+  ctx.lineDashOffset = 0;
+  ctx.lineCap = "round";
 
-  if (edge.arrow !== "none") {
-    const n = pts.length;
-    const x = pts[n - 2],
-      y = pts[n - 1];
-    const a = Math.atan2(y - pts[n - 3], x - pts[n - 4]);
-    const size = edge.arrowSize;
-    ctx.beginPath();
-    if (edge.arrow === "dot") {
-      ctx.arc(
-        x + Math.cos(a) * size * 0.45,
-        y + Math.sin(a) * size * 0.45,
-        size * 0.45,
-        0,
-        Math.PI * 2,
-      );
-    } else {
-      const end = size * END_ROOM;
-      const tipX = x + Math.cos(a) * end,
-        tipY = y + Math.sin(a) * end;
-      ctx.moveTo(tipX, tipY);
-      ctx.lineTo(
-        tipX - Math.cos(a - 0.45) * size,
-        tipY - Math.sin(a - 0.45) * size,
-      );
-      ctx.lineTo(
-        tipX - Math.cos(a + 0.45) * size,
-        tipY - Math.sin(a + 0.45) * size,
-      );
-      ctx.closePath();
-    }
-    ctx.fill();
+  const ends = endRooms(edge);
+  const n = pts.length;
+  if (ends.target > 0)
+    drawEnd(ctx, edge, pts[n - 2], pts[n - 1], pts[n - 4], pts[n - 3]);
+  if (ends.source > 0) drawEnd(ctx, edge, pts[0], pts[1], pts[2], pts[3]);
+}
+
+/** An edge's end (an arrow or a dot) at x, y, pointing away from px, py (the point before it on the edge). */
+function drawEnd(ctx, edge, x, y, px, py) {
+  const a = Math.atan2(y - py, x - px);
+  const size = edge.arrowSize;
+  ctx.beginPath();
+  if (edge.arrow === "dot") {
+    ctx.arc(
+      x + Math.cos(a) * size * 0.45,
+      y + Math.sin(a) * size * 0.45,
+      size * 0.45,
+      0,
+      Math.PI * 2,
+    );
+  } else {
+    const end = size * END_ROOM;
+    const tipX = x + Math.cos(a) * end,
+      tipY = y + Math.sin(a) * end;
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(
+      tipX - Math.cos(a - 0.45) * size,
+      tipY - Math.sin(a - 0.45) * size,
+    );
+    ctx.lineTo(
+      tipX - Math.cos(a + 0.45) * size,
+      tipY - Math.sin(a + 0.45) * size,
+    );
+    ctx.closePath();
   }
+  ctx.fill();
 }
 
 /** How far node `look` reaches from its centre, marks and all, world px. */

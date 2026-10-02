@@ -27,11 +27,14 @@ import { bool, color, range, select } from "./schema.js";
  * @property {number} corner            a step edge's corner radius
  * @property {number} width             world px
  * @property {boolean} taper
- * @property {"single" | "target"} colorBy every edge in one colour, or each in its child's colour
+ * @property {"single" | "target" | "source"} colorBy every edge in one colour, or each in its child's or its parent's
+ *   colour
  * @property {string} color             "#rrggbb", when edges are one colour
  * @property {number} opacity           edges are drawn as one layer at this opacity, so overlaps don't brighten
- * @property {"none" | "arrow" | "dot"} arrow what an edge ends in at its target
+ * @property {"none" | "arrow" | "dot"} arrow what an edge ends in
+ * @property {"target" | "source" | "both"} arrowAt which end of an edge has it
  * @property {number} arrowSize         the end's size, world px
+ * @property {"solid" | "dashed" | "dotted"} dash how edges are drawn
  * @property {"off" | "target" | "middle"} labels where an edge's own label is drawn
  */
 
@@ -156,6 +159,7 @@ export const EDGE_OPTIONS = [
     [
       { value: "single", label: "One colour" },
       { value: "target", label: "Child's colour" },
+      { value: "source", label: "Parent's colour" },
     ],
     "single",
   ),
@@ -171,7 +175,28 @@ export const EDGE_OPTIONS = [
     ],
     "none",
   ),
+  select(
+    "arrowAt",
+    "End at",
+    [
+      { value: "target", label: "Target" },
+      { value: "source", label: "Source" },
+      { value: "both", label: "Both" },
+    ],
+    "target",
+    "Which end of an edge gets its arrow or dot: the target (the child), the source (the parent), or both.",
+  ),
   range("arrowSize", "End size", 2, 16, 0.5, 6),
+  select(
+    "dash",
+    "Line",
+    [
+      { value: "solid", label: "Solid" },
+      { value: "dashed", label: "Dashed" },
+      { value: "dotted", label: "Dotted" },
+    ],
+    "solid",
+  ),
   select(
     "labels",
     "Labels",

@@ -56,12 +56,23 @@ export type Looks = {
    */
   edgeWidth: Float64Array;
   /**
-   * an edge's look without a style of its own
+   * per edge, 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
+   */
+  edgeDash: Uint8Array;
+  /**
+   * per edge, 1 for a glow along it
+   */
+  edgeGlow: Uint8Array;
+  /**
+   * an
+   * edge's look without a style of its own
    */
   edgeDefault: {
     colour: string;
     width: number;
     byTarget: boolean;
+    bySource: boolean;
+    dash: number;
   };
   theme: import("./theme.js").Theme;
   /**
@@ -161,7 +172,10 @@ export type Shown = {
  * @property {Uint8Array} stack        per node, 1 for a stacked copy behind it
  * @property {string[]} edgeColour     per edge
  * @property {Float64Array} edgeWidth  per edge, world px
- * @property {{ colour: string, width: number, byTarget: boolean }} edgeDefault an edge's look without a style of its own
+ * @property {Uint8Array} edgeDash     per edge, 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
+ * @property {Uint8Array} edgeGlow     per edge, 1 for a glow along it
+ * @property {{ colour: string, width: number, byTarget: boolean, bySource: boolean, dash: number }} edgeDefault an
+ *   edge's look without a style of its own
  * @property {import("./theme.js").Theme} theme
  * @property {string} iconFit          the node option
  * @property {Int32Array | null} branch per node, which branch of its root it's on (colouring by branch), or null
@@ -232,7 +246,7 @@ export declare function looksOf(
 ): Looks;
 /**
  * Redo the looks of nodes `nodes` and edges `edges` (indices) in place, after their own styles changed: a restyle of
- * a few elements costs what they do, not the whole graph. Edges coloured by their child follow a restyled child.
+ * a few elements costs what they do, not the whole graph. Edges coloured by their child (or parent) follow it.
  * The options and theme must be the ones `looks` was made with (new ones need a whole new looksOf).
  * @returns {{ nodes: Int32Array, edges: Int32Array }} every node and edge whose look was redone, ascending
  */
@@ -278,6 +292,26 @@ export declare const MARKS: {
 export declare const ringOf: (r: any) => number[];
 /** How far an aura reaches past the shape, for radius r. */
 export declare const auraOf: (r: any) => number;
+/**
+ * How edges are dashed and dotted: a dash's period (world px: at least dashMin, or dashPerWidth times the edge's
+ * width) and the part of it that's drawn; a dot's spacing likewise. Both painters use these.
+ */
+export declare const EDGE_DASH: {
+  dashMin: number;
+  dashPerWidth: number;
+  dashOn: number;
+  dotMin: number;
+  dotPerWidth: number;
+};
+/** For an edge `width` wide (world px): its dash period and the part drawn, and its dot spacing. */
+export declare function edgeDashes(width: any): {
+  dashPeriod: number;
+  dashOn: number;
+  dotPeriod: number;
+};
+/** How far an edge's glow reaches past its side, for an edge `width` wide (world px), and how strong it starts. */
+export declare const glowReach: (width: any) => number;
+export declare const GLOW_ALPHA = 0.45;
 /**
  * Draw one whole frame on one 2D canvas (the Canvas 2D painter's): background, edges, nodes, selection halos, the
  * reference chips' link glyphs, text.

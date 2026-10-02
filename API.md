@@ -173,6 +173,8 @@ the style still applies.
 | --- | --- | --- |
 | `color` | `string` | "#rrggbb" |
 | `width` | `number` | World px (0.1–40) |
+| `dash` | `"solid" \| "dashed" \| "dotted"` | How this edge is drawn (default: the edge option `dash`) |
+| `glow` | `boolean` | A soft glow along the edge, in its colour |
 
 <!-- /generated:edge-style -->
 
@@ -917,11 +919,13 @@ room a node takes (`shape`, `size`, `sizeBy`, `labels`, `labelSize`, `collisionR
 | `corner` | `8` | 0 – 40 | Rounds a step edge's bends. |
 | `width` | `1.5` | 0.25 – 8 | World px |
 | `taper` | `false` | true / false | Thick at the parent, thin at the child. |
-| `colorBy` | `"single"` | `single` (one colour), `target` (child's colour) | Every edge in one colour, or each in its child's colour |
+| `colorBy` | `"single"` | `single` (one colour), `target` (child's colour), `source` (parent's colour) | Every edge in one colour, or each in its child's or its parent's colour |
 | `color` | `"#5b6478"` | "#rrggbb" | "#rrggbb", when edges are one colour |
 | `opacity` | `0.8` | 0.05 – 1 | Edges are drawn as one layer at this opacity, so overlaps don't brighten |
-| `arrow` | `"none"` | `none`, `arrow`, `dot` | What an edge ends in at its target |
+| `arrow` | `"none"` | `none`, `arrow`, `dot` | What an edge ends in |
+| `arrowAt` | `"target"` | `target`, `source`, `both` | Which end of an edge gets its arrow or dot: the target (the child), the source (the parent), or both. |
 | `arrowSize` | `6` | 2 – 16 | The end's size, world px |
+| `dash` | `"solid"` | `solid`, `dashed`, `dotted` | How edges are drawn |
 | `labels` | `"target"` | `off`, `target` (near the target), `middle` | Where an edge's own label (a quantity, say) is drawn. Shown once zoomed in far enough to read. |
 
 <!-- /generated:edge-options -->

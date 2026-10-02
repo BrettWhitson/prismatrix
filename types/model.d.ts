@@ -96,6 +96,14 @@ export type EdgeStyle = {
    * world px (0.1–40)
    */
   width?: number;
+  /**
+   * how this edge is drawn (default: the edge option `dash`)
+   */
+  dash?: "solid" | "dashed" | "dotted";
+  /**
+   * a soft glow along the edge, in its colour
+   */
+  glow?: boolean;
 };
 export type ModelEdge = {
   /**
@@ -320,6 +328,8 @@ export declare const NODE_STYLE: {
 export declare const EDGE_STYLE: {
   color: typeof isHex;
   width: (v: any) => boolean;
+  dash: (v: any) => boolean;
+  glow: (v: any) => v is boolean;
 };
 /**
  * Deep equality by value, for JSON-like data: NaN equals NaN, arrays element by element, plain objects by their own

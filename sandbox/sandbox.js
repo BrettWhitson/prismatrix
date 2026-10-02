@@ -92,7 +92,7 @@ const GRAPH_OPTIONS = [
     "marks",
     "Sample marks",
     false,
-    "Node styles in turn: ring, aura, dashed and dotted borders, a stack, a faint fill, a badge image, a pinned label.",
+    "Node styles in turn (ring, aura, dashed and dotted borders, a stack, a faint fill, a badge image, a pinned label), and edges that glow or are dotted.",
   ),
 ];
 
@@ -223,9 +223,14 @@ function makeGraph(g) {
         target: String(Math.max(a, b)),
       });
   }
-  if (g.marks)
+  if (g.marks) {
     for (let i = 1; i < nodes.length; i++)
       nodes[i].style = MARK_STYLES[(i - 1) % MARK_STYLES.length];
+    // Edges too: every few, a glow or dots.
+    for (let i = 0; i < edges.length; i++)
+      if (i % 6 === 0) edges[i].style = { glow: true };
+      else if (i % 6 === 3) edges[i].style = { dash: "dotted" };
+  }
   return { nodes, edges };
 }
 

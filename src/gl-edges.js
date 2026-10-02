@@ -11,7 +11,7 @@
 // CPU's own edge routes, is in tests/helpers/gl-twins.js.)
 
 import { palette, runsOf } from "./gl-pack.js";
-import { BUNDLE_STEPS, END_ROOM, bundlePath, startTrims } from "./geometry.js";
+import { BUNDLE_STEPS, bundlePath, endRooms, startTrims } from "./geometry.js";
 
 // The shaders (gl-shaders.js) take these from here, so the GPU and its JavaScript twins (tests/helpers/gl-twins.js)
 // trace the same points.
@@ -27,18 +27,26 @@ export const RADIAL_ARC_POINTS = 20;
 export const RADIAL_POINTS = 2 + 2 * RADIAL_CORNER_POINTS + RADIAL_ARC_POINTS;
 /** Halvings that find where a curve is cut off the node it starts or ends at. */
 export const CUT_STEPS = 12;
-/** Floats per piece: stop A (x, y, f, node?), stop B, source and target index, trims, half-width, colour r, g, b. */
-export const PIECE_STRIDE = 16;
-/** Floats per edge end: last stop before the target (x, y, f, node?), source, target, radius, size, kind, r, g, b. */
+/**
+ * Floats per piece: stop A (x, y, f, node?), stop B, source and target index, trims, half-width, colour r, g, b,
+ * dash style (0 solid, 1 dashed, 2 dotted), glow (1: yes).
+ */
+export const PIECE_STRIDE = 18;
+/**
+ * Floats per edge end: the last stop before the node it's at (x, y, f, node?), the edge's other node and that node
+ * (an end at the source names them the other way round, as if the edge ran backwards), how far the edge is cut off
+ * that node, size, kind, r, g, b.
+ */
 export const TIP_STRIDE = 12;
 /**
  * Floats per bundle span: its four control nodes, how far along the path each is (0–1), source, target, trims,
- * half-width, colour r, g, b.
+ * half-width, colour r, g, b, dash style, glow.
  */
-export const SPAN_STRIDE = 16;
+export const SPAN_STRIDE = 18;
 /**
  * Floats per bundled edge's end: its last four control nodes, how far along the path each is, source, target,
- * target radius, size, kind, colour r, g, b.
+ * target radius, size, kind, colour r, g, b. An end at the source is the path backwards: its first four control
+ * nodes in reverse, how far along each is from the target, and the ends swapped.
  */
 export const BUNDLE_TIP_STRIDE = 16;
 /** Texels per row of the positions texture. */
@@ -88,7 +96,9 @@ export function gpuEdges(scene) {
 export function packPieces(scene, origin) {
   const { graph, routing, edge, looks } = scene;
   const layered = routing.kind === "layered";
-  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
+  const rooms = endRooms(edge);
+  // Ends per edge: at the target, the source, or both.
+  const perEdge = (rooms.target > 0 ? 1 : 0) + (rooms.source > 0 ? 1 : 0);
   const kind = edge.arrow === "dot" ? 1 : 0;
   const colour = palette();
   const edges = graph.edges;
@@ -114,30 +124,30 @@ export function packPieces(scene, origin) {
   const pieceTotal = shapedTotal + straightTotal;
   const pieces = new Float32Array(pieceTotal * PIECE_STRIDE);
   const pieceEdge = new Int32Array(pieceTotal);
-  // One end per edge drawn as pieces (an edge with bends has several pieces but one end).
+  // Its ends per edge drawn as pieces (an edge with bends has several pieces but one end at each node).
   const shapedEdges = edges.length - bundleTotal - straightTotal;
-  const tipTotal = end > 0 ? shapedEdges + straightTotal : 0;
+  const tipTotal = (shapedEdges + straightTotal) * perEdge;
   const tips = new Float32Array(tipTotal * TIP_STRIDE);
   const tipEdge = new Int32Array(tipTotal);
   const spans = new Float32Array(spanTotal * SPAN_STRIDE);
   const spanEdge = new Int32Array(spanTotal);
   const bundleTips = new Float32Array(
-    (end > 0 ? bundleTotal : 0) * BUNDLE_TIP_STRIDE,
+    bundleTotal * perEdge * BUNDLE_TIP_STRIDE,
   );
-  const bundleTipEdge = new Int32Array(end > 0 ? bundleTotal : 0);
+  const bundleTipEdge = new Int32Array(bundleTotal * perEdge);
   // Shaped pieces and tips fill from the start, straight ones from where the shaped ones end.
   let p = 0,
     t = 0,
     ps = shapedTotal,
-    ts = end > 0 ? shapedEdges : 0,
+    ts = shapedEdges * perEdge,
     s = 0,
     b = 0;
   const shapedTips = ts;
   // A stop: a node (its position this frame) or a bend (where the layout put it, moved with the edge's ends).
-  const write = (out, o, stop) => {
+  const write = (out, o, stop, backwards = false) => {
     out[o] = stop.x - origin.x;
     out[o + 1] = stop.y - origin.y;
-    out[o + 2] = stop.f;
+    out[o + 2] = backwards ? 1 - stop.f : stop.f;
     out[o + 3] = stop.node ? 1 : 0;
   };
   const NODE_A = { x: 0, y: 0, f: 0, node: true },
@@ -146,9 +156,12 @@ export function packPieces(scene, origin) {
     const e = edges[ei];
     const rgb = colour(looks.edgeColour[ei]);
     const half = looks.edgeWidth[ei] / 2;
+    const dash = looks.edgeDash?.[ei] ?? 0;
+    const glow = looks.edgeGlow?.[ei] ?? 0;
     // A piece's first stop is trimmed past its source's label (startTrims); a bundle's only off its node (a disc).
-    const trimA = starts[ei],
-      trimB = looks.radius[e.target] + end;
+    // Each end holds the edge off its node by its own room.
+    const trimA = starts[ei] + rooms.source,
+      trimB = looks.radius[e.target] + rooms.target;
     const path = paths[ei];
     if (path) {
       // A span per four consecutive control points of the clamped spline: points before the first and after the
@@ -164,25 +177,29 @@ export function packPieces(scene, origin) {
         }
         spans[o + 8] = e.source;
         spans[o + 9] = e.target;
-        spans[o + 10] = looks.radius[e.source];
+        spans[o + 10] = looks.radius[e.source] + rooms.source;
         spans[o + 11] = trimB;
         spans[o + 12] = half;
         spans[o + 13] = rgb[0];
         spans[o + 14] = rgb[1];
         spans[o + 15] = rgb[2];
+        spans[o + 16] = dash;
+        spans[o + 17] = glow;
         spanEdge[s] = ei;
       }
-      if (end > 0) {
-        // The end: the last four control points (the last three spans), where the curve reaches the target.
+      // The ends: the last four control points (the last three spans), where the curve reaches the target; for the
+      // source, the first four backwards (a uniform B-spline backwards is the same curve).
+      for (const backwards of [false, true]) {
+        if (!((backwards ? rooms.source : rooms.target) > 0)) continue;
         const o = b * BUNDLE_TIP_STRIDE;
         for (let q = 0; q < 4; q++) {
-          const k = Math.max(0, m - 3 + q);
+          const k = backwards ? Math.min(m, 3 - q) : Math.max(0, m - 3 + q);
           bundleTips[o + q] = path[k];
-          bundleTips[o + 4 + q] = k / m;
+          bundleTips[o + 4 + q] = backwards ? 1 - k / m : k / m;
         }
-        bundleTips[o + 8] = e.source;
-        bundleTips[o + 9] = e.target;
-        bundleTips[o + 10] = looks.radius[e.target];
+        bundleTips[o + 8] = backwards ? e.target : e.source;
+        bundleTips[o + 9] = backwards ? e.source : e.target;
+        bundleTips[o + 10] = looks.radius[backwards ? e.source : e.target];
         bundleTips[o + 11] = edge.arrowSize;
         bundleTips[o + 12] = kind;
         bundleTips[o + 13] = rgb[0];
@@ -212,15 +229,20 @@ export function packPieces(scene, origin) {
       pieces[o + 13] = rgb[0];
       pieces[o + 14] = rgb[1];
       pieces[o + 15] = rgb[2];
+      pieces[o + 16] = dash;
+      pieces[o + 17] = glow;
       pieceEdge[at] = ei;
     }
-    if (end > 0) {
+    // The ends. One at the source is the edge read backwards: from the stop after the source, its ends swapped,
+    // cut off the source as far as the edge is (past its label, if it leaves through it).
+    for (const backwards of [false, true]) {
+      if (!((backwards ? rooms.source : rooms.target) > 0)) continue;
       const at = straight ? ts++ : t++;
       const o = at * TIP_STRIDE;
-      write(tips, o, stops[stops.length - 2]);
-      tips[o + 4] = e.source;
-      tips[o + 5] = e.target;
-      tips[o + 6] = looks.radius[e.target];
+      write(tips, o, stops[backwards ? 1 : stops.length - 2], backwards);
+      tips[o + 4] = backwards ? e.target : e.source;
+      tips[o + 5] = backwards ? e.source : e.target;
+      tips[o + 6] = backwards ? starts[ei] : looks.radius[e.target];
       tips[o + 7] = edge.arrowSize;
       tips[o + 8] = kind;
       tips[o + 9] = rgb[0];
@@ -301,19 +323,28 @@ export function packPositions(scene, origin, out) {
 
 /**
  * The kinds of GPU edge instance: each one's instances in packPieces' data (and its buffer on the WebGL layer), the
- * keys of their edges and of their count, its stride, and where its half-width (-1: none) and colour are.
- * @type {[string, string, string, number, number, number][]}
+ * keys of their edges and of their count, its stride, and where its half-width (-1: none), colour, and dash style
+ * and glow (-1: none) are.
+ * @type {[string, string, string, number, number, number, number][]}
  */
 export const KINDS = [
-  ["pieces", "pieceEdge", "pieceCount", PIECE_STRIDE, 12, 13],
-  ["tips", "tipEdge", "tipCount", TIP_STRIDE, -1, 9],
-  ["spans", "spanEdge", "spanCount", SPAN_STRIDE, 12, 13],
-  ["bundleTips", "bundleTipEdge", "bundleTipCount", BUNDLE_TIP_STRIDE, -1, 13],
+  ["pieces", "pieceEdge", "pieceCount", PIECE_STRIDE, 12, 13, 16],
+  ["tips", "tipEdge", "tipCount", TIP_STRIDE, -1, 9, -1],
+  ["spans", "spanEdge", "spanCount", SPAN_STRIDE, 12, 13, 16],
+  [
+    "bundleTips",
+    "bundleTipEdge",
+    "bundleTipCount",
+    BUNDLE_TIP_STRIDE,
+    -1,
+    13,
+    -1,
+  ],
 ];
 
 /**
- * New looks for some edges (`dirty`: a flag per edge index) in GPU data from packPieces, in place: their colour and
- * half-width, all a restyle can change without a new layout. Returns, for each kind of instance (pieces, tips,
+ * New looks for some edges (`dirty`: a flag per edge index) in GPU data from packPieces, in place: their colour,
+ * half-width, dashes and glow, all a restyle can change without a new layout. Returns, for each kind of instance (pieces, tips,
  * spans, bundleTips), the runs [first, end) that changed, for uploading just those.
  * @param {import("./controller.js").Scene} scene
  * @param {ReturnType<typeof packPieces>} data
@@ -324,7 +355,7 @@ export function restylePieces(scene, data, dirty) {
   const { looks } = scene;
   const colour = palette();
   const out = {};
-  for (const [kind, edgesOf, countOf, stride, half, at] of KINDS) {
+  for (const [kind, edgesOf, countOf, stride, half, at, style] of KINDS) {
     const values = data[kind],
       edges = data[edgesOf],
       count = data[countOf];
@@ -338,6 +369,10 @@ export function restylePieces(scene, data, dirty) {
       values[o + at] = rgb[0];
       values[o + at + 1] = rgb[1];
       values[o + at + 2] = rgb[2];
+      if (style >= 0) {
+        values[o + style] = looks.edgeDash?.[e] ?? 0;
+        values[o + style + 1] = looks.edgeGlow?.[e] ?? 0;
+      }
       changed.push(i);
     }
     out[kind] = runsOf(changed);

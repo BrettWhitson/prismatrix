@@ -384,6 +384,7 @@ export class WebGLPainter {
         [1, 4, 0], // ends
         [2, 2, 4], // half-widths
         [3, 3, 6], // colour
+        [5, 3, 9], // how far along its edge, dash style, glow
       ],
       4, // brightness, in a buffer of its own
     );
@@ -406,6 +407,7 @@ export class WebGLPainter {
       [3, 2, 10], // trims
       [4, 1, 12], // half-width
       [5, 3, 13], // colour
+      [7, 2, 16], // dash style, glow
     ];
     // Edge pieces: no corner buffer; each instance is up to PIECE_POINTS - 1 capsules of two triangles (how many
     // is chosen per draw: a straight piece needs one, a radial one more).

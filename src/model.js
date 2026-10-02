@@ -65,6 +65,8 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  * @typedef {object} EdgeStyle
  * @property {string} [color]  "#rrggbb"
  * @property {number} [width]  world px (0.1–40)
+ * @property {"solid" | "dashed" | "dotted"} [dash] how this edge is drawn (default: the edge option `dash`)
+ * @property {boolean} [glow]  a soft glow along the edge, in its colour
  *
  * @typedef {object} ModelEdge An edge as the model keeps it (frozen).
  * @property {string} id       given, or "source>target" (with "#2", "#3"… for repeats)
@@ -224,6 +226,8 @@ export const NODE_STYLE = {
 export const EDGE_STYLE = {
   color: isHex,
   width: number(0.1, 40),
+  dash: (v) => v === "solid" || v === "dashed" || v === "dotted",
+  glow: (v) => typeof v === "boolean",
 };
 
 /**

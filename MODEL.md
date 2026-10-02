@@ -103,6 +103,8 @@ floats can only land on sixteenths of a pixel.
 | node    | `pinLabel`    | `true`: the label stays at any zoom, like a root's.                                             |
 | edge    | `color`       | `"#rrggbb"`                                                                                      |
 | edge    | `width`       | World px, 0.1–40.                                                                                |
+| edge    | `dash`        | `solid`, `dashed` or `dotted` (default: the `dash` edge option).                                 |
+| edge    | `glow`        | `true`: a soft glow along the edge, in its colour.                                               |
 
 An unknown key or a bad value is left out and reported as a `bad-style` issue; the rest of the style still applies.
 

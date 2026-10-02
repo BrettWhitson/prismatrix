@@ -2,6 +2,11 @@
 export declare const ARC_STEP = 0.06;
 /** How far an edge's end (an arrow or a dot) holds the edge off its target, as a share of the end's size. */
 export declare const END_ROOM = 0.9;
+/** How far the edge options' end (an arrow or a dot) holds an edge off its source and off its target (0: none there). */
+export declare function endRooms(edge: any): {
+  source: number;
+  target: number;
+};
 /**
  * The points of an edge from `s` to `t` (anything with x and y).
  * @param {import("./layouts.js").Routing} routing
@@ -107,8 +112,8 @@ export declare function trim(pts: any, from: any, to: any): any[];
 export declare function pathLength(pts: any): number;
 /**
  * Edge `ei` of the scene's graph as painters draw it: its route (through its parent's fan junction when `junctions`,
- * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target and of its
- * end (an arrow or a dot). Null when nothing is left.
+ * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target, each also clear
+ * of the end there, if it has one (an arrow or a dot: endRooms). Null when nothing is left.
  */
 export declare function trimmedRoute(
   scene: any,

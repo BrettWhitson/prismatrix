@@ -1,2 +1,4 @@
 node_modules/
 package-lock.json
+# Fixture graphs are written by tools/make-fixtures.mjs in the model's own JSON layout; tests compare them byte for byte.
+tests/fixtures/

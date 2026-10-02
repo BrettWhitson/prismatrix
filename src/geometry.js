@@ -9,6 +9,17 @@ export const ARC_STEP = 0.06;
 export const END_ROOM = 0.9;
 const FAN_STUB = 0.4; // how far a fan's junction sits towards the children, as a share of the way
 
+/** How far the edge options' end (an arrow or a dot) holds an edge off its source and off its target (0: none there). */
+export function endRooms(edge) {
+  if (edge.arrow === "none") return { source: 0, target: 0 };
+  const room = edge.arrowSize * END_ROOM;
+  const at = edge.arrowAt ?? "target";
+  return {
+    source: at === "source" || at === "both" ? room : 0,
+    target: at === "target" || at === "both" ? room : 0,
+  };
+}
+
 /**
  * The points of an edge from `s` to `t` (anything with x and y).
  * @param {import("./layouts.js").Routing} routing
@@ -489,8 +500,8 @@ export function pathLength(pts) {
 
 /**
  * Edge `ei` of the scene's graph as painters draw it: its route (through its parent's fan junction when `junctions`,
- * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target and of its
- * end (an arrow or a dot). Null when nothing is left.
+ * from fanJunctions, has one), cut to start at `starts[ei]` (startTrims) and to end clear of its target, each also clear
+ * of the end there, if it has one (an arrow or a dot: endRooms). Null when nothing is left.
  */
 export function trimmedRoute(scene, ei, junctions, starts) {
   const { graph, edge, looks } = scene;
@@ -499,11 +510,11 @@ export function trimmedRoute(scene, ei, junctions, starts) {
   const junction = Number.isNaN(jx)
     ? null
     : { x: jx, y: junctions[e.source * 2 + 1] };
-  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
+  const ends = endRooms(edge);
   return trim(
     edgeRoute(graph, scene.routing, edge.shape, e, junction),
-    starts[ei],
-    looks.radius[e.target] + end,
+    starts[ei] + ends.source,
+    looks.radius[e.target] + ends.target,
   );
 }
 

@@ -64,9 +64,10 @@ export type EdgeOptions = {
   width: number;
   taper: boolean;
   /**
-   * every edge in one colour, or each in its child's colour
+   * every edge in one colour, or each in its child's or its parent's
+   * colour
    */
-  colorBy: "single" | "target";
+  colorBy: "single" | "target" | "source";
   /**
    * "#rrggbb", when edges are one colour
    */
@@ -76,13 +77,21 @@ export type EdgeOptions = {
    */
   opacity: number;
   /**
-   * what an edge ends in at its target
+   * what an edge ends in
    */
   arrow: "none" | "arrow" | "dot";
+  /**
+   * which end of an edge has it
+   */
+  arrowAt: "target" | "source" | "both";
   /**
    * the end's size, world px
    */
   arrowSize: number;
+  /**
+   * how edges are drawn
+   */
+  dash: "solid" | "dashed" | "dotted";
   /**
    * where an edge's own label is drawn
    */
@@ -113,11 +122,14 @@ export type EdgeOptions = {
  * @property {number} corner            a step edge's corner radius
  * @property {number} width             world px
  * @property {boolean} taper
- * @property {"single" | "target"} colorBy every edge in one colour, or each in its child's colour
+ * @property {"single" | "target" | "source"} colorBy every edge in one colour, or each in its child's or its parent's
+ *   colour
  * @property {string} color             "#rrggbb", when edges are one colour
  * @property {number} opacity           edges are drawn as one layer at this opacity, so overlaps don't brighten
- * @property {"none" | "arrow" | "dot"} arrow what an edge ends in at its target
+ * @property {"none" | "arrow" | "dot"} arrow what an edge ends in
+ * @property {"target" | "source" | "both"} arrowAt which end of an edge has it
  * @property {number} arrowSize         the end's size, world px
+ * @property {"solid" | "dashed" | "dotted"} dash how edges are drawn
  * @property {"off" | "target" | "middle"} labels where an edge's own label is drawn
  */
 /** @type {import("./schema.js").OptionSpec[]} */

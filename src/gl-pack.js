@@ -1,7 +1,7 @@
 // What the WebGL renderer sends the GPU each frame, worked out on the CPU. Pure: no GL, so it can be tested.
 
 import {
-  END_ROOM,
+  endRooms,
   fanJunctions,
   rounded,
   startTrims,
@@ -31,10 +31,12 @@ export const SHAPE_IDS = {
  */
 export const NODE_STRIDE = 35;
 /**
- * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b. Its brightness lives in a
- * separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding every edge.
+ * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b; how far along its edge it
+ * starts (world px, for dashes); the edge's dash style (0 solid, 1 dashed, 2 dotted) and glow (1: yes). Its
+ * brightness lives in a separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding
+ * every edge.
  */
-export const SEGMENT_STRIDE = 9;
+export const SEGMENT_STRIDE = 12;
 /** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour r, g, b. */
 export const END_STRIDE = 9;
 
@@ -232,7 +234,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
   const corner =
     edge.shape === "step" || edge.shape === "fan" ? edge.corner : 0;
-  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
+  const rooms = endRooms(edge);
   const kind = edge.arrow === "dot" ? 1 : 0;
   let segments = reuse.segments ?? null;
   let ends = reuse.ends ?? null;
@@ -253,6 +255,8 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
       pts = rounded(pts, corner);
     const rgb = colour(looks.edgeColour[edgeIndex]);
     const width = looks.edgeWidth[edgeIndex];
+    const dash = looks.edgeDash?.[edgeIndex] ?? 0;
+    const glow = looks.edgeGlow?.[edgeIndex] ?? 0;
 
     const points = pts.length / 2;
     segments = room(segments, (segmentCount + points) * SEGMENT_STRIDE);
@@ -274,17 +278,25 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
       segments[o + 2] = pts[i] - origin.x;
       segments[o + 3] = pts[i + 1] - origin.y;
       segments[o + 4] = half(walked);
+      segments[o + 9] = walked;
       walked += length;
       segments[o + 5] = half(walked);
       segments[o + 6] = rgb[0];
       segments[o + 7] = rgb[1];
       segments[o + 8] = rgb[2];
+      segments[o + 10] = dash;
+      segments[o + 11] = glow;
     }
 
-    if (end > 0) {
-      const n = pts.length;
-      let dx = pts[n - 2] - pts[n - 4],
-        dy = pts[n - 1] - pts[n - 3];
+    // Its ends: at the target, pointing on along the edge; at the source, pointing back along it.
+    const n = pts.length;
+    for (const [room_, x, y, px, py] of [
+      [rooms.target, pts[n - 2], pts[n - 1], pts[n - 4], pts[n - 3]],
+      [rooms.source, pts[0], pts[1], pts[2], pts[3]],
+    ]) {
+      if (!(room_ > 0)) continue;
+      let dx = x - px,
+        dy = y - py;
       const d = Math.hypot(dx, dy) || 1;
       dx /= d;
       dy /= d;
@@ -292,8 +304,8 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
       endEdge = room(endEdge, endCount + 1, Int32Array);
       endEdge[endCount] = edgeIndex;
       const o = endCount++ * END_STRIDE;
-      ends[o] = pts[n - 2] + dx * end - origin.x;
-      ends[o + 1] = pts[n - 1] + dy * end - origin.y;
+      ends[o] = x + dx * room_ - origin.x;
+      ends[o + 1] = y + dy * room_ - origin.y;
       ends[o + 2] = dx;
       ends[o + 3] = dy;
       ends[o + 4] = edge.arrowSize;

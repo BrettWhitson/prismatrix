@@ -17,10 +17,12 @@ export declare const SHAPE_IDS: {
  */
 export declare const NODE_STRIDE = 35;
 /**
- * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b. Its brightness lives in a
- * separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding every edge.
+ * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b; how far along its edge it
+ * starts (world px, for dashes); the edge's dash style (0 solid, 1 dashed, 2 dotted) and glow (1: yes). Its
+ * brightness lives in a separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding
+ * every edge.
  */
-export declare const SEGMENT_STRIDE = 9;
+export declare const SEGMENT_STRIDE = 12;
 /** Floats per edge end: tip x, y; direction x, y (unit, along the edge); size; kind (0 arrow, 1 dot); colour r, g, b. */
 export declare const END_STRIDE = 9;
 /**
