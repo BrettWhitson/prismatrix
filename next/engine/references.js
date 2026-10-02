@@ -1,6 +1,8 @@
 // References: in a layered layout, a cross-link into a busy shared ingredient can end at a reference (a small
-// hollow chip with the ingredient's name, just below the node that uses it) instead of running all the way to the
-// ingredient. The layout decides which edges and where (layered.js, `routing.references`); this draws them.
+// hollow chip in the ingredient's colour, just below the node that uses it) instead of running all the way to the
+// ingredient. The layout decides which edges, where, and how big a chip it kept room for (layered.js,
+// `routing.references`); this draws them. A chip has no label: the layout keeps it compact (a busy recipe can have
+// many side by side), and hovering one lights up its ingredient.
 //
 // Like ghosts, references are only drawn: the view hands the renderer a display graph (the real graph with a node
 // per reference appended, and each referenced edge ending at its reference), while physics, hover and hit-testing
@@ -8,14 +10,20 @@
 //
 // Pure: no DOM, no GL.
 
-/** How big a reference is drawn, relative to its ingredient. */
+/** How big a reference is drawn, relative to its ingredient (and never bigger than the room the layout kept). */
 export const REFERENCE_SCALE = 0.7;
+
+/** A reference's chip radius: its ingredient's, scaled down, within the room the layout kept for it. */
+export function referenceRadius(ref, ingredientRadius) {
+  return Math.min(ingredientRadius * REFERENCE_SCALE, ref.radius ?? Infinity);
+}
 
 /**
  * The display graph with references: `graph`'s nodes plus one per reference, and its edges with each referenced
  * one ending at its reference (same index, so per-edge looks still line up). Per-node arrays are extended to match.
  * @param {object} graph   the real graph
- * @param {{ edge: object, source: number, target: number, x: number, y: number }[]} references from the layout
+ * @param {{ edge: object, source: number, target: number, x: number, y: number, radius?: number }[]} references
+ *   from the layout (layered.js)
  * @param {{ looks: object, shade: Float32Array, appear: Float32Array }} base for the real graph
  * @returns {{ graph: object, looks: object, shade: Float32Array, appear: Float32Array }}
  */
@@ -48,7 +56,7 @@ export function withReferences(graph, references, base) {
       y = ref.y + s.y - s.homeY;
     nodes.push({
       id: `${t.id}@${s.id}`,
-      label: t.label,
+      label: "",
       labelAngle: t.labelAngle,
       index: i,
       x,
@@ -60,7 +68,7 @@ export function withReferences(graph, references, base) {
       depth: s.depth + 1,
       reference: ref.target,
     });
-    radius[i] = base.looks.radius[ref.target] * REFERENCE_SCALE;
+    radius[i] = referenceRadius(ref, base.looks.radius[ref.target]);
     fill[i] = base.looks.fill[ref.target];
     shape[i] = "ring";
     // Lit when the hover lights both ends of the edge it stands in for.

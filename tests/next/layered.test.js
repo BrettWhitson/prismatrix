@@ -13,6 +13,15 @@ import { edgeRoute } from "../../next/engine/geometry.js";
 import { lineage } from "../../next/engine/render.js";
 import { networkSimplex } from "../../next/engine/simplex.js";
 import { globalSifting } from "../../next/engine/sifting.js";
+import { LAYOUTS } from "../../next/engine/layouts.js";
+import { resolve } from "../../next/engine/schema.js";
+import {
+  graphFromStructure,
+  runLayout,
+  sizingFrom,
+  structureOf,
+  unpackRouting,
+} from "../../next/engine/layout-job.js";
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -318,22 +327,19 @@ test("sifting on its own: finds the uncrossed order of a swapped pair", () => {
   );
 });
 
-test("references: far cross-links into busy ingredients end at a chip one layer below their source", () => {
+test("references: every cross-link into a busy ingredient ends at a compact chip one layer below its source; only its tree edge, from one layer up, reaches it", () => {
   for (let seed = 1; seed <= 10; seed++) {
     const g = recipes(seed, 150, 60);
     const routing = layeredLayout(g, { references: "hubs", shareMin: 3 });
     const uses = new Int32Array(g.nodes.length);
     for (const e of g.edges) uses[e.target]++;
-    const layerGap = (a, b) => b - a;
+    const referenced = new Set();
     for (const ref of routing.references) {
       const e = ref.edge;
+      referenced.add(e);
       assert.equal(e.source, ref.source);
       assert.equal(e.target, ref.target);
-      assert.ok(!e.tree, "tree edges are never referenced");
       assert.ok(uses[e.target] >= 3);
-      assert.ok(
-        layerGap(routing.layerOf[e.source], routing.layerOf[e.target]) >= 2,
-      );
       assert.deepEqual(
         routing.bends.get(e),
         [],
@@ -341,12 +347,108 @@ test("references: far cross-links into busy ingredients end at a chip one layer 
       );
       const s = g.nodes[e.source];
       assert.ok(ref.y > s.homeY, "below its source");
-      assert.ok(ref.y < g.nodes[e.target].homeY, "above its ingredient");
+      assert.ok(ref.y <= g.nodes[e.target].homeY, "not below its ingredient");
+      assert.ok(ref.radius > 0 && ref.radius <= 6, "a compact chip");
     }
+    // Each busy ingredient keeps exactly one real edge in, from a user one layer above; the rest have none.
+    const real = new Int32Array(g.nodes.length);
+    for (const e of g.edges) {
+      if (referenced.has(e)) continue;
+      real[e.target]++;
+      if (uses[e.target] >= 3)
+        assert.equal(
+          routing.layerOf[e.target] - routing.layerOf[e.source],
+          1,
+          "its tree edge is short",
+        );
+    }
+    g.nodes.forEach((n, i) =>
+      assert.equal(real[i], uses[i] >= 3 ? 1 : uses[i], n.id),
+    );
     const off = layeredLayout(recipes(seed, 150, 60), { references: "off" });
     assert.equal(off.references.length, 0);
     assert.ok(routing.crossings <= off.crossings, `seed ${seed}`);
   }
+});
+
+test("an ingredient's tree edge is its edge from one layer up, not its shallowest user (the forest's choice)", () => {
+  // top → mid → low → hub, and top and mid use hub too. The forest's tree edge for hub is top's (breadth first):
+  // three layers long. The layout keeps low's, and the other two end at references.
+  const g = new Graph(
+    ["top", "mid", "low", "hub"].map((id) => ({ id })),
+    [
+      ["top", "mid"],
+      ["mid", "low"],
+      ["low", "hub"],
+      ["top", "hub"],
+      ["mid", "hub"],
+    ].map(([source, target]) => ({ source, target })),
+  );
+  const byPair = (s, t) =>
+    g.edges.find(
+      (e) => g.nodes[e.source].id === s && g.nodes[e.target].id === t,
+    );
+  assert.ok(byPair("top", "hub").tree, "the forest picks the shallowest user");
+  const routing = layeredLayout(g, { shareMin: 3 });
+  assert.deepEqual(routing.references.map((r) => g.nodes[r.source].id).sort(), [
+    "mid",
+    "top",
+  ]);
+  assert.deepEqual(routing.bends.get(byPair("low", "hub")), []);
+  // With references off nothing is cut, and the long edges still bend around the layers they cross.
+  const off = layeredLayout(g, { references: "off" });
+  assert.equal(off.bends.get(byPair("top", "hub")).length, 2);
+});
+
+test("reference chips are compact: chips side by side on a layer sit closer than their ingredients' labels would allow", () => {
+  // Wide labels (100 px), and a recipe using four busy ingredients that sit further down.
+  const wide = { gap: 0, box: () => ({ x0: -50, y0: -8, x1: 50, y1: 8 }) };
+  const nodes = [{ id: "r" }, { id: "a" }, { id: "b" }],
+    edges = [
+      { source: "r", target: "a" },
+      { source: "a", target: "b" },
+    ];
+  for (let h = 0; h < 4; h++) {
+    nodes.push({ id: `h${h}` });
+    edges.push({ source: "r", target: `h${h}` });
+    for (const u of ["a", "b"]) edges.push({ source: u, target: `h${h}` });
+  }
+  const g = new Graph(nodes, edges);
+  const routing = layeredLayout(g, { shareMin: 3, nodeGap: 16 }, wide);
+  const underR = routing.references
+    .filter((r) => g.nodes[r.source].id === "r")
+    .map((r) => r.x)
+    .sort((x, y) => x - y);
+  assert.equal(underR.length, 4);
+  let closest = Infinity;
+  for (let i = 1; i < underR.length; i++) {
+    const gap = underR[i] - underR[i - 1];
+    assert.ok(gap >= 12 + 16 - 1e-6, `${gap}: chips don't overlap`);
+    closest = Math.min(closest, gap);
+  }
+  assert.ok(closest < 100, `${closest}: chips don't take their label's room`);
+});
+
+test("references remove almost all crossings on the real-data twin, where busy ingredients are used hundreds of times", () => {
+  const model = GraphModel.from(
+    JSON.parse(
+      readFileSync(
+        new URL("../fixtures/graphs/recipes-twin.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+  );
+  assert.ok(model.incoming.some((l) => l.length >= 200));
+  const options = { ordering: "barycenter" };
+  const lines = layeredLayout(new Graph(model), {
+    ...options,
+    references: "off",
+  });
+  const refs = layeredLayout(new Graph(model), options);
+  assert.ok(
+    refs.crossings < lines.crossings / 20,
+    `${refs.crossings} vs ${lines.crossings}`,
+  );
 });
 
 test("references remove most crossings on the busy crafting fixture", () => {
@@ -365,4 +467,150 @@ test("references remove most crossings on the busy crafting fixture", () => {
     refs.crossings < lines.crossings / 4,
     `${refs.crossings} vs ${lines.crossings}`,
   );
+});
+
+/** A fixture graph's model. */
+function fixture(name) {
+  return GraphModel.from(
+    JSON.parse(
+      readFileSync(
+        new URL(`../fixtures/graphs/${name}.json`, import.meta.url),
+        "utf8",
+      ),
+    ),
+  );
+}
+
+/** Run `fn` with a clock that jumps a second at every reading: anything that stops on a time budget stops at once. */
+function withSlowClock(fn) {
+  const now = performance.now;
+  let t = now.call(performance);
+  performance.now = () => (t += 1000);
+  try {
+    return fn();
+  } finally {
+    performance.now = now;
+  }
+}
+
+test("the same input always gives the same layout: run twice, with a slow clock, and through a worker's job", () => {
+  // Network simplex on the real-data twin is thousands of exchanges; a clock-based budget would have cut it short.
+  // (Ordering "barycenter": global sifting still stops on a clock of its own.)
+  const model = fixture("recipes-twin");
+  const options = {
+    ...resolve(LAYOUTS.merged.options),
+    ranking: "simplex",
+    ordering: "barycenter",
+  };
+  const spec = {
+    widths: new Float64Array(model.nodes.length).fill(40),
+    reach: new Float64Array(model.nodes.length).fill(8),
+    height: 14,
+    gap: 4,
+    labels: "below",
+    collide: true,
+  };
+  const run = () => {
+    const g = new Graph(model);
+    const routing = LAYOUTS.merged.run(g, options, sizingFrom(spec));
+    return { g, routing };
+  };
+  const first = run(),
+    again = run(),
+    slow = withSlowClock(run);
+  assert.ok(first.routing.simplex.optimal, "the twin reaches the optimum");
+  assert.ok(first.routing.simplex.pivots > 100);
+  for (const other of [again, slow]) {
+    assert.deepEqual(other.routing.simplex, first.routing.simplex);
+    assert.deepEqual([...other.g.matrix.homeX], [...first.g.matrix.homeX]);
+    assert.deepEqual([...other.g.matrix.homeY], [...first.g.matrix.homeY]);
+  }
+  // As a worker runs it: from the structure alone, packed and unpacked.
+  const there = graphFromStructure(structureOf(first.g));
+  const job = runLayout(there, "merged", options, spec);
+  assert.deepEqual([...job.homeX], [...first.g.matrix.homeX]);
+  assert.deepEqual([...job.homeY], [...first.g.matrix.homeY]);
+  const routing = unpackRouting(job.routing, first.g);
+  assert.deepEqual(routing.simplex, first.routing.simplex);
+  assert.deepEqual(
+    routing.references.map((r) => [r.edge, r.x, r.y, r.radius]),
+    first.routing.references.map((r) => [r.edge, r.x, r.y, r.radius]),
+  );
+});
+
+test("network simplex reaches the optimum, checked against every ranking of small graphs (weights and minimum lengths too)", () => {
+  const r = rng(11);
+  for (let trial = 0; trial < 30; trial++) {
+    const n = 3 + Math.floor(r() * 3);
+    const tail = [],
+      head = [],
+      len = [],
+      weight = [];
+    for (let k = 0; k < n + 2; k++) {
+      const a = Math.floor(r() * n),
+        b = Math.floor(r() * n);
+      if (a === b) continue;
+      tail.push(Math.min(a, b));
+      head.push(Math.max(a, b));
+      len.push(Math.floor(r() * 3)); // 0, 1 or 2
+      weight.push(Math.floor(r() * 4)); // 0 to 3
+    }
+    const cost = (rank) => {
+      let total = 0;
+      for (let i = 0; i < tail.length; i++) {
+        const d = rank[head[i]] - rank[tail[i]];
+        if (d < len[i]) return Infinity;
+        total += weight[i] * d;
+      }
+      return total;
+    };
+    // Every ranking with ranks 0 … 2(n - 1): an optimal one is no taller than its longest chain of minimum lengths.
+    const top = 2 * (n - 1);
+    let best = Infinity;
+    const rank = new Array(n).fill(0);
+    const visit = (v) => {
+      if (v === n) best = Math.min(best, cost(rank));
+      else
+        for (let k = 0; k <= top; k++) {
+          rank[v] = k;
+          visit(v + 1);
+        }
+    };
+    visit(0);
+    const result = networkSimplex(n, tail, head, len, weight);
+    assert.ok(result.optimal);
+    assert.equal(cost(result.rank), best, `trial ${trial}`);
+  }
+});
+
+test("network simplex stops on a work budget, never a clock: a small budget gives the same feasible ranking every time", () => {
+  const g = recipes(5, 3000, 900);
+  const tail = g.edges.map((e) => e.source),
+    head = g.edges.map((e) => e.target);
+  const ones = tail.map(() => 1);
+  const full = networkSimplex(g.nodes.length, tail, head, ones, ones);
+  assert.ok(full.optimal && full.pivots > 50);
+  const cut = () =>
+    networkSimplex(g.nodes.length, tail, head, ones, ones, {
+      work: full.work / 4,
+    });
+  const a = cut(),
+    b = withSlowClock(cut);
+  assert.ok(!a.optimal && a.pivots > 0 && a.pivots < full.pivots);
+  assert.deepEqual([...b.rank], [...a.rank]);
+  assert.equal(b.pivots, a.pivots);
+  const length = (rank) =>
+    tail.reduce((sum, t, i) => sum + rank[head[i]] - rank[t], 0);
+  tail.forEach((t, i) => assert.ok(a.rank[head[i]] - a.rank[t] >= 1));
+  assert.ok(length(full.rank) <= length(a.rank));
+});
+
+test("network simplex finishes on big graphs: 20,000 recipe nodes reach the optimum", () => {
+  const g = recipes(8, 20000, 1000);
+  const tail = g.edges.map((e) => e.source),
+    head = g.edges.map((e) => e.target);
+  const ones = tail.map(() => 1);
+  const r = networkSimplex(g.nodes.length, tail, head, ones, ones);
+  assert.ok(r.optimal);
+  assert.ok(r.pivots > 1000, `${r.pivots} pivots`);
 });

@@ -514,7 +514,7 @@ export const LAYOUTS = {
           { value: "off", label: "Long edges" },
         ],
         "hubs",
-        "An ingredient used by many recipes gets a small reference under each far-away recipe instead of a long edge.",
+        "An ingredient used by many recipes keeps one edge, from a recipe just above it; every other recipe that uses it gets a small chip under it instead of an edge.",
       ),
       range(
         "shareMin",
@@ -523,7 +523,7 @@ export const LAYOUTS = {
         20,
         1,
         3,
-        "How many recipes must use an ingredient before far-away ones get references.",
+        "How many recipes must use an ingredient before all but one get references.",
       ),
     ],
     physics: {
