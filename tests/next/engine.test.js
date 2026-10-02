@@ -129,8 +129,14 @@ test("a layout's defaults override the mode's", () => {
     LAYOUTS.tree.physics.elastic.defaults.anchor,
   );
   assert.equal(
-    physicsOptions("tree", "elastic", { anchor: 999 }).anchor,
+    physicsOptions("tree", "elastic", { anchor: "strong" }).anchor,
     LAYOUTS.tree.physics.elastic.defaults.anchor,
+    "a value that isn't usable takes the layout's default",
+  );
+  assert.equal(
+    physicsOptions("tree", "elastic", { anchor: 999 }).anchor,
+    physicsSchema("tree", "elastic").find((o) => o.key === "anchor").max,
+    "a number out of range is clamped",
   );
 });
 
@@ -294,12 +300,21 @@ test("trim cuts along the polyline and gives up when the ends meet", () => {
   assert.equal(trim([0, 0, 10, 0], 6, 6), null);
 });
 
-test("resolve replaces anything out of range with the default", () => {
+test("resolve clamps numbers out of range and drops unknown keys", () => {
   const schema = physicsSchema("radial", "floating");
-  const out = resolve(schema, { repulsion: -5, friction: 3, bogus: 1 });
-  assert.equal(
-    out.repulsion,
-    schema.find((o) => o.key === "repulsion").default,
+  const warnings = [];
+  const out = resolve(
+    schema,
+    { repulsion: -5, friction: 3, bogus: 1 },
+    (message, warning) => warnings.push(warning),
+  );
+  assert.equal(out.repulsion, schema.find((o) => o.key === "repulsion").min);
+  assert.deepEqual(
+    warnings.map((w) => [w.kind, w.key]),
+    [
+      ["clamped", "repulsion"],
+      ["unknown", "bogus"],
+    ],
   );
   assert.equal(out.friction, 3);
   assert.ok(!("bogus" in out));
