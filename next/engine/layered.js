@@ -32,6 +32,7 @@
 // Pure: no DOM. Measured with `npm run bench:merged`.
 
 import { TREE_LABEL_ANGLE, DEFAULT_SIZING } from "./layouts.js";
+import { compressedRows, dagOf } from "./model.js";
 import { networkSimplex } from "./simplex.js";
 import { globalSifting } from "./sifting.js";
 
@@ -90,42 +91,24 @@ export function layeredLayout(
   const flip = direction === "BT" || direction === "RL";
   const across = direction === "LR" || direction === "RL";
 
-  // ---- 1. cycles: reverse back edges found by a depth-first search from the forest's roots, then the rest
-  const out = Array.from({ length: n }, () => []);
-  edges.forEach((e, i) => out[e.source].push(i));
-  const reversed = new Uint8Array(edges.length);
-  {
-    const state = new Uint8Array(n); // 0 new, 1 on the stack, 2 done
-    const visit = (start) => {
-      const stack = [[start, 0]];
-      state[start] = 1;
-      while (stack.length) {
-        const top = stack[stack.length - 1];
-        const [v, k] = top;
-        if (k < out[v].length) {
-          top[1]++;
-          const ei = out[v][k];
-          const w = edges[ei].target;
-          if (state[w] === 1) reversed[ei] = 1;
-          else if (state[w] === 0) {
-            state[w] = 1;
-            stack.push([w, 0]);
-          }
-        } else {
-          state[v] = 2;
-          stack.pop();
-        }
-      }
-    };
-    for (const r of graph.roots) if (!state[r]) visit(r);
-    for (let v = 0; v < n; v++) if (!state[v]) visit(v);
-  }
+  // ---- 1. cycles: reverse back edges found by a depth-first search from the forest's roots, then the rest; and
+  // (step 2) each node's longest path from the sources with them reversed
+  const dag = dagOf(
+    n,
+    compressedRows(
+      n,
+      Int32Array.from(edges, (e) => e.source),
+      Int32Array.from(edges, (e) => e.target),
+    ),
+    graph.roots,
+  );
+  const reversed = dag.back;
   const from = (ei) => (reversed[ei] ? edges[ei].target : edges[ei].source);
   const to = (ei) => (reversed[ei] ? edges[ei].source : edges[ei].target);
 
   // ---- 2. layers: network simplex (fewest layers crossed in all), or longest path from the sources
   /** @type {Int32Array} */
-  let layerOf = new Int32Array(n);
+  let layerOf = dag.longest;
   let simplex;
   if (ranking === "simplex") {
     // Network simplex stops after this much work (nodes and edges visited, simplex.js): crafting graphs of up to
@@ -143,22 +126,6 @@ export function layeredLayout(
     );
     layerOf = ranked.rank;
     simplex = { pivots: ranked.pivots, optimal: ranked.optimal };
-  } else {
-    const indegree = new Int32Array(n);
-    const down = Array.from({ length: n }, () => []);
-    edges.forEach((_, ei) => {
-      indegree[to(ei)]++;
-      down[from(ei)].push(to(ei));
-    });
-    const queue = [];
-    for (let v = 0; v < n; v++) if (!indegree[v]) queue.push(v);
-    for (let head = 0; head < queue.length; head++) {
-      const v = queue[head];
-      for (const w of down[v]) {
-        layerOf[w] = Math.max(layerOf[w], layerOf[v] + 1);
-        if (--indegree[w] === 0) queue.push(w);
-      }
-    }
   }
   let layerCount = 0;
   for (let v = 0; v < n; v++) layerCount = Math.max(layerCount, layerOf[v] + 1);

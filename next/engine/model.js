@@ -1385,74 +1385,9 @@ export class GraphModel {
    * @returns {{ back: Uint8Array, order: number[], longest: Int32Array, sources: number[], sinks: number[] }}
    */
   dag() {
-    return this.#cached("dag", () => {
-      const { source, target, outStart, outEdges } = this.adjacency();
-      const count = this.#nodeList.length,
-        m = this.#edgeList.length;
-      const back = new Uint8Array(m);
-      const state = new Uint8Array(count); // 0 new, 1 on the stack, 2 done
-      // Depth first without recursion: a stack of nodes and, per node, how far through its edges it is.
-      const stack = new Int32Array(count),
-        next = new Int32Array(count);
-      const visit = (start) => {
-        let top = 0;
-        stack[0] = start;
-        next[start] = outStart[start];
-        state[start] = 1;
-        while (top >= 0) {
-          const v = stack[top];
-          if (next[v] < outStart[v + 1]) {
-            const ei = outEdges[next[v]++];
-            const w = target[ei];
-            if (state[w] === 1) back[ei] = 1;
-            else if (!state[w]) {
-              state[w] = 1;
-              next[w] = outStart[w];
-              stack[++top] = w;
-            }
-          } else {
-            state[v] = 2;
-            top--;
-          }
-        }
-      };
-      for (const r of this.forest().roots) if (!state[r]) visit(r);
-      for (let v = 0; v < count; v++) if (!state[v]) visit(v);
-
-      // With back edges reversed: each node's edges down, in edge order (a counting sort again).
-      const indegree = new Int32Array(count),
-        downStart = new Int32Array(count + 1);
-      for (let ei = 0; ei < m; ei++) {
-        const from = back[ei] ? target[ei] : source[ei],
-          to = back[ei] ? source[ei] : target[ei];
-        indegree[to]++;
-        downStart[from + 1]++;
-      }
-      for (let v = 0; v < count; v++) downStart[v + 1] += downStart[v];
-      const down = new Int32Array(m),
-        at = downStart.slice(0, count);
-      for (let ei = 0; ei < m; ei++) {
-        const from = back[ei] ? target[ei] : source[ei],
-          to = back[ei] ? source[ei] : target[ei];
-        down[at[from]++] = to;
-      }
-      const sources = [];
-      for (let v = 0; v < count; v++) if (!indegree[v]) sources.push(v);
-      const order = sources.slice(),
-        longest = new Int32Array(count);
-      for (let head = 0; head < order.length; head++) {
-        const v = order[head];
-        for (let k = downStart[v]; k < downStart[v + 1]; k++) {
-          const w = down[k];
-          if (longest[v] + 1 > longest[w]) longest[w] = longest[v] + 1;
-          if (--indegree[w] === 0) order.push(w);
-        }
-      }
-      const sinks = [];
-      for (let v = 0; v < count; v++)
-        if (downStart[v] === downStart[v + 1]) sinks.push(v);
-      return { back, order, longest, sources, sinks };
-    });
+    return this.#cached("dag", () =>
+      dagOf(this.#nodeList.length, this.adjacency(), this.forest().roots),
+    );
   }
 
   /**
@@ -1676,6 +1611,82 @@ export function forestOf(count, { target, outStart, outEdges, inStart }) {
     tree,
     maxDepth,
   };
+}
+
+/**
+ * A structure read as a DAG (see GraphModel.dag): edges that close a cycle, found depth-first from `roots` (then from
+ * any node still unvisited), are back edges; with them reversed, a topological order and each node's longest path
+ * from a source. For a model, and for a merged layout of a working graph (layered.js).
+ * @param {number} count nodes
+ * @param {Adjacency} adjacency
+ * @param {Iterable<number>} roots where the search starts, in order (the forest's roots)
+ * @returns {{ back: Uint8Array, order: number[], longest: Int32Array, sources: number[], sinks: number[] }}
+ */
+export function dagOf(count, { source, target, outStart, outEdges }, roots) {
+  const m = source.length;
+  const back = new Uint8Array(m);
+  const state = new Uint8Array(count); // 0 new, 1 on the stack, 2 done
+  // Depth first without recursion: a stack of nodes and, per node, how far through its edges it is.
+  const stack = new Int32Array(count),
+    next = new Int32Array(count);
+  const visit = (start) => {
+    let top = 0;
+    stack[0] = start;
+    next[start] = outStart[start];
+    state[start] = 1;
+    while (top >= 0) {
+      const v = stack[top];
+      if (next[v] < outStart[v + 1]) {
+        const ei = outEdges[next[v]++];
+        const w = target[ei];
+        if (state[w] === 1) back[ei] = 1;
+        else if (!state[w]) {
+          state[w] = 1;
+          next[w] = outStart[w];
+          stack[++top] = w;
+        }
+      } else {
+        state[v] = 2;
+        top--;
+      }
+    }
+  };
+  for (const r of roots) if (!state[r]) visit(r);
+  for (let v = 0; v < count; v++) if (!state[v]) visit(v);
+
+  // With back edges reversed: each node's edges down, in edge order (a counting sort again).
+  const indegree = new Int32Array(count),
+    downStart = new Int32Array(count + 1);
+  for (let ei = 0; ei < m; ei++) {
+    const from = back[ei] ? target[ei] : source[ei],
+      to = back[ei] ? source[ei] : target[ei];
+    indegree[to]++;
+    downStart[from + 1]++;
+  }
+  for (let v = 0; v < count; v++) downStart[v + 1] += downStart[v];
+  const down = new Int32Array(m),
+    at = downStart.slice(0, count);
+  for (let ei = 0; ei < m; ei++) {
+    const from = back[ei] ? target[ei] : source[ei],
+      to = back[ei] ? source[ei] : target[ei];
+    down[at[from]++] = to;
+  }
+  const sources = [];
+  for (let v = 0; v < count; v++) if (!indegree[v]) sources.push(v);
+  const order = sources.slice(),
+    longest = new Int32Array(count);
+  for (let head = 0; head < order.length; head++) {
+    const v = order[head];
+    for (let k = downStart[v]; k < downStart[v + 1]; k++) {
+      const w = down[k];
+      if (longest[v] + 1 > longest[w]) longest[w] = longest[v] + 1;
+      if (--indegree[w] === 0) order.push(w);
+    }
+  }
+  const sinks = [];
+  for (let v = 0; v < count; v++)
+    if (downStart[v] === downStart[v + 1]) sinks.push(v);
+  return { back, order, longest, sources, sinks };
 }
 
 /** Take the items at `gone` (ascending indices) out of `list`, in place, keeping the others in order. */
