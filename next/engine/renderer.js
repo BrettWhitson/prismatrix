@@ -60,7 +60,6 @@ export class Renderer {
     this.controller = null;
     this.frame = 0;
     this.fps = 60;
-    this.frameRate = "display";
     this.setFrameRate(frameRate);
     const ctx = document.createElement("canvas").getContext("2d");
     /** A label's width at a font size: the model measures its labels with this once a controller connects them. */
@@ -103,8 +102,7 @@ export class Renderer {
 
   /** Detach, and free what the painter holds (GPU buffers, its own canvas). The renderer can't be used again. */
   dispose() {
-    this.controller?.setRenderer(null);
-    this.detach();
+    this.controller?.setRenderer(null); // detaches
     this.channel?.port1.close();
     this.painter.dispose();
   }
@@ -187,7 +185,6 @@ export class Renderer {
         shiftKey: e.shiftKey,
         ctrlKey: e.ctrlKey,
         metaKey: e.metaKey,
-        altKey: e.altKey,
       };
     };
     const down = (e) => {

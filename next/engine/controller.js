@@ -36,7 +36,7 @@ import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions, referencedEdges } from "./physics.js";
 import { looksOf, patchLooks } from "./render.js";
-import { THEMES, resolveTheme } from "./theme.js";
+import { resolveTheme } from "./theme.js";
 import {
   hintFrom,
   runLayout,
@@ -48,13 +48,7 @@ import { resolve } from "./schema.js";
 import { HIT_SCALE, HitGrid, LineageCache, lineageMask } from "./picking.js";
 import { Gestures } from "./gestures.js";
 import * as cam from "./camera.js";
-import { arrive, fade, morph, morphFrom, progress } from "./transitions.js";
-
-export { alongRings } from "./transitions.js";
-export { looksLikeTrackpad } from "./gestures.js";
-
-/** The dark theme's background (themes: theme.js). */
-export const BACKGROUND = THEMES.dark.background;
+import { arrive, fade, morph, progress } from "./transitions.js";
 
 /** Restyles the scene's log keeps (see #restyle): a painter further behind than this rebuilds everything. */
 const RESTYLE_LOG = 16;
@@ -251,7 +245,7 @@ export class GraphController {
     this.tapSelects = tapSelects;
     this.doubleTapToggles = doubleTapToggles;
     /** Levels shown below the roots when a graph is first shown (null: all of them). See ControllerOptions.depth. */
-    this.depth = depth ?? null;
+    this.depth = depth;
     /** @type {Set<string>} the ids of collapsed nodes (view state: the model keeps every node) */
     this.folds = new Set();
     this.foldVersion = 0; // bumped whenever the collapsed set changes
@@ -796,7 +790,7 @@ export class GraphController {
    * @param {PhysicsMode | null} [mode]
    * @param {import("./physics.js").PhysicsOptions} [opts]
    */
-  setPhysics(mode = this.mode, opts = {}) {
+  setPhysics(mode, opts = {}) {
     mode ??= this.mode;
     if (!LAYOUTS[this.layout].physics[mode])
       throw new Error(`Layout "${this.layout}" has no "${mode}" physics`);
@@ -1142,38 +1136,28 @@ export class GraphController {
     );
   }
 
-  /** The real graph with its references (references.js), cached across frames where nothing it shows changed. */
+  /**
+   * The real graph with its references (references.js), cached across frames where nothing it shows changed. A new
+   * graph, routing, looks, shade or appear always comes with a bump of one of the three versions it's keyed on.
+   */
   #shownWithReferences() {
-    const refs = this.routing.references;
     const c = this.#shownCache;
     if (
       c &&
-      c.graph === this.graph &&
-      c.refs === refs &&
-      c.looks === this.looks &&
-      c.shade === this.shade &&
-      c.appear === this.appear &&
       c.version === this.version &&
       c.styleVersion === this.styleVersion &&
-      c.shadeVersion === this.shadeVersion &&
-      c.geometryVersion === this.geometryVersion
+      c.shadeVersion === this.shadeVersion
     )
       return c.shown;
-    const shown = withReferences(this.graph, refs, {
+    const shown = withReferences(this.graph, this.routing.references, {
       looks: this.looks,
       shade: this.shade,
       appear: this.appear,
     });
     this.#shownCache = {
-      graph: this.graph,
-      refs,
-      looks: this.looks,
-      shade: this.shade,
-      appear: this.appear,
       version: this.version,
       styleVersion: this.styleVersion,
       shadeVersion: this.shadeVersion,
-      geometryVersion: this.geometryVersion,
       shown,
     };
     return shown;
@@ -1342,9 +1326,12 @@ export class GraphController {
     );
   }
 
-  /** Glide every node from where it is to its home, over the animation's transition time. */
+  /** Glide every node from where it is to its home, over the animation's transition time (the morph moves them). */
   #startTween() {
-    this.tween = { ...morphFrom(this.graph.matrix), start: this.clock() };
+    const m = this.graph.matrix;
+    m.vx.fill(0);
+    m.vy.fill(0);
+    this.tween = { x: m.x.slice(), y: m.y.slice(), start: this.clock() };
   }
 
   // ---- time ----------------------------------------------------------------------------------------------------
@@ -1406,7 +1393,7 @@ export class GraphController {
         shown,
         now,
         this.anim.transition,
-        EASINGS[this.anim.easing] ?? EASINGS.smooth,
+        EASINGS[this.anim.easing],
       );
       if (shown.live.length !== this.ghosts.length) this.geometryVersion++;
       this.ghosts = shown.live;
@@ -1755,9 +1742,9 @@ export class GraphController {
   #disclosure() {
     const { model } = this;
     const c = this.#disclosed;
+    // A new model (setModel) always bumps foldVersion.
     if (
       c &&
-      c.model === model &&
       c.structure === model.structureVersion &&
       c.folds === this.foldVersion
     )
@@ -1824,8 +1811,7 @@ export class GraphController {
       m &&
       m.graph === graph &&
       m.folds === this.foldVersion &&
-      m.structure === model.structureVersion &&
-      m.model === model
+      m.structure === model.structureVersion
     )
       return m.out;
     let out = { collapsed: null, hidden: null };
@@ -1856,7 +1842,6 @@ export class GraphController {
       graph,
       folds: this.foldVersion,
       structure: model.structureVersion,
-      model,
       out,
     };
     return out;

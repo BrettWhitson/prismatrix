@@ -30,21 +30,6 @@
  */
 
 /**
- * Per model node, 1 when it's in `collapsed` and has edges out (only those fold anything away).
- * @param {import("./model.js").GraphModel} model
- * @param {Iterable<string>} collapsed ids
- */
-export function foldFlags(model, collapsed) {
-  const folded = new Uint8Array(model.size);
-  const { outStart } = model.adjacency();
-  for (const id of collapsed) {
-    const i = model.index.get(id);
-    if (i !== undefined && outStart[i + 1] > outStart[i]) folded[i] = 1;
-  }
-  return folded;
-}
-
-/**
  * What a view of `model` shows with the nodes in `collapsed` collapsed. Breadth first from the roots, never past a
  * collapsed node: linear in the model's size.
  * @param {import("./model.js").GraphModel} model
@@ -54,7 +39,12 @@ export function foldFlags(model, collapsed) {
 export function disclose(model, collapsed) {
   const n = model.size;
   const { source, target, outStart, outEdges } = model.adjacency();
-  const folded = foldFlags(model, collapsed);
+  // Per model node, 1 when it's collapsed and has edges out (only those fold anything away).
+  const folded = new Uint8Array(n);
+  for (const id of collapsed) {
+    const i = model.index.get(id);
+    if (i !== undefined && outStart[i + 1] > outStart[i]) folded[i] = 1;
+  }
   if (!folded.includes(1))
     return {
       shown: new Uint8Array(n).fill(1),
