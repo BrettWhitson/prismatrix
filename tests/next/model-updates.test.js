@@ -276,58 +276,41 @@ test("a delta's fields take one item or any list; anything else is reported and 
 
 // ---- comparing values ------------------------------------------------------------------------------------------
 
-test("equal() compares by value the way structuredClone copies", () => {
-  const d = new Date(2026, 0, 1);
-  assert.ok(equal(d, new Date(d.getTime())));
-  assert.ok(!equal(d, new Date(2026, 0, 2)), "different dates differ");
-  assert.ok(equal(new Date(NaN), new Date(NaN)));
+test("equal() compares JSON-like data by value, anything else by identity", () => {
   assert.ok(equal(NaN, NaN));
   assert.ok(!equal(0, NaN));
   assert.ok(equal([1, [2, { x: 3 }]], [1, [2, { x: 3 }]]));
   assert.ok(!equal([1, 2], [1, 2, 3]));
   assert.ok(!equal([1], { 0: 1 }), "an array isn't an object with index keys");
-  assert.ok(equal(new Float32Array([1, NaN]), new Float32Array([1, NaN])));
-  assert.ok(!equal(new Float32Array([1]), new Float64Array([1])));
-  assert.ok(!equal(new Uint8Array([1, 2]), new Uint8Array([1, 3])));
-  assert.ok(equal(new Map([["a", { x: 1 }]]), new Map([["a", { x: 1 }]])));
-  assert.ok(!equal(new Map([["a", 1]]), new Map([["a", 2]])));
-  assert.ok(!equal(new Map([["a", 1]]), new Map()), "maps aren't all equal");
-  assert.ok(equal(new Set([1, { y: 2 }]), new Set([1, { y: 2 }])));
-  assert.ok(!equal(new Set([1, 2]), new Set([1, 3])));
-  assert.ok(equal(/a+/g, /a+/g));
-  assert.ok(!equal(/a+/g, /a+/i));
   assert.ok(!equal({ a: undefined }, { b: undefined }), "keys matter");
+  const d = new Date(2026, 0, 1);
+  assert.ok(equal(d, d));
+  assert.ok(!equal(d, new Date(d.getTime())), "a date is only itself");
   const loop = { name: "loop" };
   loop.self = loop;
   const copy = structuredClone(loop);
   assert.ok(equal(loop, copy), "cycles end");
 });
 
-test("data holding dates, NaN, arrays, typed arrays and maps: a real change is seen, the same again is not", () => {
+test("nested data: a real change is seen, the same again is not", () => {
   const data = () => ({
-    when: new Date(2026, 4, 1),
     ratio: NaN,
     tiers: [1, 2, [3]],
-    samples: new Float64Array([0.5, 1.5]),
-    sellers: new Map([["tp", { price: 10 }]]),
-    tags: new Set(["rare"]),
+    sellers: { tp: { price: 10 } },
   });
   const m = GraphModel.from({ nodes: [{ id: "a", data: data() }] });
   const record = m.node("a");
   assert.equal(
     m.update({ changeNodes: [{ id: "a", data: data() }] }),
     null,
-    "equal data is no change (NaN, dates, typed arrays and all)",
+    "equal data is no change (NaN and nesting too)",
   );
   assert.equal(m.node("a"), record, "and the record is kept");
   assert.equal(m.replace({ nodes: [{ id: "a", data: data() }] }), null);
 
   for (const [key, value] of [
-    ["when", new Date(2026, 4, 2)],
     ["tiers", [1, 2, [4]]],
-    ["samples", new Float64Array([0.5, 2.5])],
-    ["sellers", new Map([["tp", { price: 11 }]])],
-    ["tags", new Set(["exotic"])],
+    ["sellers", { tp: { price: 11 } }],
   ]) {
     const change = m.update({
       changeNodes: [{ id: "a", data: { ...data(), [key]: value } }],

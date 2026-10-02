@@ -277,9 +277,8 @@ function same(raw, copy) {
 }
 
 /**
- * Deep equality by value, as structuredClone sees values: NaN equals NaN, dates by time, regular expressions by
- * source and flags, arrays and typed arrays element by element, maps and sets by their entries, objects by their own
- * keys. Cycles are followed once.
+ * Deep equality by value, for JSON-like data: NaN equals NaN, arrays element by element, plain objects by their own
+ * keys. Anything else (a date, a map, an image) is only the same as itself. Cycles are followed once.
  * @param {any} a
  * @param {any} b
  * @param {Map<object, object>} [seen] pairs already being compared (for cycles)
@@ -287,79 +286,17 @@ function same(raw, copy) {
  */
 export function equal(a, b, seen) {
   if (a === b) return true;
-  if (typeof a !== typeof b) return false;
   if (typeof a === "number") return a !== a && b !== b; // both NaN
   if (typeof a !== "object" || a === null || b === null) return false;
   const tag = objectTag(a);
   if (tag !== objectTag(b)) return false;
+  if (tag !== "[object Array]" && tag !== "[object Object]") return false;
   if (seen?.get(a) === b) return true;
   (seen ??= new Map()).set(a, b);
-  if (ArrayBuffer.isView(a)) {
-    if (a.constructor !== b.constructor || a.byteLength !== b.byteLength)
-      return false;
-    if (a instanceof DataView) return sameBytes(a, b);
-    const items = /** @type {Uint8Array} */ (a); // a typed array, of any kind
-    for (let i = 0; i < items.length; i++)
-      if (items[i] !== b[i] && !(items[i] !== items[i] && b[i] !== b[i]))
-        return false;
-    return true;
-  }
-  switch (tag) {
-    case "[object Date]":
-      return equal(a.getTime(), b.getTime());
-    case "[object RegExp]":
-      return a.source === b.source && a.flags === b.flags;
-    case "[object Number]":
-    case "[object String]":
-    case "[object Boolean]":
-    case "[object BigInt]":
-      return equal(a.valueOf(), b.valueOf());
-    case "[object Error]":
-      return a.name === b.name && a.message === b.message;
-    case "[object ArrayBuffer]":
-      return a.byteLength === b.byteLength && sameBytes(a, b);
-    case "[object Array]":
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++)
-        if (!equal(a[i], b[i], seen)) return false;
-      return true;
-    case "[object Map]":
-      if (a.size !== b.size) return false;
-      for (const [k, v] of a)
-        if (!b.has(k) || !equal(v, b.get(k), seen)) return false;
-      return true;
-    case "[object Set]": {
-      if (a.size !== b.size) return false;
-      let loose = null; // b's object members not matched by identity, for a deep match
-      for (const v of a) {
-        if (b.has(v)) continue;
-        if (v === null || typeof v !== "object") return false;
-        loose ??= [...b].filter((w) => w !== null && typeof w === "object");
-        const at = loose.findIndex((w) => equal(v, w, seen));
-        if (at < 0) return false;
-        loose.splice(at, 1);
-      }
-      return true;
-    }
-  }
-  // Anything else the platform makes (an image, a canvas, a bitmap) is only the same as itself.
-  if (tag !== "[object Object]" && tag !== "[object Arguments]") return false;
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
   for (const k of keys)
     if (!Object.hasOwn(b, k) || !equal(a[k], b[k], seen)) return false;
-  return true;
-}
-
-function sameBytes(a, b) {
-  const x = ArrayBuffer.isView(a)
-      ? new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
-      : new Uint8Array(a),
-    y = ArrayBuffer.isView(b)
-      ? new Uint8Array(b.buffer, b.byteOffset, b.byteLength)
-      : new Uint8Array(b);
-  if (x.length !== y.length) return false;
-  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
   return true;
 }
 
