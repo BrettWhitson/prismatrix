@@ -754,3 +754,43 @@ test("frames at rest (hover fades) don't step a sleeping simulation; a release w
   wait(100);
   assert.ok(advance.mock.callCount() > 0);
 });
+
+// ---- the camera set by hand, and where things are ---------------------------------------------------------------------
+
+test("setCamera puts the camera where it's told (within the zoom limits), at once or gliding, and ends a framing", () => {
+  const { c, of, wait } = setup();
+  wait(1000);
+  c.setCamera({ x: 10, y: 20, k: 2 });
+  assert.deepEqual(c.camera, { x: 10, y: 20, k: 2 });
+  assert.equal(c.framed, false, "the user's camera now");
+  c.setCamera({ k: 1e6 });
+  assert.equal(c.camera.k, c.zoomLimits().max, "clamped");
+  c.setCamera({ x: 300 }, { animate: true });
+  assert.notEqual(c.camera.x, 300, "not there yet");
+  wait(1000);
+  assert.ok(Math.abs(c.camera.x - 300) < 1e-6, "glided there");
+  const moves = of("camera");
+  assert.ok(moves.length >= 2);
+  assert.deepEqual(
+    moves.at(-1).detail,
+    c.camera,
+    "the last one is where it is",
+  );
+  const count = moves.length;
+  wait(200);
+  assert.equal(of("camera").length, count, "nothing sent while it's still");
+});
+
+test("nodePosition, positions and bounds say where the shown nodes are", () => {
+  const { c, wait } = setup();
+  wait(1000);
+  const a = c.graph.byId.get("a");
+  assert.deepEqual(c.nodePosition("a"), { x: a.x, y: a.y });
+  assert.equal(c.nodePosition("nope"), null);
+  const all = c.positions();
+  assert.equal(all.size, c.graph.nodes.length);
+  assert.deepEqual(all.get("b1"), c.nodePosition("b1"));
+  const box = c.bounds();
+  for (const { x, y } of all.values())
+    assert.ok(x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY);
+});

@@ -35,7 +35,8 @@ import { GraphModel } from "./model.js";
 import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions, referencedEdges } from "./physics.js";
-import { looksOf, patchLooks } from "./render.js";
+import { drawScene, looksOf, patchLooks } from "./render.js";
+import { iconStore } from "./icons.js";
 import { resolveTheme } from "./theme.js";
 import {
   hintFrom,
@@ -186,6 +187,8 @@ const sameInts = (a, b) =>
  * @property {{ k: number, pending?: boolean }} fit the camera frames the graph (pending: a layout is on its way, and
  *   another "fit" follows when it lands)
  * @property {{ node: string, k: number }} focus the camera is on its way to a node
+ * @property {import("./camera.js").Camera} camera the camera moved (any way: a pan, a zoom, a fit, a glide), once a
+ *   tick at most: where it is now
  * @property {{ selected: string[] }} select the selection changed
  * @property {{ highlighted: string[] }} highlight the highlighted nodes changed (highlight)
  * @property {DisclosureDetail} expand   nodes were expanded (expand, expandAll, reveal)
@@ -208,6 +211,33 @@ const sameInts = (a, b) =>
 
 /** How long a pulse takes, ms. */
 const PULSE_MS = 450;
+
+/** Wait (up to `ms`) for every icon and badge image in `looks` to finish loading (or fail), in `icons`. */
+function iconsReady(icons, looks, ms) {
+  const waiting = new Set();
+  for (const list of [looks.icon, looks.badgeIcon])
+    for (const source of list ?? []) {
+      const entry = icons.get(source);
+      if (entry?.state === "loading") waiting.add(entry);
+    }
+  if (!waiting.size) return Promise.resolve();
+  return new Promise((/** @type {(value?: void) => void} */ done) => {
+    const finish = () => {
+      clearTimeout(timer);
+      stop();
+      done();
+    };
+    const timer = setTimeout(finish, ms);
+    const stop = icons.onReady((entry) => {
+      waiting.delete(entry);
+      if (!waiting.size) finish();
+    });
+  });
+}
+
+/** A picture of the graph (toImage) is at most this many px on a side, and this many px in all. */
+const IMAGE_SIDE = 16_000;
+const IMAGE_PIXELS = 120_000_000;
 
 export class GraphController {
   #shownCache = null; // the display graph with references, and what it was made from
@@ -272,6 +302,7 @@ export class GraphController {
       resolve(ANIMATION_OPTIONS, animation)
     );
     this.camera = { x: 0, y: 0, k: 1 };
+    this.cameraSent = null; // the camera as the last "camera" event had it
     this.glide = null; // the camera's coasting speed after a pan, world px/s
     // The camera keeping step with a morph, so the node it's anchored on stays put on screen (see #holdPlace).
     this.shift = null;
@@ -960,6 +991,115 @@ export class GraphController {
     return true;
   }
 
+  /**
+   * Put the camera at `camera` (`{ x, y, k }`, all or some: the world point at the middle of the view, and the
+   * scale), gliding there over the animation's camera time when `animate`. The scale is kept within zoomLimits.
+   * Like a pan by hand, it ends any framing or focus the view was keeping.
+   * @param {Partial<import("./camera.js").Camera>} camera
+   * @param {{ animate?: boolean }} [options]
+   */
+  setCamera(camera, { animate = false } = {}) {
+    const { min, max } = this.zoomLimits();
+    const to = {
+      x: camera.x ?? this.camera.x,
+      y: camera.y ?? this.camera.y,
+      k: Math.min(Math.max(camera.k ?? this.camera.k, min), max),
+    };
+    if (![to.x, to.y, to.k].every(Number.isFinite)) return;
+    this.#userCamera();
+    this.shift = null;
+    if (animate && this.anim.camera > 0)
+      this.cameraTween = {
+        from: { ...this.camera },
+        to,
+        start: this.clock(),
+      };
+    else this.camera = to;
+    this.#changed();
+  }
+
+  // ---- where things are ----------------------------------------------------------------------------------------
+
+  /**
+   * Where node `id` is drawn now (world px), or null when it isn't shown (folded away, or not in the model).
+   * @param {string} id
+   * @returns {{ x: number, y: number } | null}
+   */
+  nodePosition(id) {
+    const n = this.graph.byId.get(String(id));
+    return n ? { x: n.x, y: n.y } : null;
+  }
+
+  /**
+   * Where every shown node is drawn now, by id (world px).
+   * @returns {Map<string, { x: number, y: number }>}
+   */
+  positions() {
+    const out = new Map();
+    for (const n of this.graph.nodes) out.set(n.id, { x: n.x, y: n.y });
+    return out;
+  }
+
+  /**
+   * The box everything shown covers now, labels included (world px).
+   * @returns {import("./camera.js").Box}
+   */
+  bounds() {
+    return cam.footprints(this.graph.matrix, false);
+  }
+
+  /**
+   * A picture of the whole graph as it's shown now (selection, highlight and hover included), drawn with Canvas 2D on
+   * a canvas of its own: `scale` device px per world px (less if the picture would be too big: at most 16,000 px a
+   * side), `padding` world px round it, on `background` (the theme's by default; null for transparent). Icons are
+   * waited for (up to `iconWait` ms). Needs a DOM.
+   * @param {{ scale?: number, padding?: number, background?: string | null, iconWait?: number }} [options]
+   * @returns {Promise<HTMLCanvasElement>}
+   */
+  async toImage({
+    scale = 2,
+    padding = 30,
+    background = this.theme.background,
+    iconWait = 5000,
+  } = {}) {
+    await this.laidOut();
+    if (!this.scene) this.tick(this.clock());
+    const icons = this.renderer?.painter?.icons ?? iconStore();
+    await iconsReady(icons, this.scene.looks, iconWait);
+    const box = this.bounds();
+    const width = box.maxX - box.minX + padding * 2,
+      height = box.maxY - box.minY + padding * 2;
+    const k = Math.max(
+      1e-3,
+      Math.min(
+        scale,
+        IMAGE_SIDE / width,
+        IMAGE_SIDE / height,
+        Math.sqrt(IMAGE_PIXELS / (width * height)),
+      ),
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(width * k));
+    canvas.height = Math.max(1, Math.ceil(height * k));
+    drawScene(
+      canvas.getContext("2d"),
+      {
+        ...this.scene,
+        camera: {
+          x: (box.minX + box.maxX) / 2,
+          y: (box.minY + box.maxY) / 2,
+          k: 1,
+        },
+        width,
+        height,
+        dpr: k,
+        background,
+      },
+      icons,
+    );
+    return canvas;
+  }
+
   /** Where node `i` will be once things settle: its home while a morph takes it there, else where it is. */
   #whereTo(i) {
     const m = this.graph.matrix;
@@ -1395,6 +1535,12 @@ export class GraphController {
     }
     const simMs = performance.now() - simStart;
     busy = this.#moveCamera(now, dt) || busy;
+    const c = this.camera,
+      sent = this.cameraSent;
+    if (!sent || sent.x !== c.x || sent.y !== c.y || sent.k !== c.k) {
+      this.cameraSent = { x: c.x, y: c.y, k: c.k };
+      this.#emit("camera", { ...this.cameraSent });
+    }
     this.gestures.longPresses(now);
 
     const lit = this.#litMask();

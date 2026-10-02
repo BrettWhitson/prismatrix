@@ -410,6 +410,11 @@ export type ControllerEvents = {
     k: number;
   };
   /**
+   * the camera moved (any way: a pan, a zoom, a fit, a glide), once a
+   * tick at most: where it is now
+   */
+  camera: import("./camera.js").Camera;
+  /**
    * the selection changed
    */
   select: {
@@ -537,6 +542,11 @@ export declare class GraphController {
     y: number;
     k: number;
   };
+  cameraSent: {
+    x: number;
+    y: number;
+    k: number;
+  };
   glide: any;
   shift: {
     dx: number;
@@ -587,6 +597,20 @@ export declare class GraphController {
         };
         start: number;
         node: string;
+      }
+    | {
+        node?: undefined;
+        from: {
+          x: number;
+          y: number;
+          k: number;
+        };
+        to: {
+          x: number;
+          y: number;
+          k: number;
+        };
+        start: number;
       }
     | {
         node?: undefined;
@@ -861,6 +885,65 @@ export declare class GraphController {
       animate?: boolean;
     },
   ): boolean;
+  /**
+   * Put the camera at `camera` (`{ x, y, k }`, all or some: the world point at the middle of the view, and the
+   * scale), gliding there over the animation's camera time when `animate`. The scale is kept within zoomLimits.
+   * Like a pan by hand, it ends any framing or focus the view was keeping.
+   * @param {Partial<import("./camera.js").Camera>} camera
+   * @param {{ animate?: boolean }} [options]
+   */
+  setCamera(
+    camera: Partial<import("./camera.js").Camera>,
+    {
+      animate,
+    }?: {
+      animate?: boolean;
+    },
+  ): void;
+  /**
+   * Where node `id` is drawn now (world px), or null when it isn't shown (folded away, or not in the model).
+   * @param {string} id
+   * @returns {{ x: number, y: number } | null}
+   */
+  nodePosition(id: string): {
+    x: number;
+    y: number;
+  } | null;
+  /**
+   * Where every shown node is drawn now, by id (world px).
+   * @returns {Map<string, { x: number, y: number }>}
+   */
+  positions(): Map<
+    string,
+    {
+      x: number;
+      y: number;
+    }
+  >;
+  /**
+   * The box everything shown covers now, labels included (world px).
+   * @returns {import("./camera.js").Box}
+   */
+  bounds(): import("./camera.js").Box;
+  /**
+   * A picture of the whole graph as it's shown now (selection, highlight and hover included), drawn with Canvas 2D on
+   * a canvas of its own: `scale` device px per world px (less if the picture would be too big: at most 16,000 px a
+   * side), `padding` world px round it, on `background` (the theme's by default; null for transparent). Icons are
+   * waited for (up to `iconWait` ms). Needs a DOM.
+   * @param {{ scale?: number, padding?: number, background?: string | null, iconWait?: number }} [options]
+   * @returns {Promise<HTMLCanvasElement>}
+   */
+  toImage({
+    scale,
+    padding,
+    background,
+    iconWait,
+  }?: {
+    scale?: number;
+    padding?: number;
+    background?: string | null;
+    iconWait?: number;
+  }): Promise<HTMLCanvasElement>;
   /**
    * How far the camera may zoom: in to 8×, out to 0.05×, or further if that's what it takes to see the whole graph
    * (half its fit, so there's room around it).

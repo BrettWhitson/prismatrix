@@ -400,10 +400,22 @@ px). Canvas points are CSS px from the canvas's top-left corner.
 | `zoomLimits()`                  | `{ min, max }`: in to 8×, out to 0.05× or further if that's what it takes to see the whole graph (half its fit). |
 | `toWorld(x, y)`, `toScreen(x, y)` | Between canvas and world coordinates.                                                                 |
 | `setViewport(width, height, dpr?)` | The drawing area's size in CSS px (a renderer calls this; headless, call it yourself). A view showing a framing it chose itself frames again. |
+| `setCamera({ x?, y?, k? }, { animate? })` | Put the camera there (within `zoomLimits`), at once or gliding over the camera time; like a pan by hand, it ends any framing or focus being kept. For a minimap. |
 
 The camera frames the first graph, and frames each new layout while it's showing a framing it chose (a `fit`, a new
 layout); once the user pans or zooms, it holds still instead, on the node that's dragged, hovered, selected or
 focused, or else the one nearest the middle, so that node stays put on screen while everything else moves.
+
+Every tick the camera moved (however: a pan, a zoom, a fit, a glide) sends one `camera` event, `{ x, y, k }`.
+
+### Where things are
+
+| Member            | What it does                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `nodePosition(id)` | Where node `id` is drawn now (world px), or null when it isn't shown.                                       |
+| `positions()`     | Every shown node's position now, as a Map by id.                                                             |
+| `bounds()`        | `{ minX, minY, maxX, maxY }`: the box everything shown covers now, labels included (world px).                |
+| `toImage({ scale?, padding?, background?, iconWait? })` | A picture of the whole graph as shown now (selection, highlight, hover and all), drawn with Canvas 2D on a canvas of its own: `scale` (2) device px per world px, less if it would pass 16,000 px a side; `padding` (30) world px round it; on `background` (the theme's; null for none). Waits for icons, up to `iconWait` (5,000) ms. Resolves to the canvas (`toBlob`, `toDataURL`). Needs a DOM. |
 
 ### Selection
 
@@ -614,6 +626,7 @@ the controller mid-change.
 | `settled` | `{ nodes: number }` | The view has come to rest (see `settled()`) |
 | `fit` | `{ k: number, pending?: boolean }` | The camera frames the graph (pending: a layout is on its way, and another "fit" follows when it lands) |
 | `focus` | `{ node: string, k: number }` | The camera is on its way to a node |
+| `camera` | `Camera` | The camera moved (any way: a pan, a zoom, a fit, a glide), once a tick at most: where it is now |
 | `select` | `{ selected: string[] }` | The selection changed |
 | `highlight` | `{ highlighted: string[] }` | The highlighted nodes changed (highlight) |
 | `expand` | `DisclosureDetail` | Nodes were expanded (expand, expandAll, reveal) |

@@ -56,6 +56,7 @@ export declare class Renderer {
     dispose(): void;
     pending?: boolean;
     wake?: (() => void) | null;
+    icons?: import("./icons.js").IconStore;
   };
   /** @type {import("./controller.js").GraphController | null} */
   controller: import("./controller.js").GraphController | null;
@@ -71,7 +72,8 @@ export declare class Renderer {
   /**
    * @param {HTMLCanvasElement} canvas
    * @param {{ name: string, draw(scene: object): void, resize(w: number, h: number, dpr: number): void,
-   *   dispose(): void, pending?: boolean, wake?: (() => void) | null }} painter
+   *   dispose(): void, pending?: boolean, wake?: (() => void) | null, icons?: import("./icons.js").IconStore }}
+   *   painter
    * @param {RendererOptions} [options]
    */
   constructor(
@@ -83,6 +85,7 @@ export declare class Renderer {
       dispose(): void;
       pending?: boolean;
       wake?: (() => void) | null;
+      icons?: import("./icons.js").IconStore;
     },
     { frameRate }?: RendererOptions,
   );

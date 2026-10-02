@@ -57,6 +57,8 @@ Nothing from 0.4 carries over: an app moves to the new API ([API.md](API.md)). T
   `hoverLineage` (both, ancestors, descendants, none), `selectionLineage`, `lineageColor: "direction"` (theme tokens
   `ancestors` and `descendants`) and `flow` with `flowSpeed` (pulses along a lit lineage). New theme tokens
   `highlight` and `focus`.
+- **Camera and pictures:** `setCamera`, a `camera` event whenever it moves, `nodePosition`, `positions`, `bounds`,
+  and `toImage()`: the whole graph as a canvas, for saving as a PNG.
 - **Speed at 40k nodes:** edges are traced on the GPU from a positions texture, so a tree morph frame takes a few ms
   (105–199 ms when the CPU traced them; merged-tree morph frames are still 47–52 ms). Pans rebuild nothing;
   hover hit tests take 0.07 ms at 100k nodes; a restyle uploads only the bytes that changed.

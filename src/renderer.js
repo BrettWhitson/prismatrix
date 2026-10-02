@@ -48,7 +48,8 @@ export class Renderer {
   /**
    * @param {HTMLCanvasElement} canvas
    * @param {{ name: string, draw(scene: object): void, resize(w: number, h: number, dpr: number): void,
-   *   dispose(): void, pending?: boolean, wake?: (() => void) | null }} painter
+   *   dispose(): void, pending?: boolean, wake?: (() => void) | null, icons?: import("./icons.js").IconStore }}
+   *   painter
    * @param {RendererOptions} [options]
    */
   constructor(canvas, painter, { frameRate = "display" } = {}) {
