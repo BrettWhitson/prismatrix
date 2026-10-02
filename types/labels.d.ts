@@ -143,7 +143,8 @@ export declare function textVisibility(scene: any): {
 };
 /**
  * The real nodes whose labels are pinned, in drawing order, each with whether it's shown whole (the hovered one):
- * the roots (if there are at most PINNED_ROOTS), the selection, the hovered node last.
+ * the roots (if there are at most PINNED_ROOTS), nodes whose style pins their label (`pinLabel`), the selection, the
+ * hovered node last.
  * @returns {Map<number, boolean>}
  */
 export declare function pinnedNodes(scene: any): Map<number, boolean>;

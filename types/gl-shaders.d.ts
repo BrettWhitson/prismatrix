@@ -1,6 +1,7 @@
 /**
- * A node: its shape filled, its icon (a layer of the icon atlas, a texture array) in its box and clipped to the
- * shape, a border inside the shape's edge, and the outline. Instances as packNodes packs them.
+ * A node: its aura, a stacked copy behind it and its ring; then its shape filled (at its opacity), its icon (a layer
+ * of the icon atlas, a texture array) in its box and clipped to the shape, a border inside the shape's edge (dashed
+ * or dotted by its style), the outline; and its badge image on top. Instances as packNodes packs them.
  */
 export declare const NODE_VERTEX: string;
 export declare const NODE_FRAGMENT: string;

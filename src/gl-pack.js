@@ -25,9 +25,11 @@ export const SHAPE_IDS = {
 /**
  * Floats per node: centre x, y; radius; colour r, g, b, a (a: how visible, see nodeAlpha); shape id; border colour
  * r, g, b and width (0: no border); its icon's rectangle in the icon atlas (u0, v0, u1, v1), page (-1: no icon) and
- * box (half its width and height, world px: iconBox).
+ * box (half its width and height, world px: iconBox); its ring's colour r, g, b and 1 (0: none); its aura's colour
+ * r, g, b and 1 (0: none); its border style (STROKE_STYLES), 1 for a stacked copy, its fill's opacity; its badge
+ * image's rectangle in the icon atlas (u0, v0, u1, v1) and page (-1: none).
  */
-export const NODE_STRIDE = 19;
+export const NODE_STRIDE = 35;
 /**
  * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b. Its brightness lives in a
  * separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding every edge.
@@ -158,6 +160,33 @@ function packNode(scene, n, out, origin, colour, iconAt) {
   } else {
     out.fill(0, o + 12, o + 19);
     out[o + 16] = -1;
+  }
+  const ring = looks.ring?.[i];
+  const rr = ring ? colour(ring) : NONE;
+  out[o + 19] = rr[0];
+  out[o + 20] = rr[1];
+  out[o + 21] = rr[2];
+  out[o + 22] = ring ? 1 : 0;
+  const aura = looks.aura?.[i];
+  const ar = aura ? colour(aura) : NONE;
+  out[o + 23] = ar[0];
+  out[o + 24] = ar[1];
+  out[o + 25] = ar[2];
+  out[o + 26] = aura ? 1 : 0;
+  out[o + 27] = looks.strokeStyle?.[i] ?? 0;
+  out[o + 28] = looks.stack?.[i] ?? 0;
+  out[o + 29] = looks.opacity?.[i] ?? 1;
+  const badge = looks.badgeIcon?.[i];
+  const b = badge && iconAt ? iconAt(badge) : null;
+  if (b) {
+    out[o + 30] = b.u0;
+    out[o + 31] = b.v0;
+    out[o + 32] = b.u1;
+    out[o + 33] = b.v1;
+    out[o + 34] = b.layer;
+  } else {
+    out.fill(0, o + 30, o + 34);
+    out[o + 34] = -1;
   }
 }
 

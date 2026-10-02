@@ -53,6 +53,14 @@ export const roughMeasure = (text, size) => text.length * size * 0.56;
  *   already in hand (an HTMLImageElement, ImageBitmap, canvas…; only a URL survives toJSON)
  * @property {string} [badge]  up to 12 characters in a pill at the node's top right ("!", "new"); top left when the
  *   node is collapsed (its "+N" takes the right)
+ * @property {string | { width: number, height: number }} [badgeIcon] a small round image on the node's top right
+ *   corner (a URL, or an image in hand): a mark, like a maker's stamp
+ * @property {"solid" | "dashed" | "dotted"} [strokeStyle] how the border is drawn (default solid)
+ * @property {number} [opacity] the fill's opacity, 0–1 (the border, icon and badge stay opaque)
+ * @property {string} [ring]   a ring just outside the shape, "#rrggbb"
+ * @property {string} [aura]   a soft glow round the shape, "#rrggbb"
+ * @property {boolean} [stack] a second copy of the shape peeks out behind it: there's more folded away here
+ * @property {boolean} [pinLabel] the label stays at any zoom, like a root's
  *
  * @typedef {object} EdgeStyle
  * @property {string} [color]  "#rrggbb"
@@ -204,6 +212,13 @@ export const NODE_STYLE = {
   strokeWidth: number(0, 100),
   icon,
   badge: (v) => typeof v === "string" && v.length <= 12,
+  badgeIcon: icon,
+  strokeStyle: (v) => v === "solid" || v === "dashed" || v === "dotted",
+  opacity: number(0, 1),
+  ring: isHex,
+  aura: isHex,
+  stack: (v) => typeof v === "boolean",
+  pinLabel: (v) => typeof v === "boolean",
 };
 /** What an edge's `style` may set. */
 export const EDGE_STYLE = {

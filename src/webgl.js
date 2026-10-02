@@ -364,6 +364,11 @@ export class WebGLPainter {
       [5, 4, 8], // border
       [6, 4, 12], // icon rectangle
       [7, 3, 16], // icon page, box
+      [8, 4, 19], // ring
+      [9, 4, 23], // aura
+      [10, 3, 27], // border style, stack, fill opacity
+      [11, 4, 30], // badge image rectangle
+      [12, 1, 34], // badge image page
     ];
     // A new context has none of the old one's textures: icons are copied in again as nodes ask for them.
     this.iconAtlas = new IconAtlas(gl, this.icons);

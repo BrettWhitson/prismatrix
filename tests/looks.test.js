@@ -29,6 +29,7 @@ import { NODE_STRIDE, packNodes, parseColour, runsOf } from "../src/gl-pack.js";
 import { PIECE_STRIDE, packPieces } from "../src/gl-edges.js";
 import { WebGLPainter, restylesSince } from "../src/webgl.js";
 import { LABEL_STRIDE } from "../src/gl-text.js";
+import { pinnedNodes } from "../src/labels.js";
 
 /** A colour's relative luminance (WCAG 2), 0 for black to 1 for white. */
 function luminance(colour) {
@@ -315,6 +316,109 @@ test("Canvas 2D draws a border inside the shape: clipped to it, twice as wide", 
   assert.ok(names.indexOf("stroke", clip) > clip, "stroked inside the clip");
   assert.ok(calls.some(([n, v]) => n === "=lineWidth" && v === 8));
   assert.ok(calls.some(([n, v]) => n === "=strokeStyle" && v === "#00ff00"));
+});
+
+// ---- marks: ring, aura, stack, dashes, opacity, badge image, pinned labels ------------------------------------------
+
+test("a node's style can mark it: the model checks the marks, looks and the GPU's rows carry them", () => {
+  const model = new GraphModel({
+    nodes: [
+      {
+        id: "a",
+        style: {
+          ring: "#ff0000",
+          aura: "#00ff00",
+          strokeStyle: "dashed",
+          stack: true,
+          opacity: 0.4,
+          pinLabel: true,
+        },
+      },
+      { id: "b", style: { strokeStyle: "dotted" } },
+      {
+        id: "c",
+        style: { ring: "red", strokeStyle: "wavy", opacity: 2, stack: 1 },
+      },
+    ],
+  });
+  assert.equal(model.issues.filter((i) => i.kind === "bad-style").length, 4);
+  const g = new Graph(model);
+  const looks = looksOf(g, NODE, EDGE);
+  assert.deepEqual([...looks.ring], ["#ff0000", null, null]);
+  assert.deepEqual([...looks.aura], ["#00ff00", null, null]);
+  assert.deepEqual([...looks.strokeStyle], [1, 2, 0]);
+  assert.deepEqual([...looks.stack], [1, 0, 0]);
+  assert.deepEqual([...looks.opacity], [0.4, 1, 1]);
+  const out = packNodes({ graph: g, looks });
+  const row = (i, from, to) => [
+    ...out.subarray(i * NODE_STRIDE + from, i * NODE_STRIDE + to),
+  ];
+  assert.deepEqual(row(0, 19, 23), [1, 0, 0, 1], "the ring");
+  assert.deepEqual(row(0, 23, 27), [0, 1, 0, 1], "the aura");
+  assert.ok(close(row(0, 27, 30), [1, 1, 0.4]), "style, stack, opacity");
+  assert.deepEqual(row(1, 19, 30), [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1]);
+  assert.equal(out[34], -1, "no badge image");
+});
+
+test("Canvas 2D draws the marks: aura and stack under the node, the ring round it, dashes on the border", () => {
+  const model = new GraphModel({
+    nodes: [
+      {
+        id: "a",
+        style: {
+          aura: "#00ff00",
+          stack: true,
+          ring: "#ff0000",
+          stroke: "#0000ff",
+          strokeStyle: "dashed",
+          opacity: 0.5,
+        },
+      },
+    ],
+  });
+  const g = new Graph(model);
+  const { ctx, calls } = recorder();
+  drawNodes(ctx, {
+    graph: g,
+    node: NODE,
+    looks: looksOf(g, NODE, EDGE),
+    camera: { x: 0, y: 0, k: 1 },
+    width: 800,
+    height: 600,
+    dpr: 1,
+    background: "#000000",
+  });
+  const at = (name, value) =>
+    calls.findIndex(([n, v]) => n === name && v === value);
+  const aura = at("=fillStyle", "#00ff00");
+  const ring = at("=strokeStyle", "#ff0000");
+  const body = calls.findIndex(
+    ([n, v], k) =>
+      n === "=fillStyle" && v === looksOf(g, NODE, EDGE).fill[0] && k > ring,
+  );
+  assert.ok(aura >= 0 && aura < ring && ring < body, "aura, ring, then body");
+  assert.ok(
+    calls.some(([n, v]) => n === "=globalAlpha" && Math.abs(v - 0.5) < 1e-9),
+    "the fill at its opacity",
+  );
+  const dashes = calls.filter(([n]) => n === "setLineDash");
+  assert.ok(
+    dashes.some(([, d]) => d.length === 2 && d[0] > 0),
+    "dashed",
+  );
+  assert.deepEqual(dashes.at(-1)[1].length, 2, "only the border is dashed");
+});
+
+test("a node's style can pin its label", () => {
+  const model = new GraphModel({
+    nodes: [{ id: "r" }, { id: "a", style: { pinLabel: true } }, { id: "b" }],
+    edges: [
+      { source: "r", target: "a" },
+      { source: "r", target: "b" },
+    ],
+  });
+  const g = new Graph(model);
+  assert.deepEqual([...pinnedNodes({ graph: g }).keys()], [0, 1]);
 });
 
 // ---- icons ---------------------------------------------------------------------------------------------------------

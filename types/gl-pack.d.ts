@@ -11,9 +11,11 @@ export declare const SHAPE_IDS: {
 /**
  * Floats per node: centre x, y; radius; colour r, g, b, a (a: how visible, see nodeAlpha); shape id; border colour
  * r, g, b and width (0: no border); its icon's rectangle in the icon atlas (u0, v0, u1, v1), page (-1: no icon) and
- * box (half its width and height, world px: iconBox).
+ * box (half its width and height, world px: iconBox); its ring's colour r, g, b and 1 (0: none); its aura's colour
+ * r, g, b and 1 (0: none); its border style (STROKE_STYLES), 1 for a stacked copy, its fill's opacity; its badge
+ * image's rectangle in the icon atlas (u0, v0, u1, v1) and page (-1: none).
  */
-export declare const NODE_STRIDE = 19;
+export declare const NODE_STRIDE = 35;
 /**
  * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b. Its brightness lives in a
  * separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding every edge.

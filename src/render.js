@@ -31,6 +31,12 @@ import {
  * @property {(string | null)[]} stroke per node, its border colour (null: none)
  * @property {Float64Array} strokeWidth per node (0: no border)
  * @property {any[]} icon              per node, a URL or an image (null: none)
+ * @property {any[]} badgeIcon         per node, its badge image: a URL or an image (null: none)
+ * @property {Uint8Array} strokeStyle  per node, its border's dashes: 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
+ * @property {Float64Array} opacity    per node, its fill's opacity, 0–1
+ * @property {(string | null)[]} ring  per node, a ring's colour (null: none)
+ * @property {(string | null)[]} aura  per node, a glow's colour (null: none)
+ * @property {Uint8Array} stack        per node, 1 for a stacked copy behind it
  * @property {string[]} edgeColour     per edge
  * @property {Float64Array} edgeWidth  per edge, world px
  * @property {{ colour: string, width: number, byTarget: boolean }} edgeDefault an edge's look without a style of its own
@@ -106,6 +112,12 @@ export function looksOf(graph, node, edge, theme = DEFAULT_THEME) {
     stroke: new Array(count),
     strokeWidth: new Float64Array(count),
     icon: new Array(count),
+    badgeIcon: new Array(count),
+    strokeStyle: new Uint8Array(count),
+    opacity: new Float64Array(count),
+    ring: new Array(count),
+    aura: new Array(count),
+    stack: new Uint8Array(count),
     edgeColour: new Array(graph.edges.length),
     edgeWidth: new Float64Array(graph.edges.length),
     edgeDefault: {
@@ -169,7 +181,47 @@ function nodeLook(looks, n, node) {
     ? (style.strokeWidth ?? node.strokeWidth ?? 2)
     : 0;
   looks.icon[i] = style.icon ?? null;
+  looks.badgeIcon[i] = style.badgeIcon ?? null;
+  looks.strokeStyle[i] = STROKE_STYLES[style.strokeStyle] ?? 0;
+  looks.opacity[i] = style.opacity ?? 1;
+  looks.ring[i] = style.ring ?? null;
+  looks.aura[i] = style.aura ?? null;
+  looks.stack[i] = style.stack ? 1 : 0;
 }
+
+/** A border's dash styles, as the ids looks and the node shader use. */
+export const STROKE_STYLES = { solid: 0, dashed: 1, dotted: 2 };
+
+/**
+ * The marks round a node, in proportion to its radius r (world px), with a floor so small nodes still show them:
+ * the ring (gap outside the shape, and width), the aura's reach, the stacked copy's shift (right and up), the badge
+ * image (its centre along the top-right diagonal, and radius), and the border's dashes (how many round the shape,
+ * and the part of each that's drawn). The WebGL painter's shader reads the same numbers.
+ */
+export const MARKS = {
+  ringGap: 0.22,
+  ringGapMin: 2,
+  ringWidth: 0.14,
+  ringWidthMin: 1.5,
+  auraReach: 0.7,
+  auraReachMin: 6,
+  stackShift: 0.3,
+  badgeAt: 0.78,
+  badgeRadius: 0.42,
+  dashes: 12,
+  dashOn: 0.55,
+  dots: 24,
+  dotOn: 0.4,
+};
+
+/** A ring's gap outside the shape and its width, for radius r. */
+export const ringOf = (r) => [
+  Math.max(MARKS.ringGapMin, r * MARKS.ringGap),
+  Math.max(MARKS.ringWidthMin, r * MARKS.ringWidth),
+];
+
+/** How far an aura reaches past the shape, for radius r. */
+export const auraOf = (r) => Math.max(MARKS.auraReachMin, r * MARKS.auraReach);
 
 function edgeLook(looks, e, i, edge) {
   looks.edgeColour[i] =
@@ -417,6 +469,14 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
       if (entry?.state === "ready") icon = entry;
       else shown = 0;
     }
+    let badge = null,
+      badgeShown = 0;
+    if (looks.badgeIcon?.[i]) {
+      badgeShown = iconShown(r * MARKS.badgeRadius, camera.k);
+      const entry = badgeShown > 0 ? icons.get(looks.badgeIcon[i]) : null;
+      if (entry?.state === "ready") badge = entry;
+      else badgeShown = 0;
+    }
     const look = {
       shape,
       outline: node.outline,
@@ -430,11 +490,22 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
       fit: looks.iconFit,
       stroke: looks.stroke?.[i] ?? null,
       strokeWidth: looks.strokeWidth?.[i] ?? 0,
+      strokeStyle: looks.strokeStyle?.[i] ?? 0,
+      opacity: looks.opacity?.[i] ?? 1,
+      ring: looks.ring?.[i] ?? null,
+      aura: looks.aura?.[i] ?? null,
+      stack: looks.stack?.[i] ?? 0,
+      badge,
+      badgeShown,
     };
+    const marked = !!(look.ring || look.aura || look.stack || badgeShown > 0);
     const layered =
       alpha < 1 &&
-      shape !== "ring" &&
-      (shown > 0 || (look.stroke && look.strokeWidth > 0) || node.outline > 0);
+      (marked ||
+        (shape !== "ring" &&
+          (shown > 0 ||
+            (look.stroke && look.strokeWidth > 0) ||
+            node.outline > 0)));
     if (!layered) {
       drawNode(ctx, look);
       continue;
@@ -443,7 +514,7 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
     // through its icon or border (as the WebGL painter blends them before fading).
     const layer = edgeLayer(ctx.canvas, nodeLayers);
     const [a, , , d, e, f] = worldTransform(scene);
-    const reachPx = (r * 1.25 + node.outline) * a + 2;
+    const reachPx = (nodeReach(look) + node.outline) * a + 2;
     const x0 = Math.max(0, Math.floor(n.x * a + e - reachPx)),
       y0 = Math.max(0, Math.floor(n.y * d + f - reachPx));
     const x1 = Math.min(ctx.canvas.width, Math.ceil(n.x * a + e + reachPx)),
@@ -633,26 +704,110 @@ function drawEdge(ctx, pts, edge, looks, ei) {
   }
 }
 
+/** How far node `look` reaches from its centre, marks and all, world px. */
+function nodeReach(look) {
+  const { r, shape } = look;
+  let reach = r * (shape === "diamond" ? 1.25 : shape === "hexagon" ? 1.1 : 1);
+  if (shape === "ring") reach += Math.max(1.5, r * 0.35) / 2;
+  let out = reach;
+  if (look.aura) out = Math.max(out, reach + auraOf(r));
+  if (look.ring) {
+    const [gap, width] = ringOf(r);
+    out = Math.max(out, reach + gap + width);
+  }
+  if (look.stack) out = Math.max(out, reach + r * MARKS.stackShift * 1.5);
+  if (look.badgeShown > 0)
+    out = Math.max(out, r * (MARKS.badgeAt + MARKS.badgeRadius) * Math.SQRT2);
+  return out;
+}
+
+/** About how long a shape's outline is (for spacing a dashed border evenly round it). */
+function perimeter(shape, r) {
+  switch (shape) {
+    case "square":
+      return 8 * r;
+    case "rounded":
+    case "tile": {
+      const c = r * (shape === "tile" ? TILE_CORNER : ROUNDED_CORNER);
+      return 8 * (r - c) + 2 * Math.PI * c;
+    }
+    case "diamond":
+      return 4 * Math.SQRT2 * r * 1.25;
+    case "hexagon":
+      return 6 * r * 1.1;
+    default:
+      return 2 * Math.PI * r;
+  }
+}
+
+/** The Canvas 2D dash pattern for a border style (STROKE_STYLES) round a shape of radius r, or [] for solid. */
+export function dashPattern(style, shape, r) {
+  if (!style) return [];
+  const count = style === 1 ? MARKS.dashes : MARKS.dots;
+  const on = style === 1 ? MARKS.dashOn : MARKS.dotOn;
+  const period = perimeter(shape, r) / count;
+  return [period * on, period * (1 - on)];
+}
+
+/** How many rings the Canvas 2D painter builds an aura from, and how strong an aura is at the shape's edge. */
+export const AURA_RINGS = 10;
+export const AURA_ALPHA = 0.6;
+
 /**
- * One node, at `alpha`. In order: its fill (a tile's fades out as its icon fades in: the icon is the tile), its icon
- * in its box (iconBox) clipped to the shape, its border (`strokeWidth` inside the shape's edge, so the node takes no
- * more room), and the outline. A ring is a stroke round the background, nothing else.
+ * One node, at `alpha`. In order: its aura, the stacked copy behind it, its ring; then its fill (at its `opacity`;
+ * a tile's fades out as its icon fades in: the icon is the tile), its icon in its box (iconBox) clipped to the
+ * shape, its border (`strokeWidth` inside the shape's edge, so the node takes no more room; dashed or dotted by
+ * `strokeStyle`), the outline, and its badge image on top. A ring shape is a stroke round the background.
  */
 function drawNode(ctx, look) {
   const { shape, outline, n, r, fill, background, alpha, icon, shown } = look;
   const { x, y } = n;
+  const outer = shape === "ring" ? "circle" : shape;
+  // A ring's stroke reaches past its circle: marks are measured from its outside.
+  const pad = shape === "ring" ? Math.max(1.5, r * 0.35) / 2 : 0;
+  if (look.aura) {
+    // Rings of falling strength, outermost first: a glow that fades out as it reaches away.
+    const reach = auraOf(r);
+    ctx.fillStyle = look.aura;
+    ctx.globalAlpha = (alpha * AURA_ALPHA) / AURA_RINGS;
+    for (let k = AURA_RINGS; k >= 1; k--) {
+      ctx.beginPath();
+      haloPath(ctx, outer, x, y, r, pad + (reach * k) / AURA_RINGS);
+      ctx.fill();
+    }
+  }
+  if (look.stack) {
+    const shift = r * MARKS.stackShift;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = mixHex(fill, background, STACK_FADE);
+    ctx.beginPath();
+    haloPath(ctx, outer, x + shift, y - shift, r, pad);
+    ctx.fill();
+  }
+  if (look.ring) {
+    const [gap, width] = ringOf(r);
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = width;
+    ctx.strokeStyle = look.ring;
+    ctx.beginPath();
+    haloPath(ctx, outer, x, y, r, pad + gap + width / 2);
+    ctx.stroke();
+  }
   ctx.beginPath();
-  haloPath(ctx, shape === "ring" ? "circle" : shape, x, y, r, 0);
+  haloPath(ctx, outer, x, y, r, 0);
   if (shape === "ring") {
     ctx.globalAlpha = alpha;
     ctx.fillStyle = background;
     ctx.fill();
     ctx.lineWidth = Math.max(1.5, r * 0.35);
     ctx.strokeStyle = fill;
+    ctx.setLineDash(dashPattern(look.strokeStyle, "circle", r));
     ctx.stroke();
+    ctx.setLineDash([]);
+    drawBadge(ctx, look);
     return;
   }
-  const fillShown = shape === "tile" && icon ? 1 - shown : 1;
+  const fillShown = (shape === "tile" && icon ? 1 - shown : 1) * look.opacity;
   if (fillShown > 0) {
     ctx.globalAlpha = alpha * fillShown;
     ctx.fillStyle = fill;
@@ -679,6 +834,7 @@ function drawNode(ctx, look) {
     ctx.clip();
     ctx.lineWidth = look.strokeWidth * 2;
     ctx.strokeStyle = look.stroke;
+    ctx.setLineDash(dashPattern(look.strokeStyle, shape, r));
     ctx.stroke();
     ctx.restore();
   }
@@ -687,6 +843,44 @@ function drawNode(ctx, look) {
     ctx.strokeStyle = background;
     ctx.stroke();
   }
+  drawBadge(ctx, look);
+}
+
+/** How far a stacked copy's fill goes toward the background (so it reads as behind). */
+export const STACK_FADE = 0.45;
+
+/** A node's badge image: a disc of the background on its top-right diagonal, the image clipped round inside it. */
+function drawBadge(ctx, look) {
+  const { badge, badgeShown, n, r, alpha, background } = look;
+  if (!badge || !(badgeShown > 0)) return;
+  const at = r * MARKS.badgeAt,
+    br = r * MARKS.badgeRadius;
+  const cx = n.x + at,
+    cy = n.y - at;
+  ctx.globalAlpha = alpha * badgeShown;
+  ctx.beginPath();
+  ctx.arc(cx, cy, br, 0, Math.PI * 2);
+  ctx.fillStyle = background;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  const a = badge.width / badge.height;
+  const [hx, hy] = a >= 1 ? [br * a, br] : [br, br / a];
+  ctx.drawImage(badge.image, cx - hx, cy - hy, hx * 2, hy * 2);
+  ctx.restore();
+}
+
+/** "#rrggbb" `a` mixed toward `b` by `t` (0: a, 1: b). */
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16),
+    pb = parseInt(b.slice(1), 16);
+  let out = 0;
+  for (const shift of [16, 8, 0]) {
+    const ca = (pa >> shift) & 255,
+      cb = (pb >> shift) & 255;
+    out |= Math.round(ca + (cb - ca) * t) << shift;
+  }
+  return "#" + out.toString(16).padStart(6, "0");
 }
 
 /** The Canvas 2D painter: everything on the renderer's canvas. Also the reference the WebGL painter is checked against. */

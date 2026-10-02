@@ -24,6 +24,30 @@ export type Looks = {
    */
   icon: any[];
   /**
+   * per node, its badge image: a URL or an image (null: none)
+   */
+  badgeIcon: any[];
+  /**
+   * per node, its border's dashes: 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
+   */
+  strokeStyle: Uint8Array;
+  /**
+   * per node, its fill's opacity, 0–1
+   */
+  opacity: Float64Array;
+  /**
+   * per node, a ring's colour (null: none)
+   */
+  ring: (string | null)[];
+  /**
+   * per node, a glow's colour (null: none)
+   */
+  aura: (string | null)[];
+  /**
+   * per node, 1 for a stacked copy behind it
+   */
+  stack: Uint8Array;
+  /**
    * per edge
    */
   edgeColour: string[];
@@ -129,6 +153,12 @@ export type Shown = {
  * @property {(string | null)[]} stroke per node, its border colour (null: none)
  * @property {Float64Array} strokeWidth per node (0: no border)
  * @property {any[]} icon              per node, a URL or an image (null: none)
+ * @property {any[]} badgeIcon         per node, its badge image: a URL or an image (null: none)
+ * @property {Uint8Array} strokeStyle  per node, its border's dashes: 0 solid, 1 dashed, 2 dotted (STROKE_STYLES)
+ * @property {Float64Array} opacity    per node, its fill's opacity, 0–1
+ * @property {(string | null)[]} ring  per node, a ring's colour (null: none)
+ * @property {(string | null)[]} aura  per node, a glow's colour (null: none)
+ * @property {Uint8Array} stack        per node, 1 for a stacked copy behind it
  * @property {string[]} edgeColour     per edge
  * @property {Float64Array} edgeWidth  per edge, world px
  * @property {{ colour: string, width: number, byTarget: boolean }} edgeDefault an edge's look without a style of its own
@@ -217,6 +247,37 @@ export declare function patchLooks(
   nodes: Int32Array;
   edges: Int32Array;
 };
+/** A border's dash styles, as the ids looks and the node shader use. */
+export declare const STROKE_STYLES: {
+  solid: number;
+  dashed: number;
+  dotted: number;
+};
+/**
+ * The marks round a node, in proportion to its radius r (world px), with a floor so small nodes still show them:
+ * the ring (gap outside the shape, and width), the aura's reach, the stacked copy's shift (right and up), the badge
+ * image (its centre along the top-right diagonal, and radius), and the border's dashes (how many round the shape,
+ * and the part of each that's drawn). The WebGL painter's shader reads the same numbers.
+ */
+export declare const MARKS: {
+  ringGap: number;
+  ringGapMin: number;
+  ringWidth: number;
+  ringWidthMin: number;
+  auraReach: number;
+  auraReachMin: number;
+  stackShift: number;
+  badgeAt: number;
+  badgeRadius: number;
+  dashes: number;
+  dashOn: number;
+  dots: number;
+  dotOn: number;
+};
+/** A ring's gap outside the shape and its width, for radius r. */
+export declare const ringOf: (r: any) => number[];
+/** How far an aura reaches past the shape, for radius r. */
+export declare const auraOf: (r: any) => number;
 /**
  * Draw one whole frame on one 2D canvas (the Canvas 2D painter's): background, edges, nodes, selection halos, the
  * reference chips' link glyphs, text.
@@ -263,6 +324,13 @@ export declare function edgeAlpha(scene: any, e: any): number;
  * still loading leave the node as it is without one.
  */
 export declare function drawNodes(ctx: any, scene: any, icons?: any): void;
+/** The Canvas 2D dash pattern for a border style (STROKE_STYLES) round a shape of radius r, or [] for solid. */
+export declare function dashPattern(style: any, shape: any, r: any): number[];
+/** How many rings the Canvas 2D painter builds an aura from, and how strong an aura is at the shape's edge. */
+export declare const AURA_RINGS = 10;
+export declare const AURA_ALPHA = 0.6;
+/** How far a stacked copy's fill goes toward the background (so it reads as behind). */
+export declare const STACK_FADE = 0.45;
 /** The Canvas 2D painter: everything on the renderer's canvas. Also the reference the WebGL painter is checked against. */
 export declare class CanvasPainter {
   name: string;

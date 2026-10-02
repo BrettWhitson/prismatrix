@@ -7,9 +7,10 @@
 // - "×N" beside a shared ingredient that has references (N: how many use it);
 // - badges, in pills at a node's top corners: a collapsed node's fold mark ("+N", from `scene.collapsed` and
 //   `scene.hidden`) and the node's own style `badge` (the app's text);
-// - pinned labels, which stay when the others are too small to show: the roots (a handful at most), the selection
-//   and the hovered node (whole, never cut short), and the hovered ingredient's name on each of its chips. Too small
-//   to read, they're drawn at PINNED_PX on screen instead, whatever the zoom.
+// - pinned labels, which stay when the others are too small to show: the roots (a handful at most), nodes whose
+//   style pins theirs (`pinLabel`), the selection and the hovered node (whole, never cut short), and the hovered
+//   ingredient's name on each of its chips. Too small to read, they're drawn at PINNED_PX on screen instead,
+//   whatever the zoom.
 //
 // Each is a TextItem: the text, its size, where it's anchored and how it's aligned there (as Canvas 2D aligns
 // text), how visible, and its colours. Every piece of text has a halo (a stroke in the background colour round its
@@ -208,7 +209,8 @@ export function textVisibility(scene) {
 
 /**
  * The real nodes whose labels are pinned, in drawing order, each with whether it's shown whole (the hovered one):
- * the roots (if there are at most PINNED_ROOTS), the selection, the hovered node last.
+ * the roots (if there are at most PINNED_ROOTS), nodes whose style pins their label (`pinLabel`), the selection, the
+ * hovered node last.
  * @returns {Map<number, boolean>}
  */
 export function pinnedNodes(scene) {
@@ -218,6 +220,8 @@ export function pinnedNodes(scene) {
   const roots = graph.roots ?? [];
   if (roots.length <= PINNED_ROOTS)
     for (const r of roots) if (r < real) out.set(r, false);
+  for (let i = 0; i < real; i++)
+    if (graph.nodes[i].style?.pinLabel) out.set(i, false);
   const selected = scene.selected;
   if (selected)
     for (let i = 0; i < Math.min(selected.length, real); i++)

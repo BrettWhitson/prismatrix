@@ -52,6 +52,40 @@ export type NodeStyle = {
    * node is collapsed (its "+N" takes the right)
    */
   badge?: string;
+  /**
+   * a small round image on the node's top right
+   * corner (a URL, or an image in hand): a mark, like a maker's stamp
+   */
+  badgeIcon?:
+    | string
+    | {
+        width: number;
+        height: number;
+      };
+  /**
+   * how the border is drawn (default solid)
+   */
+  strokeStyle?: "solid" | "dashed" | "dotted";
+  /**
+   * the fill's opacity, 0–1 (the border, icon and badge stay opaque)
+   */
+  opacity?: number;
+  /**
+   * a ring just outside the shape, "#rrggbb"
+   */
+  ring?: string;
+  /**
+   * a soft glow round the shape, "#rrggbb"
+   */
+  aura?: string;
+  /**
+   * a second copy of the shape peeks out behind it: there's more folded away here
+   */
+  stack?: boolean;
+  /**
+   * the label stays at any zoom, like a root's
+   */
+  pinLabel?: boolean;
 };
 export type EdgeStyle = {
   /**
@@ -274,6 +308,13 @@ export declare const NODE_STYLE: {
   strokeWidth: (v: any) => boolean;
   icon: typeof icon;
   badge: (v: any) => boolean;
+  badgeIcon: typeof icon;
+  strokeStyle: (v: any) => boolean;
+  opacity: (v: any) => boolean;
+  ring: typeof isHex;
+  aura: typeof isHex;
+  stack: (v: any) => v is boolean;
+  pinLabel: (v: any) => v is boolean;
 };
 /** What an edge's `style` may set. */
 export declare const EDGE_STYLE: {

@@ -48,6 +48,9 @@ Nothing from 0.4 carries over: an app moves to the new API ([API.md](API.md)). T
   ones; edges straight, step, fan or curve, with corner radius, taper, arrowheads and labels, drawn as one layer so
   overlaps don't brighten; labels with a halo, cut to `labelMaxWidth` with an ellipsis; dark and light themes or
   custom tokens.
+- **Node marks** (node style): `ring`, `aura`, `stack` (a copy peeking out behind), `strokeStyle` dashed or dotted,
+  fill `opacity`, `badgeIcon` (an image badge on the top-right corner) and `pinLabel` (the label stays at any zoom).
+  Both painters draw them; the sandbox's "Sample marks" shows each.
 - **Speed at 40k nodes:** edges are traced on the GPU from a positions texture, so a tree morph frame takes a few ms
   (105–199 ms when the CPU traced them; merged-tree morph frames are still 47–52 ms). Pans rebuild nothing;
   hover hit tests take 0.07 ms at 100k nodes; a restyle uploads only the bytes that changed.

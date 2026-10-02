@@ -88,6 +88,32 @@ const GRAPH_OPTIONS = [
     true,
     "Path labels (1.2.1) instead of numbers.",
   ),
+  bool(
+    "marks",
+    "Sample marks",
+    false,
+    "Node styles in turn: ring, aura, dashed and dotted borders, a stack, a faint fill, a badge image, a pinned label.",
+  ),
+];
+
+/** A badge image for the sample marks: a small star. */
+const BADGE =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#b46cff"/>' +
+      '<path d="M12 4l2.4 5 5.4.6-4 3.7 1.1 5.4L12 16l-4.9 2.7 1.1-5.4-4-3.7 5.4-.6z" fill="#fff"/></svg>',
+  );
+
+/** The sample marks, one per node in turn (the root has none). */
+const MARK_STYLES = [
+  { ring: "#b46cff" },
+  { aura: "#4fc1b0" },
+  { stroke: "#ef5f5f", strokeStyle: "dotted" },
+  { stroke: "#8fd07a", strokeStyle: "dashed", aura: "#8fd07a" },
+  { stack: true },
+  { opacity: 0.4, stroke: "#e5b83b", strokeStyle: "dashed" },
+  { badgeIcon: BADGE, ring: "#b46cff" },
+  { pinLabel: true, aura: "#e5b83b" },
 ];
 
 // ---- settings, remembered between visits -------------------------------------------------------------------
@@ -197,6 +223,9 @@ function makeGraph(g) {
         target: String(Math.max(a, b)),
       });
   }
+  if (g.marks)
+    for (let i = 1; i < nodes.length; i++)
+      nodes[i].style = MARK_STYLES[(i - 1) % MARK_STYLES.length];
   return { nodes, edges };
 }
 

@@ -94,6 +94,13 @@ floats can only land on sixteenths of a pixel.
 | node    | `strokeWidth` | The border's width in world px, 0–100 (default: the `strokeWidth` node option).                  |
 | node    | `icon`        | An image drawn in the node: a URL, or an image already in hand (only a URL survives `toJSON`).   |
 | node    | `badge`       | Up to 12 characters in a pill at the node's top right ("!", "new").                              |
+| node    | `badgeIcon`   | A small round image on the node's top-right corner: a URL, or an image already in hand.          |
+| node    | `strokeStyle` | `solid` (the default), `dashed` or `dotted`: how the border is drawn.                            |
+| node    | `opacity`     | The fill's opacity, 0–1. The border, icon and badge stay opaque.                                 |
+| node    | `ring`        | A ring just outside the shape, `"#rrggbb"`.                                                      |
+| node    | `aura`        | A soft glow round the shape, `"#rrggbb"`.                                                        |
+| node    | `stack`       | `true`: a second copy of the shape peeks out behind it (more is folded away here).              |
+| node    | `pinLabel`    | `true`: the label stays at any zoom, like a root's.                                             |
 | edge    | `color`       | `"#rrggbb"`                                                                                      |
 | edge    | `width`       | World px, 0.1–40.                                                                                |
 

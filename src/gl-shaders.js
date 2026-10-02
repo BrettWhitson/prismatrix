@@ -23,6 +23,7 @@ import {
   RADIAL_POINTS,
 } from "./gl-edges.js";
 import { GLYPH_MIN_PX, LINK } from "./references.js";
+import { AURA_ALPHA, AURA_RINGS, MARKS, STACK_FADE } from "./render.js";
 import {
   ICON_FADE_PX,
   ICON_MIN_PX,
@@ -112,9 +113,24 @@ float ringHalfStroke(float r) {
   return max(1.5, r * 0.35) * 0.5;
 }`;
 
+/** The marks round a node (render.js MARKS: the ring's gap and width, the aura's reach), for radius r. */
+const NODE_MARKS = `
+float ringGap(float r) {
+  return max(${float(MARKS.ringGapMin)}, r * ${float(MARKS.ringGap)});
+}
+
+float ringWidth(float r) {
+  return max(${float(MARKS.ringWidthMin)}, r * ${float(MARKS.ringWidth)});
+}
+
+float auraReach(float r) {
+  return max(${float(MARKS.auraReachMin)}, r * ${float(MARKS.auraReach)});
+}`;
+
 /**
- * A node: its shape filled, its icon (a layer of the icon atlas, a texture array) in its box and clipped to the
- * shape, a border inside the shape's edge, and the outline. Instances as packNodes packs them.
+ * A node: its aura, a stacked copy behind it and its ring; then its shape filled (at its opacity), its icon (a layer
+ * of the icon atlas, a texture array) in its box and clipped to the shape, a border inside the shape's edge (dashed
+ * or dotted by its style), the outline; and its badge image on top. Instances as packNodes packs them.
  */
 export const NODE_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
@@ -125,8 +141,14 @@ layout(location = 4) in float a_shape;
 layout(location = 5) in vec4 a_stroke;  // colour r, g, b, width (world px, 0 for none)
 layout(location = 6) in vec4 a_uv;      // the icon's rectangle in its atlas page
 layout(location = 7) in vec3 a_icon;    // page (-1 for no icon), half the icon box's width and height
+layout(location = 8) in vec4 a_ring;    // colour r, g, b, 1 (0: none)
+layout(location = 9) in vec4 a_aura;    // colour r, g, b, 1 (0: none)
+layout(location = 10) in vec3 a_style;  // border style (0 solid, 1 dashed, 2 dotted), stack (1: yes), fill opacity
+layout(location = 11) in vec4 a_badgeUv; // the badge image's rectangle in its atlas page
+layout(location = 12) in float a_badgePage; // -1 for none
 ${COMMON_VERTEX}
 ${NODE_SHAPES}
+${NODE_MARKS}
 uniform float u_outline;
 
 out vec2 v_local;
@@ -136,11 +158,24 @@ flat out float v_shape;
 flat out vec4 v_stroke;
 flat out vec4 v_uv;
 flat out vec4 v_icon;  // page, box half width, box half height, how much of the icon shows
+flat out vec4 v_ring;
+flat out vec4 v_aura;
+flat out vec3 v_style;
+flat out vec4 v_badgeUv;
+flat out vec2 v_badge; // page, how much of the badge shows
 
 void main() {
   float ring = a_shape == 5.0 ? ringHalfStroke(a_radius) : 0.0;
-  // Big enough for the shape, half its outline or ring stroke, and a couple of pixels of anti-aliasing.
-  float extent = a_radius * shapeReach(a_shape) + max(u_outline * 0.5, ring) + 2.0 * u_pixel;
+  float reach = a_radius * shapeReach(a_shape) + ring;
+  // Big enough for the shape, half its outline or ring stroke, its marks, and a couple of pixels of anti-aliasing.
+  float marks = u_outline * 0.5;
+  if (a_aura.w > 0.0) marks = max(marks, auraReach(a_radius));
+  if (a_ring.w > 0.0) marks = max(marks, ringGap(a_radius) + ringWidth(a_radius));
+  if (a_style.y > 0.0) marks = max(marks, a_radius * ${float(MARKS.stackShift * 1.5)});
+  float extent = reach + marks;
+  if (a_badgePage >= 0.0)
+    extent = max(extent, a_radius * ${float(MARKS.badgeAt + MARKS.badgeRadius)});
+  extent += 2.0 * u_pixel;
   vec2 local = a_corner * extent;
   gl_Position = toClip(a_centre + local);
   v_local = local;
@@ -149,9 +184,15 @@ void main() {
   v_shape = a_shape;
   v_stroke = a_stroke;
   v_uv = a_uv;
+  v_ring = a_ring;
+  v_aura = a_aura;
+  v_style = a_style;
+  v_badgeUv = a_badgeUv;
   // Icons fade in from ICON_MIN_PX across on screen to ICON_MIN_PX + ICON_FADE_PX (iconShown in icons.js).
   float shown = clamp((2.0 * a_radius * u_camera.z - ${ICON_MIN_PX.toFixed(1)}) / ${ICON_FADE_PX.toFixed(1)}, 0.0, 1.0);
   v_icon = vec4(a_icon, a_icon.x < 0.0 ? 0.0 : shown);
+  float badgeShown = clamp((2.0 * a_radius * ${float(MARKS.badgeRadius)} * u_camera.z - ${ICON_MIN_PX.toFixed(1)}) / ${ICON_FADE_PX.toFixed(1)}, 0.0, 1.0);
+  v_badge = vec2(a_badgePage, a_badgePage < 0.0 ? 0.0 : badgeShown);
 }`;
 
 export const NODE_FRAGMENT = `#version 300 es
@@ -163,53 +204,121 @@ flat in float v_shape;
 flat in vec4 v_stroke;
 flat in vec4 v_uv;
 flat in vec4 v_icon;
+flat in vec4 v_ring;
+flat in vec4 v_aura;
+flat in vec3 v_style;
+flat in vec4 v_badgeUv;
+flat in vec2 v_badge;
 ${COMMON_FRAGMENT}
 ${NODE_SHAPES}
+${NODE_MARKS}
 uniform float u_outline;
 uniform vec3 u_background;
 uniform mediump sampler2DArray u_icons;
 out vec4 outColour;
 
+// Premultiplied colour \`top\` over \`under\`.
+vec4 over(vec4 top, vec4 under) {
+  return top + under * (1.0 - top.a);
+}
+
+// How much of a border style's dash is drawn at this point (1 for solid): dashes spaced evenly by angle round the
+// shape, as the Canvas 2D painter spaces them along its outline.
+float dashMask(vec2 p, float style) {
+  if (style == 0.0) return 1.0;
+  float count = style == 1.0 ? ${float(MARKS.dashes)} : ${float(MARKS.dots)};
+  float on = style == 1.0 ? ${float(MARKS.dashOn)} : ${float(MARKS.dotOn)};
+  float t = (atan(p.y, p.x) / 6.28318531 + 0.5) * count;
+  float f = fract(t);
+  float aa = max(fwidth(t), 1e-4);
+  float mask = clamp(f / aa, 0.0, 1.0) * clamp((on - f) / aa, 0.0, 1.0);
+  // Dashes smaller than a pixel blur into their average, rather than flicker out.
+  return mix(mask, on, clamp(aa / on - 0.5, 0.0, 1.0));
+}
+
+// A shape's distance at p, a ring measured from its stroke's outside.
+float outerDistance(vec2 p, float r, float shape) {
+  return shape == 5.0 ? length(p) - r - ringHalfStroke(r) : shapeDistance(p, r, shape);
+}
+
 void main() {
   vec2 p = v_local;
   float r = v_radius;
+  float d0 = outerDistance(p, r, v_shape);
+  vec4 result = vec4(0.0);
+  if (v_aura.w > 0.0) {
+    // A glow fading out over its reach: the smooth form of the Canvas 2D painter's rings of falling strength.
+    float reach = auraReach(r);
+    float rings = ${float(AURA_RINGS)} * clamp(1.0 - d0 / reach, 0.0, 1.0);
+    float a = 1.0 - pow(1.0 - ${float(AURA_ALPHA / AURA_RINGS)}, rings);
+    result = vec4(v_aura.rgb * a, a);
+  }
+  if (v_style.y > 0.0) {
+    // A copy of the shape, shifted right and up, toward the background: there's more behind this one.
+    float shift = r * ${float(MARKS.stackShift)};
+    float a = cover(outerDistance(p - vec2(shift, -shift), r, v_shape));
+    vec3 c = mix(v_colour.rgb, u_background, ${float(STACK_FADE)});
+    result = over(vec4(c * a, a), result);
+  }
+  if (v_ring.w > 0.0) {
+    float width = ringWidth(r);
+    float a = cover(abs(d0 - ringGap(r) - width * 0.5) - width * 0.5);
+    result = over(vec4(v_ring.rgb * a, a), result);
+  }
+  vec4 body;
   if (v_shape == 5.0) {
     // A ring: background inside, a stroke in the node's colour around it.
     float halfStroke = ringHalfStroke(r);
     float d = length(p) - r;
-    float stroke = cover(abs(d) - halfStroke);
+    float stroke = cover(abs(d) - halfStroke) * dashMask(p, v_style.x);
     float alpha = max(cover(d), stroke);
     vec3 colour = mix(u_background, v_colour.rgb, alpha > 0.0 ? stroke / alpha : 0.0);
-    alpha *= v_colour.a;
-    outColour = vec4(colour * alpha, alpha);
-    return;
+    body = vec4(colour * alpha, alpha);
+  } else {
+    float d = d0;
+    // Premultiplied, layer over layer: the fill (at its opacity), the icon, the border, the outline; then the
+    // shape's coverage.
+    vec4 colour = vec4(v_colour.rgb, 1.0) * v_style.z;
+    if (v_icon.w > 0.0) {
+      // The icon's box, 0 to 1 across; outside it, no icon.
+      vec2 q = p / (2.0 * v_icon.yz) + 0.5;
+      vec4 icon = texture(u_icons, vec3(mix(v_uv.xy, v_uv.zw, clamp(q, 0.0, 1.0)), v_icon.x));
+      vec2 inside = step(vec2(0.0), q) * step(q, vec2(1.0));
+      icon *= inside.x * inside.y * v_icon.w;
+      // A tile is its icon: its fill only shows while the icon is too small to.
+      if (v_shape == 6.0) colour *= 1.0 - v_icon.w;
+      colour = icon + colour * (1.0 - icon.a);
+    }
+    if (v_stroke.w > 0.0) {
+      // The border: the band v_stroke.w wide inside the shape's edge.
+      float band = (1.0 - cover(d + v_stroke.w)) * dashMask(p, v_style.x);
+      colour = mix(colour, vec4(v_stroke.rgb, 1.0), band);
+    }
+    float alpha;
+    if (u_outline > 0.0) {
+      // An outline in the background colour, centred on the shape's edge.
+      float halfLine = u_outline * 0.5;
+      alpha = cover(d - halfLine);
+      float line = cover(abs(d) - halfLine);
+      colour = mix(colour, vec4(u_background, 1.0), alpha > 0.0 ? line / alpha : 0.0);
+    } else alpha = cover(d);
+    body = colour * alpha;
   }
-  float d = shapeDistance(p, r, v_shape);
-  // Premultiplied, layer over layer: the fill, the icon, the border, the outline; then the shape's coverage.
-  vec4 colour = vec4(v_colour.rgb, 1.0);
-  if (v_icon.w > 0.0) {
-    // The icon's box, 0 to 1 across; outside it, no icon.
-    vec2 q = p / (2.0 * v_icon.yz) + 0.5;
-    vec4 icon = texture(u_icons, vec3(mix(v_uv.xy, v_uv.zw, clamp(q, 0.0, 1.0)), v_icon.x));
-    vec2 inside = step(vec2(0.0), q) * step(q, vec2(1.0));
-    icon *= inside.x * inside.y * v_icon.w;
-    // A tile is its icon: its fill only shows while the icon is too small to.
-    if (v_shape == 6.0) colour *= 1.0 - v_icon.w;
-    colour = icon + colour * (1.0 - icon.a);
+  result = over(body, result);
+  if (v_badge.y > 0.0) {
+    // The badge image: a disc of the background on the top-right diagonal, the image covering it, clipped round.
+    float at = r * ${float(MARKS.badgeAt)}, br = r * ${float(MARKS.badgeRadius)};
+    vec2 b = p - vec2(at, -at);
+    float a = cover(length(b) - br) * v_badge.y;
+    vec2 size = (v_badgeUv.zw - v_badgeUv.xy);
+    float aspect = size.y > 0.0 ? size.x / size.y : 1.0;
+    vec2 box = aspect >= 1.0 ? vec2(br * aspect, br) : vec2(br, br / aspect);
+    vec2 q = clamp(b / (2.0 * box) + 0.5, 0.0, 1.0);
+    vec4 icon = texture(u_icons, vec3(mix(v_badgeUv.xy, v_badgeUv.zw, q), v_badge.x));
+    vec4 disc = icon + vec4(u_background, 1.0) * (1.0 - icon.a);
+    result = over(disc * a, result);
   }
-  if (v_stroke.w > 0.0) {
-    // The border: the band v_stroke.w wide inside the shape's edge.
-    colour = mix(colour, vec4(v_stroke.rgb, 1.0), 1.0 - cover(d + v_stroke.w));
-  }
-  float alpha;
-  if (u_outline > 0.0) {
-    // An outline in the background colour, centred on the shape's edge.
-    float halfLine = u_outline * 0.5;
-    alpha = cover(d - halfLine);
-    float line = cover(abs(d) - halfLine);
-    colour = mix(colour, vec4(u_background, 1.0), alpha > 0.0 ? line / alpha : 0.0);
-  } else alpha = cover(d);
-  outColour = colour * alpha * v_colour.a;
+  outColour = result * v_colour.a;
 }`;
 
 /**

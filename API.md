@@ -143,6 +143,13 @@ the style still applies.
 | `strokeWidth` | `number` | The border's width, world px (0–100; default: the node option `strokeWidth`) |
 | `icon` | `string \| { width: number, height: number }` | An image drawn in the node: a URL, or an image already in hand (an HTMLImageElement, ImageBitmap, canvas…; only a URL survives toJSON) |
 | `badge` | `string` | Up to 12 characters in a pill at the node's top right ("!", "new"); top left when the node is collapsed (its "+N" takes the right) |
+| `badgeIcon` | `string \| { width: number, height: number }` | A small round image on the node's top right corner (a URL, or an image in hand): a mark, like a maker's stamp |
+| `strokeStyle` | `"solid" \| "dashed" \| "dotted"` | How the border is drawn (default solid) |
+| `opacity` | `number` | The fill's opacity, 0–1 (the border, icon and badge stay opaque) |
+| `ring` | `string` | A ring just outside the shape, "#rrggbb" |
+| `aura` | `string` | A soft glow round the shape, "#rrggbb" |
+| `stack` | `boolean` | A second copy of the shape peeks out behind it: there's more folded away here |
+| `pinLabel` | `boolean` | The label stays at any zoom, like a root's |
 
 <!-- /generated:node-style -->
 
@@ -151,7 +158,12 @@ the style still applies.
   px across on screen (fully by 12). A `tile` node is a rounded square that _is_ its icon, like an
   item in a game's inventory.
 - **Badges** sit in a pill at the node's top right. A collapsed node's fold mark ("+N", N nodes hidden below it)
-  takes the right, and the badge moves to the left.
+  takes the right, and the badge moves to the left. A `badgeIcon` is an image in a small disc on the top-right
+  corner instead (it shows once that disc is 8 CSS px across).
+- **Marks** round a node scale with it: a `ring` just outside the shape, an `aura` glowing round it, a `stack` (a
+  copy of the shape peeking out behind, up and to the right). `strokeStyle` dashes or dots the border evenly round
+  the shape; `opacity` fades only the fill. Marks take no room in layouts.
+- **`pinLabel`** keeps a node's label at any zoom, like the roots' and the selection's.
 
 **Edge style** (`edges[].style`):
 
