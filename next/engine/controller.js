@@ -900,7 +900,7 @@ export class GraphController {
     if (this.mode !== "static" || !this.modeOpts.dragSubtree) return [index];
     const out = [index];
     for (let k = 0; k < out.length; k++)
-      out.push(...this.graph.nodes[out[k]].children);
+      for (const c of this.graph.nodes[out[k]].children) out.push(c);
     return out;
   }
 

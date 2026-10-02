@@ -130,7 +130,8 @@ export function layeredLayout(
       }
     }
   }
-  const layerCount = n ? Math.max(...layerOf) + 1 : 0;
+  let layerCount = 0;
+  for (let v = 0; v < n; v++) layerCount = Math.max(layerCount, layerOf[v] + 1);
 
   // ---- 2b. references: a cross-link into a busy shared ingredient (used by shareMin or more) that would cross
   // layers ends instead at a reference to it, one layer below its source. Layout nodes: real nodes, then

@@ -870,7 +870,7 @@ export class GraphModel {
         edges: this.edges.length,
         roots: f.roots.length,
         depth: f.maxDepth,
-        layers: this.nodes.length ? Math.max(...d.longest) + 1 : 0,
+        layers: d.longest.reduce((m, l) => Math.max(m, l + 1), 0),
         crossLinks,
         sharedNodes: shared,
         maxInDegree: maxIn,

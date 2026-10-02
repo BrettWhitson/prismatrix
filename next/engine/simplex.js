@@ -128,7 +128,7 @@ export function networkSimplex(
         rank[v] += delta;
         members.push(v);
       }
-    stack.push(...members);
+    for (const v of members) stack.push(v);
     grow();
   }
 
