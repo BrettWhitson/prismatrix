@@ -20,7 +20,8 @@ const round = (v) => Math.round(v * 100) / 100;
  * @param {string} [note]         why it was taken ("button", "error: …")
  */
 export function takeSnapshot({ graph, settings, camera }, note = "") {
-  const state = {};
+  // Keyed by id with no prototype: an id like "__proto__" or "constructor" is just a key (JSON keeps it as one).
+  const state = Object.create(null);
   for (const n of graph.nodes)
     state[n.id] = {
       x: round(n.x),
@@ -58,11 +59,18 @@ export function snapshotModel(snapshot) {
   return GraphModel.from(snapshot.graph);
 }
 
-/** Put a snapshot's recorded layout state onto a working graph's nodes, by id. Nodes it doesn't mention keep theirs. */
+/**
+ * Put a snapshot's recorded layout state onto a working graph's nodes, by id. Nodes it doesn't mention keep theirs.
+ * `state` is an object by id (own keys only: "constructor" isn't every node's state) or a Map.
+ */
 export function applyState(graph, state) {
+  const stateOf =
+    state instanceof Map
+      ? (id) => state.get(id)
+      : (id) => (state && Object.hasOwn(state, id) ? state[id] : undefined);
   for (const n of graph.nodes) {
-    const s = state[n.id];
-    if (!s) continue;
+    const s = stateOf(n.id);
+    if (!s || typeof s !== "object") continue;
     n.x = s.x;
     n.y = s.y;
     n.homeX = s.homeX;

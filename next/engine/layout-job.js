@@ -42,7 +42,10 @@ export function sizingFrom({ widths, reach, height, gap, labels, collide }) {
   };
 }
 
-/** The structure of a working graph, for a worker: node count and edge ends, as typed arrays. */
+/**
+ * The structure of a working graph, for a worker: node count and edge ends, as typed arrays. The arrays are new
+ * each time and nothing else holds them, so they can be moved (transferred) to the worker rather than copied.
+ */
 export function structureOf(graph) {
   return {
     count: graph.nodes.length,
