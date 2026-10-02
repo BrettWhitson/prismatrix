@@ -22,7 +22,7 @@
 import { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
 import { footprint, labelAngle, reach } from "./boxes.js";
 import { departures, withGhosts } from "./ghosts.js";
-import { REFERENCE_SCALE, withReferences } from "./references.js";
+import { referenceRadius, withReferences } from "./references.js";
 import { Graph } from "./graph.js";
 import { GraphModel } from "./model.js";
 import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
@@ -1351,7 +1351,7 @@ export class GraphController {
       const s = ref.source;
       const rx = ref.x + m.x[s] - m.homeX[s],
         ry = ref.y + m.y[s] - m.homeY[s];
-      const r = m.radius[ref.target] * REFERENCE_SCALE;
+      const r = referenceRadius(ref, m.radius[ref.target]);
       if (Math.hypot(rx - p.x, ry - p.y) <= r * HIT_SCALE + slack)
         return { index: ref.target, reference: true };
     }
