@@ -8,7 +8,9 @@ export declare function endRooms(edge: any): {
   target: number;
 };
 /**
- * The points of an edge from `s` to `t` (anything with x and y).
+ * The points of an edge from `s` to `t` (anything with x and y). In a tree, a step or curve turns halfway between
+ * where it will leave `s` and reach `t` (`trimA`, `trimB` from each centre: past a label in the way), so the run
+ * across clears a big node's label.
  * @param {import("./layouts.js").Routing} routing
  * @param {"straight" | "step" | "fan" | "curve"} shape
  * @param {{ x: number, y: number } | null} [junction] fan only: where the parent's edges split (see fanJunctions)
@@ -23,7 +25,19 @@ export declare function edgePoints(
     x: number;
     y: number;
   } | null,
+  trimA?: number,
+  trimB?: number,
 ): number[];
+/**
+ * Where a tree step or curve from `a` to `b` (their positions along the tree's axis) turns: halfway between where it
+ * leaves `a` (trimA on) and reaches `b` (trimB short of it).
+ */
+export declare function turnAt(
+  a: any,
+  b: any,
+  trimA?: number,
+  trimB?: number,
+): number;
 /**
  * Where each parent's fan splits, from where its children are right now: a shared point on a short stub out of
  * the parent. In a tree the stub follows the tree's axis; in a radial it points at the children (the mean of the
@@ -83,6 +97,8 @@ export declare function edgeRoute(
   shape: any,
   e: any,
   junction?: any,
+  trimA?: number,
+  trimB?: number,
 ): any[];
 /**
  * How far a radial step edge has turned into a curve, 0 (a step round the ring) to 1 (a smooth curve). A step

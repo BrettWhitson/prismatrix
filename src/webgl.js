@@ -427,6 +427,7 @@ export class WebGLPainter {
         [2, 2, 4], // source, target
         [3, 3, 6], // target radius, size, kind
         [4, 3, 9], // colour
+        [6, 1, 12], // the other end's trim
       ],
       5,
     );

@@ -22,21 +22,41 @@ export function endRooms(edge) {
 }
 
 /**
- * The points of an edge from `s` to `t` (anything with x and y).
+ * The points of an edge from `s` to `t` (anything with x and y). In a tree, a step or curve turns halfway between
+ * where it will leave `s` and reach `t` (`trimA`, `trimB` from each centre: past a label in the way), so the run
+ * across clears a big node's label.
  * @param {import("./layouts.js").Routing} routing
  * @param {"straight" | "step" | "fan" | "curve"} shape
  * @param {{ x: number, y: number } | null} [junction] fan only: where the parent's edges split (see fanJunctions)
  * @returns {number[]} flat x, y pairs
  */
-export function edgePoints(routing, shape, s, t, junction = null) {
+export function edgePoints(
+  routing,
+  shape,
+  s,
+  t,
+  junction = null,
+  trimA = 0,
+  trimB = 0,
+) {
   if (shape === "fan")
     return junction
       ? [s.x, s.y, junction.x, junction.y, t.x, t.y]
       : [s.x, s.y, t.x, t.y];
   if (shape === "straight") return [s.x, s.y, t.x, t.y];
-  if (shape === "curve") return curve(routing, s, t);
-  if (routing.kind === "tree") return treeStep(routing.direction, s, t);
+  if (shape === "curve") return curve(routing, s, t, trimA, trimB);
+  if (routing.kind === "tree")
+    return treeStep(routing.direction, s, t, trimA, trimB);
   return radialStep(routing, s, t);
+}
+
+/**
+ * Where a tree step or curve from `a` to `b` (their positions along the tree's axis) turns: halfway between where it
+ * leaves `a` (trimA on) and reaches `b` (trimB short of it).
+ */
+export function turnAt(a, b, trimA = 0, trimB = 0) {
+  const sign = b >= a ? 1 : -1;
+  return (a + sign * trimA + b - sign * trimB) / 2;
 }
 
 /** Unit vector pointing away from the root in a tree. */
@@ -89,15 +109,15 @@ export function fanJunctions(graph, routing) {
  * A smooth S-curve. In a tree it leaves the parent along the tree's axis and arrives at the child the same way; in
  * a radial it leaves along the parent's spoke and arrives along the child's, bending at the ring halfway between.
  */
-function curve(routing, s, t) {
+function curve(routing, s, t, trimA = 0, trimB = 0) {
   let c1, c2;
   if (routing.kind === "tree") {
     if (routing.direction === "LR" || routing.direction === "RL") {
-      const mid = (s.x + t.x) / 2;
+      const mid = turnAt(s.x, t.x, trimA, trimB);
       c1 = [mid, s.y];
       c2 = [mid, t.y];
     } else {
-      const mid = (s.y + t.y) / 2;
+      const mid = turnAt(s.y, t.y, trimA, trimB);
       c1 = [s.x, mid];
       c2 = [t.x, mid];
     }
@@ -319,7 +339,15 @@ export function splineAt(t, p0, p1, p2, p3) {
  * The route of edge `e` in `graph`: a cross-link bundles along the tree (unless edges are straight), anything else
  * follows the edge shape.
  */
-export function edgeRoute(graph, routing, shape, e, junction = null) {
+export function edgeRoute(
+  graph,
+  routing,
+  shape,
+  e,
+  junction = null,
+  trimA = 0,
+  trimB = 0,
+) {
   if (routing.kind === "layered")
     return layeredPoints(
       routing,
@@ -327,6 +355,8 @@ export function edgeRoute(graph, routing, shape, e, junction = null) {
       e,
       graph.nodes[e.source],
       graph.nodes[e.target],
+      trimA,
+      trimB,
     );
   if (!e.tree && shape !== "straight") return bundledPoints(graph, e);
   return edgePoints(
@@ -335,6 +365,8 @@ export function edgeRoute(graph, routing, shape, e, junction = null) {
     graph.nodes[e.source],
     graph.nodes[e.target],
     junction,
+    trimA,
+    trimB,
   );
 }
 
@@ -343,7 +375,7 @@ export function edgeRoute(graph, routing, shape, e, junction = null) {
  * homes; when the ends move (a drag, physics), the bends move with them, each in proportion to how far along the
  * edge it is. Straight and fan draw a polyline; step and curve repeat the tree's step or curve between each pair.
  */
-function layeredPoints(routing, shape, e, s, t) {
+function layeredPoints(routing, shape, e, s, t, trimA = 0, trimB = 0) {
   const bends = routing.bends.get(e) ?? [];
   const k = bends.length;
   const dsx = s.x - (s.homeX ?? s.x),
@@ -364,22 +396,25 @@ function layeredPoints(routing, shape, e, s, t) {
   const tree = { kind: "tree", direction: routing.direction };
   const out = [];
   for (let i = 1; i < points.length; i++) {
+    // The first piece leaves the source, the last reaches the target; pieces between bends turn halfway.
+    const a = i === 1 ? trimA : 0,
+      b = i === points.length - 1 ? trimB : 0;
     const piece =
       shape === "step"
-        ? treeStep(routing.direction, points[i - 1], points[i])
-        : curve(tree, points[i - 1], points[i]);
+        ? treeStep(routing.direction, points[i - 1], points[i], a, b)
+        : curve(tree, points[i - 1], points[i], a, b);
     // Each piece starts where the last ended: keep that point once.
     out.push(...(i === 1 ? piece : piece.slice(2)));
   }
   return out;
 }
 
-function treeStep(direction, s, t) {
+function treeStep(direction, s, t, trimA = 0, trimB = 0) {
   if (direction === "LR" || direction === "RL") {
-    const mid = (s.x + t.x) / 2;
+    const mid = turnAt(s.x, t.x, trimA, trimB);
     return [s.x, s.y, mid, s.y, mid, t.y, t.x, t.y];
   }
-  const mid = (s.y + t.y) / 2;
+  const mid = turnAt(s.y, t.y, trimA, trimB);
   return [s.x, s.y, s.x, mid, t.x, mid, t.x, t.y];
 }
 
@@ -512,10 +547,12 @@ export function trimmedRoute(scene, ei, junctions, starts) {
     ? null
     : { x: jx, y: junctions[e.source * 2 + 1] };
   const ends = endRooms(edge);
+  const from = starts[ei] + ends.source,
+    to = endTrims(scene)[ei] + ends.target;
   return trim(
-    edgeRoute(graph, scene.routing, edge.shape, e, junction),
-    starts[ei] + ends.source,
-    endTrims(scene)[ei] + ends.target,
+    edgeRoute(graph, scene.routing, edge.shape, e, junction, from, to),
+    from,
+    to,
   );
 }
 

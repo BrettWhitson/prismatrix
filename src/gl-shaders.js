@@ -970,8 +970,9 @@ void treePart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   vec2 B = u_axis * stopAt(a_stopB, s, t);
   bool straight = u_shape == 0 || abs(B.x - A.x) < 1e-6;
   float sx = sign(B.x - A.x), sy = B.y >= A.y ? 1.0 : -1.0;
-  // Halfway between the stops themselves: the ends are pulled in off the nodes after (as the CPU trims after).
-  float mid = (A.y + B.y) * 0.5;
+  // Halfway between where it leaves A and reaches B (turnAt in geometry.js); the ends are pulled in off the nodes
+  // after (as the CPU trims after).
+  float mid = (A.y + sy * a_trim.x + B.y - sy * a_trim.y) * 0.5;
   vec2 cut = vec2(0.0, 1.0);
   if (straight) {
     vec2 d = B - A;
@@ -1231,6 +1232,7 @@ layout(location = 2) in vec2 a_nodes;
 layout(location = 3) in vec3 a_shape;  // target radius, size, kind
 layout(location = 4) in vec3 a_colour;
 layout(location = 5) in float a_alpha;
+layout(location = 6) in float a_far;   // how far the edge's other end is trimmed (where a curve turns: turnAt)
 ${COMMON_VERTEX}
 ${STOPS}
 ${CURVES}
@@ -1275,7 +1277,8 @@ void main() {
     if (u_shape == 0 || abs(B.x - A.x) < 1e-6) dir = normalize(to - from + TINY);
     else if (u_shape == 1) dir = transpose(u_axis) * vec2(0.0, B.y >= A.y ? 1.0 : -1.0);
     else {
-      float mid = (A.y + B.y) * 0.5;
+      float sy = B.y >= A.y ? 1.0 : -1.0;
+      float mid = (A.y + sy * a_far + B.y - sy * reach) * 0.5;
       vec2 p1 = vec2(A.x, mid), p2 = vec2(B.x, mid);
       float t1 = cubicCut(reach, A, p1, p2, B, true);
       dir = transpose(u_axis) * normalize(cubicTangent(t1, A, p1, p2, B) + TINY);

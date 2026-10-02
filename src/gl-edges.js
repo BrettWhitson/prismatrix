@@ -42,9 +42,9 @@ export const PIECE_STRIDE = 18;
 /**
  * Floats per edge end: the last stop before the node it's at (x, y, f, node?), the edge's other node and that node
  * (an end at the source names them the other way round, as if the edge ran backwards), how far the edge is cut off
- * that node, size, kind, r, g, b.
+ * that node, size, kind, r, g, b; how far the edge's other end is trimmed (where a tree curve turns).
  */
-export const TIP_STRIDE = 12;
+export const TIP_STRIDE = 13;
 /**
  * Floats per bundle span: its four control nodes, how far along the path each is (0–1), source, target, trims,
  * half-width, colour r, g, b, dash style, glow.
@@ -256,6 +256,7 @@ export function packPieces(scene, origin) {
       tips[o + 9] = rgb[0];
       tips[o + 10] = rgb[1];
       tips[o + 11] = rgb[2];
+      tips[o + 12] = backwards ? trimB : trimA;
       tipEdge[at] = ei;
     }
   }

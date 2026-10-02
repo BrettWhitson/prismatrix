@@ -64,6 +64,9 @@ Nothing from 0.4 carries over: an app moves to the new API ([API.md](API.md)). T
   and edges all go by the card. Theme tokens `card` and `cardBorder`.
 - **Edges clear their target's label too** (`endTrims`), as they already did their source's: in a bottom-to-top tree
   they no longer strike through the label of the node they come into.
+- **Tree steps and curves turn clear of labels:** the run across sits halfway between where an edge leaves its
+  parent (past its label) and where it reaches its child, not halfway between their centres, so it no longer cuts
+  through a big parent's label.
 - **Speed at 40k nodes:** edges are traced on the GPU from a positions texture, so a tree morph frame takes a few ms
   (105–199 ms when the CPU traced them; merged-tree morph frames are still 47–52 ms). Pans rebuild nothing;
   hover hit tests take 0.07 ms at 100k nodes; a restyle uploads only the bytes that changed.

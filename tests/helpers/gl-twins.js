@@ -312,8 +312,8 @@ export function piecePoints(shape, axis, a, b, trimA, trimB, corner) {
     return out.map(fromAxis);
   }
   const sy = Math.sign(B[1] - A[1]) || 1;
-  // Halfway between the stops themselves; the ends are pulled in off the nodes after.
-  const mid = (A[1] + B[1]) / 2;
+  // Halfway between where it leaves A and reaches B (turnAt); the ends are pulled in off the nodes after.
+  const mid = (A[1] + sy * trimA + B[1] - sy * trimB) / 2;
   if (shape === 2) {
     // The whole curve between the stops, leaving and arriving along the axis, cut where it's `trim` from each end.
     const p = [A, [A[0], mid], [B[0], mid], B];

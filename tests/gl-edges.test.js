@@ -6,7 +6,13 @@ import { Graph } from "../src/graph.js";
 import { GraphModel } from "../src/model.js";
 import { treeLayout } from "../src/layouts.js";
 import { layeredLayout } from "../src/layered.js";
-import { edgeRoute, rounded, stepCurveWeight, trim } from "../src/geometry.js";
+import {
+  edgeRoute,
+  rounded,
+  stepCurveWeight,
+  trim,
+  turnAt,
+} from "../src/geometry.js";
 import { looksOf } from "../src/render.js";
 import { EDGE_OPTIONS, NODE_OPTIONS } from "../src/style.js";
 import { resolve } from "../src/schema.js";
@@ -81,11 +87,15 @@ test("the GPU's step, curve and straight pieces trace the CPU's routes, trimmed 
           [0, 0],
           [6, 10],
         ]) {
-          let cpu = edgeRoute({ nodes: [s, t] }, routing, shape, {
-            source: 0,
-            target: 1,
-            tree: true,
-          });
+          let cpu = edgeRoute(
+            { nodes: [s, t] },
+            routing,
+            shape,
+            { source: 0, target: 1, tree: true },
+            null,
+            trimA,
+            trimB,
+          );
           cpu = trim(cpu, trimA, trimB);
           if (shape === "step") cpu = rounded(cpu, 8);
           const gpu = piecePoints(
@@ -498,4 +508,26 @@ test("zoomed out, bundle spans are drawn with fewer capsules, never more than a 
       `zoom ${zoom}: ${steps} capsules a span are ${worst.toFixed(2)} screen px off`,
     );
   }
+});
+
+test("a tree step turns halfway between where it leaves and where it arrives, so it clears a big parent's label", () => {
+  // A parent at 0 whose label reaches 50 below it, a child at 100: the run across sits below the label.
+  assert.equal(turnAt(0, 100), 50);
+  assert.equal(turnAt(0, 100, 50, 10), 70);
+  assert.equal(turnAt(100, 0, 50, 10), 30, "the other way up");
+  const route = edgeRoute(
+    {
+      nodes: [
+        { x: 0, y: 0 },
+        { x: 80, y: 100 },
+      ],
+    },
+    { kind: "tree", direction: "TB" },
+    "step",
+    { source: 0, target: 1, tree: true },
+    null,
+    50,
+    10,
+  );
+  assert.deepEqual(route, [0, 0, 0, 70, 80, 70, 80, 100]);
 });
