@@ -31,7 +31,13 @@ import {
   packHalos,
   packNodes,
   parseColour,
+  patchEdges,
+  patchNodes,
+  runsOf,
 } from "./gl-pack.js";
+import { IconAtlas } from "./gl-icons.js";
+import { iconStore } from "./icons.js";
+import { DEFAULT_THEME } from "./theme.js";
 import {
   BUNDLE_TIP_STRIDE,
   PIECE_POINTS,
@@ -44,6 +50,7 @@ import {
   gpuEdges,
   packPieces,
   packPositions,
+  restylePieces,
 } from "./gl-edges.js";
 import { BUNDLE_STEPS, BUNDLE_STRENGTH } from "./geometry.js";
 import {
@@ -73,8 +80,32 @@ export {
   parseColour,
 } from "./gl-pack.js";
 
-/** Label text colour. */
-const LABEL_COLOUR = "#d5d9e4";
+/** The texture unit the icon atlas is bound to (labels use 0, the positions texture 1). */
+const ICON_UNIT = 2;
+
+/**
+ * Which nodes and edges to restyle in place since style version `from` (the restyle log the view keeps on its
+ * scene: `restyles`, newest last, each `{ version, nodes, edges }`), or null when that can't be told (a restyle of
+ * everything, or one the log no longer holds): then everything is built again.
+ * @returns {{ nodes: Int32Array, edges: Int32Array } | null}
+ */
+export function restylesSince(restyles, from, to) {
+  if (!restyles?.length) return null;
+  const since = restyles.filter((r) => r.version > from && r.version <= to);
+  // Every restyle in between, one per version.
+  if (!since.length || since.length !== to - from) return null;
+  const nodes = new Set(),
+    edges = new Set();
+  for (const r of since) {
+    if (!r.nodes || !r.edges) return null;
+    for (const i of r.nodes) nodes.add(i);
+    for (const i of r.edges) edges.add(i);
+  }
+  return {
+    nodes: Int32Array.from(nodes).sort(),
+    edges: Int32Array.from(edges).sort(),
+  };
+}
 
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
@@ -202,6 +233,21 @@ class InstancedQuads {
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, count * this.stride);
   }
 
+  /** Just instances `runs` ([first, end) each) of `data`, into a buffer already holding the rest. */
+  uploadRuns(data, runs) {
+    if (!runs.length) return;
+    const { gl, stride } = this;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    for (const [first, end] of runs)
+      gl.bufferSubData(
+        gl.ARRAY_BUFFER,
+        first * stride * 4,
+        data,
+        first * stride,
+        (end - first) * stride,
+      );
+  }
+
   /** Draw instances [first, end), each of `vertices` vertices (default: as constructed). */
   draw(first, end, vertices = this.vertices) {
     if (end <= first) return;
@@ -215,8 +261,9 @@ class InstancedQuads {
 
 /** Background, edges and nodes, drawn with WebGL2 on one canvas. */
 class GLLayer {
-  constructor(canvas) {
+  constructor(canvas, icons = iconStore()) {
     this.canvas = canvas;
+    this.icons = icons;
     this.lost = false;
     this.edgeData = {};
     this.nodeData = null;
@@ -266,7 +313,12 @@ class GLLayer {
       [2, 1, 2], // radius
       [3, 4, 3], // colour
       [4, 1, 7], // shape
+      [5, 4, 8], // border
+      [6, 4, 12], // icon rectangle
+      [7, 3, 16], // icon page, box
     ];
+    // A new context has none of the old one's textures: icons are copied in again as nodes ask for them.
+    this.iconAtlas = new IconAtlas(gl, this.icons);
     this.nodes = new InstancedQuads(gl, corners, NODE_STRIDE, nodeLayout);
     // Selection halos: the selected nodes, packed as nodes are.
     this.halos = new InstancedQuads(gl, corners, NODE_STRIDE, nodeLayout);
@@ -442,7 +494,9 @@ class GLLayer {
     this.scene = scene;
     if (this.lost) return;
     const { gl } = this;
-    const { edge, node, background, graph } = scene;
+    const { edge, node, graph } = scene;
+    const background =
+      scene.background ?? (scene.theme ?? DEFAULT_THEME).background;
     this.#readTimers();
     const bg = parseColour(background);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -458,6 +512,14 @@ class GLLayer {
     const base = scene.matrix ?? graph;
     const nodeCount = graph.nodes.length,
       edgeCount = graph.edges.length;
+    // A restyle of a few nodes and edges (the scene's restyle log) is patched into the buffers built before it; one
+    // the log can't account for rebuilds everything.
+    let restyle = null;
+    const styled = this.built?.styleVersion;
+    if (styled !== undefined && scene.styleVersion !== styled) {
+      restyle = restylesSince(scene.restyles, styled, scene.styleVersion);
+      if (!restyle) this.geometry = null;
+    }
     // The origin and the GPU's edge pieces change only with the layout, the styles or the graph itself.
     const gpu = gpuEdges(scene);
     const geometry = this.geometry;
@@ -508,6 +570,39 @@ class GLLayer {
       );
       this.segments.upload(this.edgeData.segments, this.edgeData.segmentCount);
       this.ends.upload(this.edgeData.ends, this.edgeData.endCount);
+    } else if (restyle?.edges.length) {
+      const runs = patchEdges(scene, this.edgeData, restyle.edges, this.origin);
+      this.segments.uploadRuns(this.edgeData.segments, runs.segments);
+      this.ends.uploadRuns(this.edgeData.ends, runs.ends);
+    }
+    if (restyle?.edges.length && this.gpu && !regeometry) {
+      const dirty = new Uint8Array(edgeCount);
+      for (const i of restyle.edges) dirty[i] = 1;
+      const g = this.gpu.data;
+      const runs = restylePieces(scene, g, dirty);
+      this.pieces.uploadRuns(g.pieces, runs.pieces);
+      this.tips.uploadRuns(g.tips, runs.tips);
+      this.spans.uploadRuns(g.spans, runs.spans);
+      this.bundleTips.uploadRuns(g.bundleTips, runs.bundleTips);
+    }
+    // Icons that came in since the last frame go into the atlas as their nodes are packed again.
+    const iconsArrived = this.iconsArrived;
+    this.iconsArrived = false;
+    if (shaded || iconsArrived) this.#packNodes(scene);
+    else if (restyle) {
+      // The restyled nodes, and the display-only ones past the real graph (references take their ingredient's
+      // colour).
+      const real = Math.min(scene.matrix?.count ?? nodeCount, nodeCount);
+      const indices = [...restyle.nodes];
+      for (let i = real; i < nodeCount; i++) indices.push(i);
+      const moved = this.iconAtlas.moved;
+      const iconAt = (source) => this.iconAtlas.lookup(source);
+      patchNodes(scene, this.nodeData, indices, this.origin, iconAt);
+      // An icon that came in grew the atlas: every node's icon rectangle changed.
+      if (this.iconAtlas.moved !== moved) this.#packNodes(scene);
+      else this.nodes.uploadRuns(this.nodeData, runsOf(indices));
+      this.haloData = packHalos(scene, this.haloData.data, this.origin);
+      this.halos.upload(this.haloData.data, this.haloData.count);
     }
     if (shaded) {
       // Each edge's brightness; the GPU's pieces and spans take it again only when it changed (or they did).
@@ -535,8 +630,6 @@ class GLLayer {
       );
       this.ends.uploadAlpha(this.brightness.endAlpha, this.edgeData.endCount);
       if (this.gpu && changed) this.#shadePieces(perEdge);
-      this.nodeData = packNodes(scene, this.nodeData, this.origin);
-      this.nodes.upload(this.nodeData, nodeCount);
       this.haloData = packHalos(scene, this.haloData.data, this.origin);
       this.halos.upload(this.haloData.data, this.haloData.count);
     }
@@ -544,6 +637,7 @@ class GLLayer {
       version: scene.version,
       shadeVersion: scene.shadeVersion,
       selectionVersion: scene.selectionVersion,
+      styleVersion: scene.styleVersion,
       base,
       nodes: nodeCount,
       edges: edgeCount,
@@ -587,6 +681,8 @@ class GLLayer {
     const u = this.#use(this.nodeProgram, scene);
     gl.uniform1f(u.u_outline, node.outline);
     gl.uniform3f(u.u_background, ...bg);
+    this.iconAtlas.bind(ICON_UNIT);
+    gl.uniform1i(u.u_icons, ICON_UNIT);
     this.nodes.draw(0, nodeCount);
     if (this.haloData.count) {
       // Selected nodes: a ring a few screen px outside each.
@@ -599,6 +695,21 @@ class GLLayer {
     this.#time("labels");
     this.#drawLabels(scene, shaded);
     this.#time(null);
+  }
+
+  /**
+   * Every node into the node buffer, icons copied into the atlas as nodes ask for them. If one grows the atlas
+   * (every icon's rectangle changes), the nodes packed before it are packed again.
+   */
+  #packNodes(scene) {
+    const atlas = this.iconAtlas;
+    const iconAt = (source) => atlas.lookup(source);
+    for (let pass = 0; pass < 2; pass++) {
+      const moved = atlas.moved;
+      this.nodeData = packNodes(scene, this.nodeData, this.origin, iconAt);
+      if (atlas.moved === moved) break;
+    }
+    this.nodes.upload(this.nodeData, scene.graph.nodes.length);
   }
 
   /** The GPU's pieces, spans and ends take each edge's brightness. */
@@ -762,7 +873,10 @@ class GLLayer {
     }
     this.pending = this.labelPending;
     const u = this.#use(this.labelProgram, scene);
-    gl.uniform3f(u.u_colour, ...parseColour(LABEL_COLOUR));
+    gl.uniform3f(
+      u.u_colour,
+      ...parseColour((scene.theme ?? DEFAULT_THEME).text),
+    );
     gl.uniform1i(u.u_atlas, 0);
     gl.activeTexture(gl.TEXTURE0);
     for (const group of this.labelGroups) {
@@ -825,6 +939,7 @@ class GLLayer {
 
   dispose() {
     this.labelLayer?.dispose();
+    this.iconAtlas?.dispose();
     this.gl.getExtension("WEBGL_lose_context")?.loseContext();
   }
 }
@@ -858,8 +973,15 @@ function originOf(scene) {
  * take the pointer.
  */
 export class WebGLPainter {
-  constructor(canvas) {
+  /**
+   * @param {HTMLCanvasElement} canvas
+   * @param {{ icons?: import("./icons.js").IconStore }} [options] where icons come from (default: the page's shared
+   *   store)
+   */
+  constructor(canvas, { icons = iconStore() } = {}) {
     this.name = "webgl";
+    /** Set by the renderer: asks for a frame (an icon came in). */
+    this.wake = null;
     this.top = canvas;
     this.topCtx = canvas.getContext("2d");
     this.glCanvas = document.createElement("canvas");
@@ -872,7 +994,11 @@ export class WebGLPainter {
     this.previousPosition = canvas.style.position;
     if (getComputedStyle(canvas).position === "static")
       canvas.style.position = "relative";
-    this.layer = new GLLayer(this.glCanvas);
+    this.layer = new GLLayer(this.glCanvas, icons);
+    this.unlisten = icons.onReady(() => {
+      this.layer.iconsArrived = true;
+      this.wake?.();
+    });
   }
 
   resize(width, height, dpr) {
@@ -923,6 +1049,7 @@ export class WebGLPainter {
   }
 
   dispose() {
+    this.unlisten();
     this.layer.dispose();
     this.glCanvas.remove();
     this.top.style.position = this.previousPosition;

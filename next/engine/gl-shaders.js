@@ -8,6 +8,12 @@
 // reaches.
 
 import { BUNDLE_STEPS } from "./geometry.js";
+import {
+  ICON_FADE_PX,
+  ICON_MIN_PX,
+  ROUNDED_CORNER,
+  TILE_CORNER,
+} from "./icons.js";
 
 /** World position to clip space, and the coverage of a pixel whose centre is d world px outside an edge. */
 const COMMON_VERTEX = `
@@ -28,12 +34,19 @@ float cover(float d) {
   return clamp(0.5 - d / u_pixel, 0.0, 1.0);
 }`;
 
+/**
+ * A node: its shape filled, its icon (a layer of the icon atlas, a texture array) in its box and clipped to the
+ * shape, a border inside the shape's edge, and the outline. Instances as packNodes packs them.
+ */
 export const NODE_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec2 a_centre;
 layout(location = 2) in float a_radius;
 layout(location = 3) in vec4 a_colour;
 layout(location = 4) in float a_shape;
+layout(location = 5) in vec4 a_stroke;  // colour r, g, b, width (world px, 0 for none)
+layout(location = 6) in vec4 a_uv;      // the icon's rectangle in its atlas page
+layout(location = 7) in vec3 a_icon;    // page (-1 for no icon), half the icon box's width and height
 ${COMMON_VERTEX}
 uniform float u_outline;
 
@@ -41,6 +54,9 @@ out vec2 v_local;
 flat out float v_radius;
 flat out vec4 v_colour;
 flat out float v_shape;
+flat out vec4 v_stroke;
+flat out vec4 v_uv;
+flat out vec4 v_icon;  // page, box half width, box half height, how much of the icon shows
 
 void main() {
   float reach = a_shape == 3.0 ? 1.25 : a_shape == 4.0 ? 1.1 : 1.0;
@@ -53,6 +69,11 @@ void main() {
   v_radius = a_radius;
   v_colour = a_colour;
   v_shape = a_shape;
+  v_stroke = a_stroke;
+  v_uv = a_uv;
+  // Icons fade in from ICON_MIN_PX across on screen to ICON_MIN_PX + ICON_FADE_PX (iconShown in icons.js).
+  float shown = clamp((2.0 * a_radius * u_camera.z - ${ICON_MIN_PX.toFixed(1)}) / ${ICON_FADE_PX.toFixed(1)}, 0.0, 1.0);
+  v_icon = vec4(a_icon, a_icon.x < 0.0 ? 0.0 : shown);
 }`;
 
 /**
@@ -92,7 +113,8 @@ float diamond(vec2 p, float r) {
 
 float shapeDistance(vec2 p, float r, float shape) {
   return shape == 1.0 ? box(p, vec2(r))
-    : shape == 2.0 ? roundedBox(p, vec2(r), r * 0.45)
+    : shape == 2.0 ? roundedBox(p, vec2(r), r * ${ROUNDED_CORNER.toFixed(3)})
+    : shape == 6.0 ? roundedBox(p, vec2(r), r * ${TILE_CORNER.toFixed(3)})
     : shape == 3.0 ? diamond(p, r * 1.25)
     : shape == 4.0 ? hexagon(p, r * 1.1)
     : length(p) - r;
@@ -113,36 +135,56 @@ in vec2 v_local;
 flat in float v_radius;
 flat in vec4 v_colour;
 flat in float v_shape;
+flat in vec4 v_stroke;
+flat in vec4 v_uv;
+flat in vec4 v_icon;
 ${COMMON_FRAGMENT}
 ${NODE_SHAPES}
 uniform float u_outline;
 uniform vec3 u_background;
+uniform mediump sampler2DArray u_icons;
 out vec4 outColour;
 
 void main() {
   vec2 p = v_local;
   float r = v_radius;
-  vec3 colour = v_colour.rgb;
-  float alpha;
   if (v_shape == 5.0) {
     // A ring: background inside, a stroke in the node's colour around it.
     float halfStroke = ringHalfStroke(r);
     float d = length(p) - r;
     float stroke = cover(abs(d) - halfStroke);
-    alpha = max(cover(d), stroke);
-    colour = mix(u_background, colour, alpha > 0.0 ? stroke / alpha : 0.0);
-  } else {
-    float d = shapeDistance(p, r, v_shape);
-    if (u_outline > 0.0) {
-      // An outline in the background colour, centred on the shape's edge.
-      float halfLine = u_outline * 0.5;
-      alpha = cover(d - halfLine);
-      float line = cover(abs(d) - halfLine);
-      colour = mix(colour, u_background, alpha > 0.0 ? line / alpha : 0.0);
-    } else alpha = cover(d);
+    float alpha = max(cover(d), stroke);
+    vec3 colour = mix(u_background, v_colour.rgb, alpha > 0.0 ? stroke / alpha : 0.0);
+    alpha *= v_colour.a;
+    outColour = vec4(colour * alpha, alpha);
+    return;
   }
-  alpha *= v_colour.a;
-  outColour = vec4(colour * alpha, alpha);
+  float d = shapeDistance(p, r, v_shape);
+  // Premultiplied, layer over layer: the fill, the icon, the border, the outline; then the shape's coverage.
+  vec4 colour = vec4(v_colour.rgb, 1.0);
+  if (v_icon.w > 0.0) {
+    // The icon's box, 0 to 1 across; outside it, no icon.
+    vec2 q = p / (2.0 * v_icon.yz) + 0.5;
+    vec4 icon = texture(u_icons, vec3(mix(v_uv.xy, v_uv.zw, clamp(q, 0.0, 1.0)), v_icon.x));
+    vec2 inside = step(vec2(0.0), q) * step(q, vec2(1.0));
+    icon *= inside.x * inside.y * v_icon.w;
+    // A tile is its icon: its fill only shows while the icon is too small to.
+    if (v_shape == 6.0) colour *= 1.0 - v_icon.w;
+    colour = icon + colour * (1.0 - icon.a);
+  }
+  if (v_stroke.w > 0.0) {
+    // The border: the band v_stroke.w wide inside the shape's edge.
+    colour = mix(colour, vec4(v_stroke.rgb, 1.0), 1.0 - cover(d + v_stroke.w));
+  }
+  float alpha;
+  if (u_outline > 0.0) {
+    // An outline in the background colour, centred on the shape's edge.
+    float halfLine = u_outline * 0.5;
+    alpha = cover(d - halfLine);
+    float line = cover(abs(d) - halfLine);
+    colour = mix(colour, vec4(u_background, 1.0), alpha > 0.0 ? line / alpha : 0.0);
+  } else alpha = cover(d);
+  outColour = colour * alpha * v_colour.a;
 }`;
 
 /**

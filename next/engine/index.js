@@ -22,6 +22,8 @@ export {
   physicsOptions,
 } from "./physics.js";
 export { NODE_OPTIONS, EDGE_OPTIONS, PALETTE } from "./style.js";
+export { THEMES, resolveTheme, contrast } from "./theme.js";
+export { IconStore, iconStore, ICON_MIN_PX } from "./icons.js";
 export { edgePoints, fanJunctions, trim } from "./geometry.js";
 export { footprint, labelAnchor, labelAngle } from "./boxes.js";
 export { defaultsOf, resolve } from "./schema.js";

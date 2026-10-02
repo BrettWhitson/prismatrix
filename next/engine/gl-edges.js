@@ -10,7 +10,7 @@
 // positions texture's contents, and `piecePoints`, `radialPiecePoints`, `bundleSpanCapsules` and `bundleTip`, the
 // same geometry as the shaders in JavaScript (so tests can check it against the CPU's own edge routes). Pure: no GL.
 
-import { parseColour } from "./gl-pack.js";
+import { parseColour, runsOf } from "./gl-pack.js";
 import { BUNDLE_STEPS, bundlePath, stepCurveWeight } from "./geometry.js";
 
 /** Points along each piece: the shader draws the capsules between consecutive ones. */
@@ -646,4 +646,63 @@ export function piecePoints(shape, axis, a, b, trimA, trimB, corner) {
   }
   out[PIECE_POINTS - 1] = B;
   return out.map(fromAxis);
+}
+
+/**
+ * New looks for some edges (`dirty`: a flag per edge index) in GPU data from packPieces, in place: their colour and
+ * half-width, all a restyle can change without a new layout. Returns, for each kind of instance (pieces, tips,
+ * spans, bundleTips), the runs [first, end) that changed, for uploading just those.
+ * @param {object} scene
+ * @param {ReturnType<typeof packPieces>} data
+ * @param {Uint8Array} dirty
+ * @returns {Record<string, [number, number][]>}
+ */
+export function restylePieces(scene, data, dirty) {
+  const { looks } = scene;
+  const colours = new Map();
+  const colour = (hex) => {
+    let rgb = colours.get(hex);
+    if (!rgb) colours.set(hex, (rgb = parseColour(hex)));
+    return rgb;
+  };
+  const kinds = [
+    // kind, instances, their edges, count, stride, half-width at (-1: none), colour at
+    [
+      "pieces",
+      data.pieces,
+      data.pieceEdge,
+      data.pieceCount,
+      PIECE_STRIDE,
+      12,
+      13,
+    ],
+    ["tips", data.tips, data.tipEdge, data.tipCount, TIP_STRIDE, -1, 9],
+    ["spans", data.spans, data.spanEdge, data.spanCount, SPAN_STRIDE, 12, 13],
+    [
+      "bundleTips",
+      data.bundleTips,
+      data.bundleTipEdge,
+      data.bundleTipCount,
+      BUNDLE_TIP_STRIDE,
+      -1,
+      13,
+    ],
+  ];
+  const out = {};
+  for (const [kind, values, edges, count, stride, half, at] of kinds) {
+    const changed = [];
+    for (let i = 0; i < count; i++) {
+      const e = edges[i];
+      if (!dirty[e]) continue;
+      const o = i * stride;
+      if (half >= 0) values[o + half] = looks.edgeWidth[e] / 2;
+      const rgb = colour(looks.edgeColour[e]);
+      values[o + at] = rgb[0];
+      values[o + at + 1] = rgb[1];
+      values[o + at + 2] = rgb[2];
+      changed.push(i);
+    }
+    out[kind] = runsOf(changed);
+  }
+  return out;
 }

@@ -28,7 +28,8 @@ import { GraphModel } from "./model.js";
 import { applyState, snapshotModel, takeSnapshot } from "./snapshot.js";
 import { LAYOUTS, constrainer } from "./layouts.js";
 import { Simulation, physicsOptions } from "./physics.js";
-import { looksOf } from "./render.js";
+import { looksOf, patchLooks } from "./render.js";
+import { THEMES, resolveTheme } from "./theme.js";
 import { runLayout, unpackRouting } from "./layout-job.js";
 import { Layouter } from "./layouter.js";
 import { resolve } from "./schema.js";
@@ -40,7 +41,11 @@ import { arrive, fade, morph, morphFrom, progress } from "./transitions.js";
 export { alongRings } from "./transitions.js";
 export { looksLikeTrackpad } from "./gestures.js";
 
-export const BACKGROUND = "#0e1016";
+/** The dark theme's background (themes: theme.js). */
+export const BACKGROUND = THEMES.dark.background;
+
+/** Restyles the scene's log keeps (see #restyle): a painter further behind than this rebuilds everything. */
+const RESTYLE_LOG = 16;
 
 /**
  * @typedef {object} TickResult
@@ -68,6 +73,7 @@ export const BACKGROUND = "#0e1016";
  *   zooms with a mouse wheel and pans with a trackpad; a pinch (ctrl+wheel) always zooms
  * @property {boolean} [tapSelects]      a tap selects the node under it (shift, ctrl or cmd: adds or removes it) and a
  *   tap on empty space clears the selection (default true)
+ * @property {"dark" | "light" | object} [theme] the colours the engine picks itself (see theme.js; default "dark")
  */
 
 export class GraphController {
@@ -95,8 +101,14 @@ export class GraphController {
       workerUrl,
       wheel = "auto",
       tapSelects = true,
+      theme,
     } = {},
   ) {
+    this.theme = resolveTheme(theme);
+    // Restyles of a few nodes and edges, newest last, for painters to patch their buffers by: { version, nodes,
+    // edges } (indices; null for a restyle of everything), version being styleVersion after it.
+    this.styleVersion = 0;
+    this.restyles = [];
     this.onEvent = onEvent;
     this.onFrame = onFrame;
     this.onChange = onChange;
@@ -165,7 +177,7 @@ export class GraphController {
     this.unlisten = this.model.onChange((change) => this.#onModel(change));
     this.graph = new Graph(); // empty until the first layout below
     this.#carry(null, null);
-    this.looks = looksOf(this.graph, this.node, this.edge);
+    this.looks = looksOf(this.graph, this.node, this.edge, this.theme);
     this.routing = { kind: "tree", direction: "TB" };
     this.homeBox = null;
     this.layouter = new Layouter({
@@ -265,7 +277,7 @@ export class GraphController {
     // Data alone (a price, a rarity): nothing is drawn differently and nothing moves. No frame, no rebuild.
     if (change.dataOnly) return this.#emit("graphData", counts);
     if (change.sizes) this.#relayout({ fit: null });
-    else this.#restyle();
+    else this.#restyle(change);
     this.#emit("graphRestyle", counts);
   }
 
@@ -302,12 +314,49 @@ export class GraphController {
     });
   }
 
-  /** Looks changed, nothing moved: new colours and sizes for the renderer. */
-  #restyle() {
-    this.looks = looksOf(this.graph, this.node, this.edge);
-    this.version++;
-    this.geometryVersion++;
+  /**
+   * Looks changed, nothing moved: new colours and sizes for the renderer. A model change that restyled some nodes
+   * and edges (`change`) redoes just their looks and logs which (`restyles`), so painters patch just those; anything
+   * else (new options, a theme) redoes every look.
+   */
+  #restyle(change = null) {
+    const { graph, model } = this;
+    this.styleVersion++;
+    let nodes = null,
+      edges = null;
+    if (
+      change &&
+      graph.model === model &&
+      graph.structure === model.structureVersion
+    ) {
+      const done = patchLooks(
+        this.looks,
+        graph,
+        this.node,
+        this.edge,
+        change.nodesRestyled.map((id) => model.index.get(id)),
+        change.edgesRestyled.map((id) => model.edgeIndex.get(id)),
+      );
+      ({ nodes, edges } = done);
+    } else {
+      this.looks = looksOf(graph, this.node, this.edge, this.theme);
+      this.version++;
+      this.geometryVersion++;
+    }
+    this.restyles.push({ version: this.styleVersion, nodes, edges });
+    if (this.restyles.length > RESTYLE_LOG) this.restyles.shift();
     this.#changed();
+  }
+
+  /**
+   * The colours the engine picks itself: "dark", "light", or an object of colours over one of them (theme.js).
+   * Graph and option colours that were set stay as they are.
+   */
+  setTheme(theme) {
+    this.theme = resolveTheme(theme);
+    this.#restyle();
+    this.#emit("theme", { name: this.theme.name });
+    return this.theme;
   }
 
   /** Replace the graph: the model takes `input` (JSON, or another model's graph) and keeps what's unchanged. */
@@ -812,6 +861,7 @@ export class GraphController {
       c.shade === this.shade &&
       c.appear === this.appear &&
       c.version === this.version &&
+      c.styleVersion === this.styleVersion &&
       c.shadeVersion === this.shadeVersion &&
       c.geometryVersion === this.geometryVersion
     )
@@ -828,6 +878,7 @@ export class GraphController {
       shade: this.shade,
       appear: this.appear,
       version: this.version,
+      styleVersion: this.styleVersion,
       shadeVersion: this.shadeVersion,
       geometryVersion: this.geometryVersion,
       shown,
@@ -876,7 +927,7 @@ export class GraphController {
     this.routing = unpackRouting(result.routing, this.graph);
     this.version++;
     this.geometryVersion++;
-    this.looks = looksOf(this.graph, this.node, this.edge);
+    this.looks = looksOf(this.graph, this.node, this.edge, this.theme);
     this.#placeLabels(job.spec);
     this.homeBox = cam.footprints(this.graph.matrix, true);
     this.#configureSim();
@@ -1101,7 +1152,11 @@ export class GraphController {
       width: this.width,
       height: this.height,
       dpr: this.dpr,
-      background: BACKGROUND,
+      theme: this.theme,
+      background: this.theme.background,
+      // Restyles of a few nodes and edges since a painter last drew: see #restyle.
+      styleVersion: this.styleVersion,
+      restyles: this.restyles,
     };
     busy ||= this.pointers.size > 0;
     if (!this.#isSettled()) this.calm = false;

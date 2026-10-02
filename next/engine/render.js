@@ -2,60 +2,110 @@
 
 import { labelAnchor, reach } from "./boxes.js";
 import { edgeRoute, fanJunctions, trim } from "./geometry.js";
-import { PALETTE } from "./style.js";
+import {
+  ROUNDED_CORNER,
+  TILE_CORNER,
+  iconBox,
+  iconShown,
+  iconStore,
+} from "./icons.js";
+import {
+  DEFAULT_THEME,
+  EDGE_COLOUR_DEFAULT,
+  NODE_COLOUR_DEFAULT,
+} from "./theme.js";
 
 /**
  * How every node and edge looks: each element's own `style` (from the model) first, then the view's node and edge
- * options (sizing, colouring rules, defaults).
- * @returns {{ radius: Float64Array, fill: string[], shape: string[], edgeColour: string[], edgeWidth: Float64Array,
- *   edgeDefault: { colour: string, width: number, byTarget: boolean } }}
+ * options (sizing, colouring rules, defaults), then the theme (the palette, and the colours of options left at their
+ * defaults). Per node: radius, fill, shape, stroke colour (null for none) and width, icon (a URL or an image, null
+ * for none). Per edge: colour and width. patchLooks redoes some of them in place.
+ * @returns {{ radius: Float64Array, fill: string[], shape: string[], stroke: (string | null)[],
+ *   strokeWidth: Float64Array, icon: any[], edgeColour: string[], edgeWidth: Float64Array,
+ *   edgeDefault: { colour: string, width: number, byTarget: boolean }, theme: object, iconFit: string,
+ *   branch: Int32Array | null }}
  */
-export function looksOf(graph, node, edge) {
+export function looksOf(graph, node, edge, theme = DEFAULT_THEME) {
   const count = graph.nodes.length;
-  const radius = new Float64Array(count);
-  const fill = new Array(count);
-  const shape = new Array(count);
-  const branch = branches(graph);
-  for (const n of graph.nodes) {
-    const style = n.style ?? {};
-    let scale = 1;
-    if (node.sizeBy === "descendants")
-      scale = 1 + 0.35 * Math.log2(1 + n.descendants);
-    else if (node.sizeBy === "depth") scale = Math.max(0.4, 1 - n.depth * 0.14);
-    radius[n.index] =
-      style.size !== undefined ? style.size / 2 : (node.size / 2) * scale;
-    shape[n.index] = style.shape ?? node.shape;
-    fill[n.index] =
-      style.color ??
-      (node.colorBy === "single"
-        ? node.color
-        : node.colorBy === "branch"
-          ? n.depth === 0
-            ? "#e6e9f2"
-            : PALETTE[branch[n.index] % PALETTE.length]
-          : PALETTE[n.depth % PALETTE.length]);
-  }
-  const edgeColour = graph.edges.map(
-    (e) =>
-      e.style?.color ??
-      (edge.colorBy === "target" ? fill[e.target] : edge.color),
-  );
-  const edgeWidth = Float64Array.from(
-    graph.edges,
-    (e) => e.style?.width ?? edge.width,
-  );
-  return {
-    radius,
-    fill,
-    shape,
-    edgeColour,
-    edgeWidth,
+  const looks = {
+    radius: new Float64Array(count),
+    fill: new Array(count),
+    shape: new Array(count),
+    stroke: new Array(count),
+    strokeWidth: new Float64Array(count),
+    icon: new Array(count),
+    edgeColour: new Array(graph.edges.length),
+    edgeWidth: new Float64Array(graph.edges.length),
     edgeDefault: {
-      colour: edge.color,
+      colour: edge.color === EDGE_COLOUR_DEFAULT ? theme.edge : edge.color,
       width: edge.width,
       byTarget: edge.colorBy === "target",
     },
+    theme,
+    iconFit: node.iconFit ?? "cover",
+    branch: node.colorBy === "branch" ? branches(graph) : null,
   };
+  for (const n of graph.nodes) nodeLook(looks, n, node);
+  for (let i = 0; i < graph.edges.length; i++)
+    edgeLook(looks, graph.edges[i], i, edge);
+  return looks;
+}
+
+/**
+ * Redo the looks of nodes `nodes` and edges `edges` (indices) in place, after their own styles changed: a restyle of
+ * a few elements costs what they do, not the whole graph. Edges coloured by their child follow a restyled child.
+ * The options and theme must be the ones `looks` was made with (new ones need a whole new looksOf).
+ * @returns {{ nodes: Int32Array, edges: Int32Array }} every node and edge whose look was redone, ascending
+ */
+export function patchLooks(looks, graph, node, edge, nodes, edges = []) {
+  const doneNodes = Int32Array.from(new Set(nodes)).sort();
+  const doneEdges = new Set(edges);
+  for (const i of doneNodes) nodeLook(looks, graph.nodes[i], node);
+  if (looks.edgeDefault.byTarget && graph.incoming)
+    for (const i of doneNodes)
+      for (const e of graph.incoming[i]) doneEdges.add(e);
+  const sortedEdges = Int32Array.from(doneEdges).sort();
+  for (const e of sortedEdges) edgeLook(looks, graph.edges[e], e, edge);
+  return { nodes: doneNodes, edges: sortedEdges };
+}
+
+function nodeLook(looks, n, node) {
+  const style = n.style ?? {};
+  const i = n.index;
+  const theme = looks.theme;
+  let scale = 1;
+  if (node.sizeBy === "descendants")
+    scale = 1 + 0.35 * Math.log2(1 + n.descendants);
+  else if (node.sizeBy === "depth") scale = Math.max(0.4, 1 - n.depth * 0.14);
+  looks.radius[i] =
+    style.size !== undefined ? style.size / 2 : (node.size / 2) * scale;
+  looks.shape[i] = style.shape ?? node.shape;
+  const { palette } = theme;
+  looks.fill[i] =
+    style.color ??
+    (node.colorBy === "single"
+      ? node.color === NODE_COLOUR_DEFAULT
+        ? theme.node
+        : node.color
+      : node.colorBy === "branch" && looks.branch
+        ? n.depth === 0
+          ? theme.root
+          : palette[looks.branch[i] % palette.length]
+        : palette[n.depth % palette.length]);
+  looks.stroke[i] = style.stroke ?? null;
+  looks.strokeWidth[i] = style.stroke
+    ? (style.strokeWidth ?? node.strokeWidth ?? 2)
+    : 0;
+  looks.icon[i] = style.icon ?? null;
+}
+
+function edgeLook(looks, e, i, edge) {
+  looks.edgeColour[i] =
+    e.style?.color ??
+    (looks.edgeDefault.byTarget
+      ? looks.fill[e.target]
+      : looks.edgeDefault.colour);
+  looks.edgeWidth[i] = e.style?.width ?? edge.width;
 }
 
 /** Node looks only (radius, fill, shape), for callers that don't draw edges. */
@@ -109,10 +159,10 @@ export function lineage(graph, index) {
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} scene
  */
-export function drawScene(ctx, scene) {
-  clearTo(ctx, scene, scene.background);
+export function drawScene(ctx, scene, icons = iconStore()) {
+  clearTo(ctx, scene, scene.background ?? scene.theme?.background);
   drawEdges(ctx, scene);
-  drawNodes(ctx, scene);
+  drawNodes(ctx, scene, icons);
   drawHalos(ctx, scene);
   drawLabels(ctx, scene);
 }
@@ -180,12 +230,13 @@ function haloPath(ctx, shape, x, y, r, o) {
         [r, -r],
       ]);
     case "rounded":
+    case "tile":
       return ctx.roundRect(
         x - r - o,
         y - r - o,
         (r + o) * 2,
         (r + o) * 2,
-        r * 0.45 + o,
+        r * (shape === "tile" ? TILE_CORNER : ROUNDED_CORNER) + o,
       );
     case "diamond":
       return polygon([
@@ -324,24 +375,78 @@ export function drawEdges(ctx, scene) {
   ctx.globalAlpha = 1;
 }
 
-export function drawNodes(ctx, scene) {
-  const { graph, node, looks, background } = scene;
+/**
+ * Every node: its fill, its icon (from `icons`, once loaded, clipped to the shape), its border, its outline. Icons
+ * still loading leave the node as it is without one.
+ */
+export function drawNodes(ctx, scene, icons = iconStore()) {
+  const { graph, node, looks, camera } = scene;
+  const background = scene.background ?? scene.theme?.background;
   ctx.setTransform(...worldTransform(scene));
+  ctx.imageSmoothingQuality = "high";
   for (const n of graph.nodes) {
-    ctx.globalAlpha = nodeAlpha(scene, n.index);
-    if (!ctx.globalAlpha) continue;
-    drawNode(
-      ctx,
-      looks.shape[n.index],
-      node.outline,
+    const alpha = nodeAlpha(scene, n.index);
+    if (!alpha) continue;
+    const i = n.index;
+    const r = looks.radius[i];
+    const shape = looks.shape[i];
+    let icon = null,
+      shown = 0;
+    if (shape !== "ring" && looks.icon?.[i]) {
+      shown = iconShown(r, camera.k);
+      const entry = shown > 0 ? icons.get(looks.icon[i]) : null;
+      if (entry?.state === "ready") icon = entry;
+      else shown = 0;
+    }
+    const look = {
+      shape,
+      outline: node.outline,
       n,
-      looks.radius[n.index],
-      looks.fill[n.index],
+      r,
+      fill: looks.fill[i],
       background,
-    );
+      alpha,
+      icon,
+      shown,
+      fit: looks.iconFit,
+      stroke: looks.stroke?.[i] ?? null,
+      strokeWidth: looks.strokeWidth?.[i] ?? 0,
+    };
+    const layered =
+      alpha < 1 &&
+      shape !== "ring" &&
+      (shown > 0 || (look.stroke && look.strokeWidth > 0) || node.outline > 0);
+    if (!layered) {
+      drawNode(ctx, look);
+      continue;
+    }
+    // Drawn whole on a layer, and the layer onto the canvas at the node's alpha: a faded node's fill doesn't show
+    // through its icon or border (as the WebGL painter blends them before fading).
+    const layer = edgeLayer(ctx.canvas, nodeLayers);
+    const [a, , , d, e, f] = worldTransform(scene);
+    const reachPx = (r * 1.25 + node.outline) * a + 2;
+    const x0 = Math.max(0, Math.floor(n.x * a + e - reachPx)),
+      y0 = Math.max(0, Math.floor(n.y * d + f - reachPx));
+    const x1 = Math.min(ctx.canvas.width, Math.ceil(n.x * a + e + reachPx)),
+      y1 = Math.min(ctx.canvas.height, Math.ceil(n.y * d + f + reachPx));
+    if (x1 <= x0 || y1 <= y0) continue;
+    layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    layer.ctx.clearRect(x0, y0, x1 - x0, y1 - y0);
+    layer.ctx.setTransform(...worldTransform(scene));
+    layer.ctx.imageSmoothingQuality = "high";
+    drawNode(layer.ctx, { ...look, alpha: 1 });
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = alpha;
+    const w = x1 - x0,
+      h = y1 - y0;
+    ctx.drawImage(layer.canvas, x0, y0, w, h, x0, y0, w, h);
+    ctx.setTransform(...worldTransform(scene));
   }
   ctx.globalAlpha = 1;
 }
+
+/** Layers for drawing faded nodes whole (see drawNodes), one per canvas. */
+const nodeLayers = new WeakMap();
 
 /**
  * Whether labels show at this zoom. Labels with room kept for them (label collision) show until their text is
@@ -361,7 +466,7 @@ export function drawLabels(ctx, scene) {
   if (!labelsShown(node, camera)) return;
   ctx.setTransform(...worldTransform(scene));
   ctx.font = `${node.labelSize}px system-ui, sans-serif`;
-  ctx.fillStyle = "#d5d9e4";
+  ctx.fillStyle = (scene.theme ?? DEFAULT_THEME).text;
   for (const n of graph.nodes) {
     ctx.globalAlpha = labelAlpha(scene, n.index);
     if (!ctx.globalAlpha) continue;
@@ -377,12 +482,12 @@ function junctionAt(junctions, index) {
 
 /** An offscreen canvas the size of `canvas`, kept with it. */
 const layers = new WeakMap();
-function edgeLayer(canvas) {
-  let layer = layers.get(canvas);
+function edgeLayer(canvas, kept = layers) {
+  let layer = kept.get(canvas);
   if (!layer) {
     const off = document.createElement("canvas");
     layer = { canvas: off, ctx: off.getContext("2d") };
-    layers.set(canvas, layer);
+    kept.set(canvas, layer);
   }
   if (layer.canvas.width !== canvas.width) layer.canvas.width = canvas.width;
   if (layer.canvas.height !== canvas.height)
@@ -468,15 +573,77 @@ function roundedPolyline(ctx, pts, radius) {
   ctx.lineTo(pts.at(-2), pts.at(-1));
 }
 
-function drawNode(ctx, shape, outline, n, r, fill, background) {
-  ctx.beginPath();
+/**
+ * One node, at `alpha`. In order: its fill (a tile's fades out as its icon fades in: the icon is the tile), its icon
+ * in its box (iconBox) clipped to the shape, its border (`strokeWidth` inside the shape's edge, so the node takes no
+ * more room), and the outline. A ring is a stroke round the background, nothing else.
+ */
+function drawNode(ctx, look) {
+  const { shape, outline, n, r, fill, background, alpha, icon, shown } = look;
   const { x, y } = n;
+  ctx.beginPath();
+  nodePath(ctx, shape, x, y, r);
+  if (shape === "ring") {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = background;
+    ctx.fill();
+    ctx.lineWidth = Math.max(1.5, r * 0.35);
+    ctx.strokeStyle = fill;
+    ctx.stroke();
+    return;
+  }
+  const fillShown = shape === "tile" && icon ? 1 - shown : 1;
+  if (fillShown > 0) {
+    ctx.globalAlpha = alpha * fillShown;
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (icon && shown > 0) {
+    const [hx, hy] = iconBox(
+      shape,
+      look.fit,
+      icon.width / icon.height,
+      r,
+      look.strokeWidth,
+    );
+    ctx.save();
+    ctx.clip();
+    ctx.globalAlpha = alpha * shown;
+    ctx.drawImage(icon.image, x - hx, y - hy, hx * 2, hy * 2);
+    ctx.restore();
+  }
+  ctx.globalAlpha = alpha;
+  if (look.stroke && look.strokeWidth > 0) {
+    // Twice as wide, clipped to the shape: the inner half is the border.
+    ctx.save();
+    ctx.clip();
+    ctx.lineWidth = look.strokeWidth * 2;
+    ctx.strokeStyle = look.stroke;
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (outline > 0) {
+    ctx.lineWidth = outline;
+    ctx.strokeStyle = background;
+    ctx.stroke();
+  }
+}
+
+/** A node's outline as a path (centre x, y, radius r). */
+function nodePath(ctx, shape, x, y, r) {
   switch (shape) {
     case "square":
       ctx.rect(x - r, y - r, r * 2, r * 2);
       break;
     case "rounded":
-      ctx.roundRect(x - r, y - r, r * 2, r * 2, r * 0.45);
+    case "tile":
+      ctx.roundRect(
+        x - r,
+        y - r,
+        r * 2,
+        r * 2,
+        r * (shape === "tile" ? TILE_CORNER : ROUNDED_CORNER),
+      );
       break;
     case "diamond":
       ctx.moveTo(x, y - r * 1.25);
@@ -495,21 +662,6 @@ function drawNode(ctx, shape, outline, n, r, fill, background) {
     default:
       ctx.arc(x, y, r, 0, Math.PI * 2);
   }
-  if (shape === "ring") {
-    ctx.fillStyle = background;
-    ctx.fill();
-    ctx.lineWidth = Math.max(1.5, r * 0.35);
-    ctx.strokeStyle = fill;
-    ctx.stroke();
-    return;
-  }
-  ctx.fillStyle = fill;
-  ctx.fill();
-  if (outline > 0) {
-    ctx.lineWidth = outline;
-    ctx.strokeStyle = background;
-    ctx.stroke();
-  }
 }
 
 /** A label in the direction the view gave its node (`labelAngle`), which is also where its footprint is. */
@@ -522,16 +674,27 @@ function drawLabel(ctx, n, r) {
 
 /** The Canvas 2D painter: everything on the renderer's canvas. Also the reference the WebGL painter is checked against. */
 export class CanvasPainter {
-  constructor(canvas) {
+  /**
+   * @param {HTMLCanvasElement} canvas
+   * @param {{ icons?: import("./icons.js").IconStore }} [options] where icons come from (default: the page's shared
+   *   store)
+   */
+  constructor(canvas, { icons = iconStore() } = {}) {
     this.name = "canvas";
     this.ctx = canvas.getContext("2d");
+    this.icons = icons;
+    /** Set by the renderer: asks for a frame (an icon came in). */
+    this.wake = null;
+    this.unlisten = icons.onReady(() => this.wake?.());
   }
 
   resize() {}
 
   draw(scene) {
-    drawScene(this.ctx, scene);
+    drawScene(this.ctx, scene, this.icons);
   }
 
-  dispose() {}
+  dispose() {
+    this.unlisten();
+  }
 }

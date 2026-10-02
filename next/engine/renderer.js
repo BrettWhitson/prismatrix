@@ -48,12 +48,14 @@ export class Renderer {
   /**
    * @param {HTMLCanvasElement} canvas
    * @param {{ name: string, draw(scene: object): void, resize(w: number, h: number, dpr: number): void,
-   *   dispose(): void, pending?: boolean }} painter
+   *   dispose(): void, pending?: boolean, wake?: (() => void) | null }} painter
    * @param {RendererOptions} [options]
    */
   constructor(canvas, painter, { frameRate = "display" } = {}) {
     this.canvas = canvas;
     this.painter = painter;
+    // Painters ask for a frame of their own when something they wait for comes in (an icon).
+    painter.wake = () => this.invalidate();
     /** @type {import("./controller.js").GraphController | null} */
     this.controller = null;
     this.frame = 0;

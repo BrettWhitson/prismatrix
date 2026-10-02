@@ -13,8 +13,10 @@ export const NODE_OPTIONS = [
       { value: "diamond", label: "Diamond" },
       { value: "hexagon", label: "Hexagon" },
       { value: "ring", label: "Ring" },
+      { value: "tile", label: "Tile" },
     ],
     "circle",
+    "Tile: a rounded square that is its icon (like an item in a game's inventory); its fill shows only until the icon is in, or when it has none.",
   ),
   range("size", "Size", 4, 60, 1, 16),
   select(
@@ -39,6 +41,25 @@ export const NODE_OPTIONS = [
   ),
   color("color", "Colour", "#7aa2f7", "Used when colouring by one colour."),
   range("outline", "Outline", 0, 6, 0.5, 0),
+  range(
+    "strokeWidth",
+    "Border width",
+    0,
+    12,
+    0.5,
+    2,
+    "How wide a node's border is drawn (inside its shape) when its style gives it a stroke colour.",
+  ),
+  select(
+    "iconFit",
+    "Icon fit",
+    [
+      { value: "cover", label: "Fill the shape" },
+      { value: "contain", label: "Fit inside" },
+    ],
+    "cover",
+    "How a node's icon sits in its shape: filling it (cropped to the shape) or whole inside it, the fill around it.",
+  ),
   select(
     "labels",
     "Labels",

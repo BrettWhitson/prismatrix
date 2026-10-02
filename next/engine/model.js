@@ -140,11 +140,26 @@ const colour = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 const number = (lo, hi) => (v) =>
   typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
 
+/**
+ * An icon: an image's URL, or an image already in hand (an HTMLImageElement, ImageBitmap, canvas: anything with a
+ * width and a height that a canvas can draw). Only a URL survives toJSON.
+ */
+const icon = (v) =>
+  typeof v === "string"
+    ? v.length > 0
+    : v !== null &&
+      typeof v === "object" &&
+      typeof v.width === "number" &&
+      typeof v.height === "number";
+
 /** What a node's `style` may set, and what each value must be. */
 export const NODE_STYLE = {
   color: colour,
   size: number(1, 400),
   shape: (v) => SHAPES.includes(v),
+  stroke: colour,
+  strokeWidth: number(0, 100),
+  icon,
 };
 /** What an edge's `style` may set. */
 export const EDGE_STYLE = {
@@ -279,6 +294,8 @@ export function equal(a, b, seen) {
       return true;
     }
   }
+  // Anything else the platform makes (an image, a canvas, a bitmap) is only the same as itself.
+  if (tag !== "[object Object]" && tag !== "[object Arguments]") return false;
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
   for (const k of keys)

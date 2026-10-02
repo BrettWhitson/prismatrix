@@ -38,9 +38,11 @@ test("nodes pack as centre, radius, colour, visibility and shape, in index order
   const out = packNodes(scene);
   assert.ok(out.length >= 2 * NODE_STRIDE);
   assert.deepEqual(
-    [...out.subarray(NODE_STRIDE, 2 * NODE_STRIDE)],
+    [...out.subarray(NODE_STRIDE, NODE_STRIDE + 8)],
     [10, -5, 6, 1, 1, 1, 0.25, SHAPE_IDS.hexagon],
   );
+  assert.equal(out[NODE_STRIDE + 11], 0, "no border");
+  assert.equal(out[NODE_STRIDE + 16], -1, "no icon");
   assert.equal(out[6], 1, "the lit node is fully visible");
   assert.equal(
     packNodes({ ...scene, shade: null }, out),
@@ -569,7 +571,7 @@ test("selection halos: only selected real nodes, packed as nodes are; references
   const { data, count } = packHalos(scene, null, { x: 1, y: 0 });
   assert.equal(count, 2);
   assert.deepEqual(
-    [...data.subarray(0, NODE_STRIDE)],
+    [...data.subarray(0, 8)],
     [9, 5, 6, 0, 1, 0, 1, SHAPE_IDS.square],
   );
   assert.equal(data[NODE_STRIDE + 7], SHAPE_IDS.hexagon);

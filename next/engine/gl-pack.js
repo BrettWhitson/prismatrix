@@ -2,6 +2,7 @@
 
 import { edgeRoute, fanJunctions, rounded, trim } from "./geometry.js";
 import { edgeAlpha, nodeAlpha } from "./render.js";
+import { iconBox } from "./icons.js";
 
 /** Shape names to the ids the node shader switches on. */
 export const SHAPE_IDS = {
@@ -11,10 +12,15 @@ export const SHAPE_IDS = {
   diamond: 3,
   hexagon: 4,
   ring: 5,
+  tile: 6,
 };
 
-/** Floats per node: centre x, y; radius; colour r, g, b, a (a: how visible, see nodeAlpha); shape id. */
-export const NODE_STRIDE = 8;
+/**
+ * Floats per node: centre x, y; radius; colour r, g, b, a (a: how visible, see nodeAlpha); shape id; border colour
+ * r, g, b and width (0: no border); its icon's rectangle in the icon atlas (u0, v0, u1, v1), page (-1: no icon) and
+ * box (half its width and height, world px: iconBox).
+ */
+export const NODE_STRIDE = 19;
 /**
  * Floats per edge segment: ends x0, y0, x1, y1; half-widths at each end; colour r, g, b. Its brightness lives in a
  * separate buffer (edgeBrightness), so a hover fade refills that alone instead of rebuilding every edge.
@@ -59,28 +65,90 @@ function palette() {
 const ORIGIN = Object.freeze({ x: 0, y: 0 });
 
 /**
+ * @callback IconAt where an icon is in the icon atlas, or null while it isn't there (loading, failed)
+ * @param {any} source a node's `icon` (URL or image)
+ * @returns {{ u0: number, v0: number, u1: number, v1: number, layer: number, aspect: number } | null}
+ */
+
+/**
  * Every node as instance data for the node shader, into `out` (grown if too small), positions relative to
- * `origin`.
+ * `origin`, icons where `iconAt` says they are.
+ * @param {IconAt | null} [iconAt]
  * @returns {Float32Array}
  */
-export function packNodes(scene, out, origin = ORIGIN) {
-  const { graph, looks } = scene;
+export function packNodes(scene, out, origin = ORIGIN, iconAt = null) {
+  const { graph } = scene;
   out = room(out, graph.nodes.length * NODE_STRIDE);
   const colour = palette();
-  for (const n of graph.nodes) {
-    const rgb = colour(looks.fill[n.index]);
-    const o = n.index * NODE_STRIDE;
-    out[o] = n.x - origin.x;
-    out[o + 1] = n.y - origin.y;
-    out[o + 2] = looks.radius[n.index];
-    out[o + 3] = rgb[0];
-    out[o + 4] = rgb[1];
-    out[o + 5] = rgb[2];
-    out[o + 6] = nodeAlpha(scene, n.index);
-    out[o + 7] = SHAPE_IDS[looks.shape[n.index]] ?? 0;
-  }
+  for (const n of graph.nodes) packNode(scene, n, out, origin, colour, iconAt);
   return out;
 }
+
+/**
+ * Nodes `indices` only, into `out` as packNodes packed it (a restyle of a few nodes).
+ * @param {ArrayLike<number>} indices
+ * @param {IconAt | null} [iconAt]
+ */
+export function patchNodes(
+  scene,
+  out,
+  indices,
+  origin = ORIGIN,
+  iconAt = null,
+) {
+  const colour = palette();
+  const { nodes } = scene.graph;
+  for (const i of indices)
+    if (i < nodes.length)
+      packNode(scene, nodes[i], out, origin, colour, iconAt);
+}
+
+function packNode(scene, n, out, origin, colour, iconAt) {
+  const { looks } = scene;
+  const i = n.index;
+  const o = i * NODE_STRIDE;
+  const rgb = colour(looks.fill[i]);
+  const radius = looks.radius[i];
+  const shape = looks.shape[i];
+  out[o] = n.x - origin.x;
+  out[o + 1] = n.y - origin.y;
+  out[o + 2] = radius;
+  out[o + 3] = rgb[0];
+  out[o + 4] = rgb[1];
+  out[o + 5] = rgb[2];
+  out[o + 6] = nodeAlpha(scene, i);
+  out[o + 7] = SHAPE_IDS[shape] ?? 0;
+  const stroke = looks.stroke?.[i];
+  const strokeWidth = stroke ? looks.strokeWidth[i] : 0;
+  const s = strokeWidth > 0 ? colour(stroke) : NONE;
+  out[o + 8] = s[0];
+  out[o + 9] = s[1];
+  out[o + 10] = s[2];
+  out[o + 11] = strokeWidth;
+  const source = shape === "ring" ? null : looks.icon?.[i];
+  const at = source && iconAt ? iconAt(source) : null;
+  if (at) {
+    const [hx, hy] = iconBox(
+      shape,
+      looks.iconFit,
+      at.aspect,
+      radius,
+      strokeWidth,
+    );
+    out[o + 12] = at.u0;
+    out[o + 13] = at.v0;
+    out[o + 14] = at.u1;
+    out[o + 15] = at.v1;
+    out[o + 16] = at.layer;
+    out[o + 17] = hx;
+    out[o + 18] = hy;
+  } else {
+    out.fill(0, o + 12, o + 19);
+    out[o + 16] = -1;
+  }
+}
+
+const NONE = [0, 0, 0];
 
 /**
  * The selected nodes (scene.selected), packed as nodes are, for the halo shader: a handful of instances, refilled
@@ -246,4 +314,84 @@ export function edgeBrightness(scene, packed, reuse = {}, perEdge = null) {
   for (let i = 0; i < packed.endCount; i++)
     endAlpha[i] = perEdge[packed.endEdge[i]];
   return { segmentAlpha, endAlpha, bright };
+}
+
+/**
+ * Ascending indices as runs [first, end) to upload, neighbouring runs joined when less than `gap` apart (one bigger
+ * upload is cheaper than many small ones).
+ * @param {ArrayLike<number>} sorted
+ * @returns {[number, number][]}
+ */
+export function runsOf(sorted, gap = 16) {
+  const runs = [];
+  for (let k = 0; k < sorted.length; k++) {
+    const i = sorted[k];
+    const last = runs.at(-1);
+    if (last && i < last[1] + gap) last[1] = Math.max(last[1], i + 1);
+    else runs.push([i, i + 1]);
+  }
+  return runs;
+}
+
+/**
+ * Edges `edges` (ascending indices) packed again into `packed` (from packEdges, for the same layout: only their looks
+ * changed, so each keeps its segments and ends), in place. Edges `packed` doesn't hold (drawn by the GPU, or trimmed
+ * away) are skipped. Returns the runs of segments and ends that changed, for uploading just those.
+ * @param {object} scene
+ * @param {ReturnType<typeof packEdges>} packed
+ * @param {ArrayLike<number>} edges
+ * @returns {{ segments: [number, number][], ends: [number, number][] }}
+ */
+export function patchEdges(scene, packed, edges, origin = ORIGIN) {
+  const wanted = new Set(edges);
+  // Where each wanted edge's segments and end start.
+  const firstSegment = new Map(),
+    firstEnd = new Map();
+  for (let i = 0; i < packed.segmentCount; i++) {
+    const e = packed.segmentEdge[i];
+    if (wanted.has(e) && !firstSegment.has(e)) firstSegment.set(e, i);
+  }
+  for (let i = 0; i < packed.endCount; i++) {
+    const e = packed.endEdge[i];
+    if (wanted.has(e) && !firstEnd.has(e)) firstEnd.set(e, i);
+  }
+  const only = [...wanted].filter((e) => firstSegment.has(e));
+  const fresh = packEdges(scene, {}, only, origin);
+  const copy = (count, edgeOf, from, to, first, stride) => {
+    const changed = [];
+    let previous = -1,
+      base,
+      offset = 0;
+    for (let k = 0; k < count; k++) {
+      const e = edgeOf[k];
+      if (e !== previous) {
+        base = first.get(e);
+        offset = 0;
+        previous = e;
+      } else offset++;
+      if (base === undefined) continue;
+      const at = base + offset;
+      to.set(from.subarray(k * stride, (k + 1) * stride), at * stride);
+      changed.push(at);
+    }
+    return runsOf(changed.sort((a, b) => a - b));
+  };
+  return {
+    segments: copy(
+      fresh.segmentCount,
+      fresh.segmentEdge,
+      fresh.segments,
+      packed.segments,
+      firstSegment,
+      SEGMENT_STRIDE,
+    ),
+    ends: copy(
+      fresh.endCount,
+      fresh.endEdge,
+      fresh.ends,
+      packed.ends,
+      firstEnd,
+      END_STRIDE,
+    ),
+  };
 }
