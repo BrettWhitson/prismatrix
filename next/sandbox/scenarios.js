@@ -72,6 +72,13 @@ const RECIPE = {
 
 const id = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
+/** How many of `part` a recipe for `name` takes: made up, but the same every time (an edge's label shows it). */
+function quantity(name, part) {
+  let h = 7;
+  for (const ch of name + part) h = (h * 31 + ch.charCodeAt(0)) % 1009;
+  return [1, 1, 2, 5, 10, 25, 77, 250][h % 8];
+}
+
 /** Each item's crafting step: breadth-first from the top, the step where it's first needed. */
 function steps(root) {
   const step = new Map([[root, 0]]);
@@ -107,7 +114,12 @@ function recipeGraph({ depth = Infinity, without = [], styleOf } = {}) {
   const edges = [];
   for (const name of keep)
     for (const part of RECIPE[name] ?? [])
-      if (keep.has(part)) edges.push({ source: id(name), target: id(part) });
+      if (keep.has(part))
+        edges.push({
+          source: id(name),
+          target: id(part),
+          label: `×${quantity(name, part)}`,
+        });
   return { format: "prismatrix-graph", version: 1, nodes, edges };
 }
 

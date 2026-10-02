@@ -238,6 +238,10 @@ const model = new GraphModel(makeGraph(settings.graph), {
         (state === "moving" ? ` · energy ${energy.toFixed(1)}` : "");
     },
   });
+  // A tap on a reference chip flies to the ingredient it stands for.
+  controller.on("tap", ({ node, reference }) => {
+    if (reference) controller.focus(node);
+  });
 }
 
 /** Put the panel's settings back on the engine (after a scenario has played with them). */
