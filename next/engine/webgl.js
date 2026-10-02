@@ -250,33 +250,89 @@ class InstancedQuads {
   }
 }
 
-/** Background, edges and nodes, drawn with WebGL2 on one canvas. */
-class GLLayer {
-  constructor(canvas, icons = iconStore()) {
-    this.canvas = canvas;
+/**
+ * The WebGL painter for a renderer's canvas: background, edges, nodes and text, drawn with WebGL2 on a canvas of its
+ * own (glCanvas) beneath the renderer's, which stays on top to take the pointer.
+ */
+export class WebGLPainter {
+  #timing = false;
+
+  /**
+   * @param {HTMLCanvasElement} canvas
+   * @param {{ icons?: import("./icons.js").IconStore }} [options] where icons come from (default: the page's shared
+   *   store)
+   */
+  constructor(canvas, { icons = iconStore() } = {}) {
+    this.name = "webgl";
+    /** Set by the renderer: asks for a frame (an icon came in). */
+    this.wake = null;
+    this.top = canvas;
+    this.topCtx = canvas.getContext("2d");
+    const glCanvas = (this.glCanvas = document.createElement("canvas"));
+    Object.assign(glCanvas.style, {
+      position: "absolute",
+      pointerEvents: "none",
+    });
+    canvas.parentElement.insertBefore(glCanvas, canvas);
+    // Positioned, so it paints after (above) the absolutely positioned layer before it.
+    this.previousPosition = canvas.style.position;
+    if (getComputedStyle(canvas).position === "static")
+      canvas.style.position = "relative";
     this.icons = icons;
     this.lost = false;
     // The CPU's edge segments and ends, from the last frame (empty until the first).
     this.edgeData = /** @type {ReturnType<typeof packEdges>} */ ({});
     this.nodeData = null;
     this.scene = null; // the last scene drawn, drawn again when a lost context comes back
-    this.timing = false; // measure the GPU's time per pass (EXT_disjoint_timer_query_webgl2), see gpuTimes
+    /** `{ edges, nodes, labels, total }` GPU milliseconds while `timing` is on (null until the first results). */
     this.gpuTimes = null;
-    canvas.addEventListener("webglcontextlost", (e) => {
+    glCanvas.addEventListener("webglcontextlost", (e) => {
       e.preventDefault(); // ask for it back
       this.lost = true;
     });
-    canvas.addEventListener("webglcontextrestored", () => {
+    glCanvas.addEventListener("webglcontextrestored", () => {
       this.lost = false;
       this.#init();
       // Nothing asks for a frame when the context comes back: draw what was on screen again.
       if (this.scene) this.draw(this.scene);
     });
     this.#init();
+    this.unlisten = icons.onReady(() => {
+      this.iconsArrived = true;
+      this.wake?.();
+    });
+  }
+
+  resize(width, height, dpr) {
+    Object.assign(this.glCanvas.style, {
+      left: `${this.top.offsetLeft}px`,
+      top: `${this.top.offsetTop}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+    });
+    this.glCanvas.width = Math.round(width * dpr);
+    this.glCanvas.height = Math.round(height * dpr);
+  }
+
+  /**
+   * Debugging: measure how long the GPU spends on each pass (edges, nodes, labels), where the browser offers
+   * EXT_disjoint_timer_query_webgl2. In the sandbox's console: `renderer.painter.timing = true`, move something,
+   * then read `renderer.painter.gpuTimes` (milliseconds, smoothed over frames). Off by default.
+   */
+  get timing() {
+    return this.#timing;
+  }
+
+  set timing(on) {
+    this.#timing = !!on;
+    if (!this.timer.ext && on)
+      console.warn(
+        "Prismatrix: this browser has no EXT_disjoint_timer_query_webgl2",
+      );
   }
 
   #init() {
-    const gl = this.canvas.getContext("webgl2", {
+    const gl = this.glCanvas.getContext("webgl2", {
       antialias: false, // the shaders anti-alias themselves
       premultipliedAlpha: true,
       alpha: false, // the background is opaque
@@ -407,7 +463,7 @@ class GLLayer {
     this.labelLayer = new LabelLayer(gl);
     this.labelGroups = [];
     this.labelKey = null;
-    this.pending = false;
+    this.pending = false; // labels still being drawn into the atlas: the view keeps frames coming until they are in
     this.emptyVao = gl.createVertexArray();
     this.target = null; // the offscreen texture edges are drawn onto
     this.built = null; // what the buffers hold; nothing yet (or after a lost context)
@@ -422,7 +478,7 @@ class GLLayer {
   /** The offscreen texture and framebuffer, the size of the canvas. */
   #edgeTarget() {
     const { gl } = this;
-    const { width, height } = this.canvas;
+    const { width, height } = this.glCanvas;
     if (this.target?.width === width && this.target?.height === height)
       return this.target;
     if (this.target) {
@@ -481,6 +537,11 @@ class GLLayer {
   }
 
   draw(scene) {
+    // The view's own canvas only takes the pointer now: clear it once (after a switch from Canvas 2D).
+    if (!this.cleared) {
+      clearTo(this.topCtx, scene, null);
+      this.cleared = true;
+    }
     this.scene = scene;
     if (this.lost) return;
     const { gl } = this;
@@ -490,7 +551,7 @@ class GLLayer {
     this.#readTimers();
     const bg = parseColour(background);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
     gl.clearColor(bg[0], bg[1], bg[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND);
@@ -915,9 +976,13 @@ class GLLayer {
   }
 
   dispose() {
+    this.unlisten();
     this.labelLayer?.dispose();
     this.iconAtlas?.dispose();
     this.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    this.glCanvas.remove();
+    this.top.style.position = this.previousPosition;
+    this.cleared = false;
   }
 }
 
@@ -943,93 +1008,4 @@ function originOf(scene) {
   }
   if (!Number.isFinite(minX + maxX + minY + maxY)) return { x: 0, y: 0 };
   return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-}
-
-/**
- * The WebGL painter for a renderer's canvas. It adds a GL canvas beneath the renderer's own, which stays on top to
- * take the pointer.
- */
-export class WebGLPainter {
-  /**
-   * @param {HTMLCanvasElement} canvas
-   * @param {{ icons?: import("./icons.js").IconStore }} [options] where icons come from (default: the page's shared
-   *   store)
-   */
-  constructor(canvas, { icons = iconStore() } = {}) {
-    this.name = "webgl";
-    /** Set by the renderer: asks for a frame (an icon came in). */
-    this.wake = null;
-    this.top = canvas;
-    this.topCtx = canvas.getContext("2d");
-    this.glCanvas = document.createElement("canvas");
-    Object.assign(this.glCanvas.style, {
-      position: "absolute",
-      pointerEvents: "none",
-    });
-    canvas.parentElement.insertBefore(this.glCanvas, canvas);
-    // Positioned, so it paints after (above) the absolutely positioned layer before it.
-    this.previousPosition = canvas.style.position;
-    if (getComputedStyle(canvas).position === "static")
-      canvas.style.position = "relative";
-    this.layer = new GLLayer(this.glCanvas, icons);
-    this.unlisten = icons.onReady(() => {
-      this.layer.iconsArrived = true;
-      this.wake?.();
-    });
-  }
-
-  resize(width, height, dpr) {
-    Object.assign(this.glCanvas.style, {
-      left: `${this.top.offsetLeft}px`,
-      top: `${this.top.offsetTop}px`,
-      width: `${width}px`,
-      height: `${height}px`,
-    });
-    this.glCanvas.width = Math.round(width * dpr);
-    this.glCanvas.height = Math.round(height * dpr);
-  }
-
-  draw(scene) {
-    this.layer.draw(scene);
-    // The view's own canvas only takes the pointer now: clear it once (after a switch from Canvas 2D).
-    if (!this.cleared) {
-      clearTo(this.topCtx, scene, null);
-      this.cleared = true;
-    }
-  }
-
-  /** True while labels are still being drawn into the atlas: the view keeps frames coming until they're done. */
-  get pending() {
-    return this.layer.pending;
-  }
-
-  /**
-   * Debugging: measure how long the GPU spends on each pass (edges, nodes, labels), where the browser offers
-   * EXT_disjoint_timer_query_webgl2. In the sandbox's console: `renderer.painter.timing = true`, move something,
-   * then read `renderer.painter.gpuTimes` (milliseconds, smoothed over frames). Off by default.
-   */
-  get timing() {
-    return this.layer.timing;
-  }
-
-  set timing(on) {
-    this.layer.timing = !!on;
-    if (!this.layer.timer.ext && on)
-      console.warn(
-        "Prismatrix: this browser has no EXT_disjoint_timer_query_webgl2",
-      );
-  }
-
-  /** `{ edges, nodes, labels, total }` GPU milliseconds while `timing` is on (null until the first results). */
-  get gpuTimes() {
-    return this.layer.gpuTimes;
-  }
-
-  dispose() {
-    this.unlisten();
-    this.layer.dispose();
-    this.glCanvas.remove();
-    this.top.style.position = this.previousPosition;
-    this.cleared = false;
-  }
 }

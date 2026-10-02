@@ -643,18 +643,18 @@ test("a selection change redraws halos without rebuilding the edge pieces", () =
       globalThis.document.createElement("canvas"),
     );
     painter.draw(c.scene);
-    const pieces = painter.layer.gpu;
+    const pieces = painter.gpu;
     assert.ok(pieces, "the GPU draws this graph's edges");
     assert.ok(c.select(c.graph.nodes[3].id));
     c.run(50, { start: 1400 });
     painter.draw(c.scene);
-    assert.equal(painter.layer.gpu, pieces, "the same pieces");
-    assert.equal(painter.layer.haloData.count, 1);
+    assert.equal(painter.gpu, pieces, "the same pieces");
+    assert.equal(painter.haloData.count, 1);
     c.select(null);
     c.run(50, { start: 1500 });
     painter.draw(c.scene);
-    assert.equal(painter.layer.haloData.count, 0);
-    assert.equal(painter.layer.gpu, pieces);
+    assert.equal(painter.haloData.count, 0);
+    assert.equal(painter.gpu, pieces);
   });
 });
 

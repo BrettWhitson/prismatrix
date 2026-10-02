@@ -242,8 +242,8 @@ test("WebGL: the theme's background clears the canvas and its text colour tints 
     // Each piece of text carries its colours (gl-text.js, LABEL_STRIDE): text, then halo.
     const text = parseColour(THEMES.light.text);
     const halo = parseColour(THEMES.light.textHalo);
-    const { data } = painter.layer.labelLayer;
-    const count = painter.layer.labelGroups.reduce((n, g) => n + g.count, 0);
+    const { data } = painter.labelLayer;
+    const count = painter.labelGroups.reduce((n, g) => n + g.count, 0);
     assert.ok(count > 0);
     for (let k = 0; k < count; k++) {
       const row = data.subarray(k * LABEL_STRIDE, (k + 1) * LABEL_STRIDE);
@@ -666,7 +666,7 @@ test("a node restyle uploads that node alone; the edges' pieces aren't touched",
   withDom((sent) => {
     const { c, painter, step } = painted("tree", sent);
     assert.equal(step(), 0, "a frame at rest sends nothing");
-    const pieces = painter.layer.gpu;
+    const pieces = painter.gpu;
     const n = c.graph.nodes[5];
     c.update({
       changeNodes: [
@@ -675,19 +675,16 @@ test("a node restyle uploads that node alone; the edges' pieces aren't touched",
     });
     const bytes = step();
     assert.equal(bytes, NODE_STRIDE * 4, "one node's instance");
-    assert.equal(painter.layer.gpu, pieces, "the same edge pieces");
+    assert.equal(painter.gpu, pieces, "the same edge pieces");
     // What was patched is what a full pack gives.
-    const full = packNodes(c.scene, null, painter.layer.origin);
+    const full = packNodes(c.scene, null, painter.origin);
     const count = c.graph.nodes.length * NODE_STRIDE;
     assert.deepEqual(
-      [...painter.layer.nodeData.subarray(0, count)],
+      [...painter.nodeData.subarray(0, count)],
       [...full.subarray(0, count)],
     );
     const o = n.index * NODE_STRIDE;
-    assert.deepEqual(
-      [...painter.layer.nodeData.subarray(o + 3, o + 6)],
-      [1, 0, 0],
-    );
+    assert.deepEqual([...painter.nodeData.subarray(o + 3, o + 6)], [1, 0, 0]);
     // An option change restyles everything: the whole graph goes up again.
     c.setNodeStyle({ colorBy: "branch" });
     assert.ok(step() > 20 * bytes);
@@ -703,16 +700,16 @@ test("an edge restyle uploads that edge's pieces alone, the same as packing them
     c.update({
       changeEdges: [{ id: e.id, style: { color: "#00ff00", width: 5 } }],
     });
-    const pieces = painter.layer.gpu;
+    const pieces = painter.gpu;
     const bytes = step();
-    assert.equal(painter.layer.gpu, pieces);
+    assert.equal(painter.gpu, pieces);
     const g = pieces;
     const mine = [...g.pieceEdge.subarray(0, g.pieceCount)].filter(
       (i) => i === index,
     ).length;
     assert.ok(mine >= 1);
     assert.equal(bytes, mine * PIECE_STRIDE * 4);
-    const fresh = packPieces(c.scene, painter.layer.origin);
+    const fresh = packPieces(c.scene, painter.origin);
     assert.deepEqual(
       [...g.pieces.subarray(0, g.pieceCount * PIECE_STRIDE)],
       [...fresh.pieces.subarray(0, fresh.pieceCount * PIECE_STRIDE)],
@@ -737,7 +734,7 @@ test("restyles with references and CPU-traced edges patch the same as a full reb
       );
       c.update({ changeNodes: [{ id: busy.id, style: { color: "#ff00ff" } }] });
       const bytes = step();
-      const { layer } = painter;
+      const layer = painter;
       const full = packNodes(c.scene, null, layer.origin);
       const count = c.scene.graph.nodes.length * NODE_STRIDE;
       assert.deepEqual(
@@ -755,7 +752,7 @@ test("restyles with references and CPU-traced edges patch the same as a full reb
         bytes > 0 && bytes < sent.bytes / 4,
         `${layout}: ${bytes} bytes for the restyle, ${sent.bytes} for everything`,
       );
-      const fresh = again.layer.edgeData;
+      const fresh = again.edgeData;
       assert.equal(fresh.segmentCount, segmentCount);
       assert.deepEqual(
         [...segments.subarray(0, segmentCount * 9)],
