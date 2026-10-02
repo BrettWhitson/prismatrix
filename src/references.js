@@ -17,6 +17,22 @@
 //
 // Pure: no DOM, no GL.
 
+// A reference with `copy` (references "crossing": a split) is drawn as a whole copy of its ingredient instead: its
+// label, shape, size, icon and marks, every look the ingredient has. Hovering and tapping it still work as above.
+
+/** Per-node looks a copy takes from its ingredient (the rest are a chip's own). */
+const COPIED = [
+  "stroke",
+  "strokeWidth",
+  "icon",
+  "badgeIcon",
+  "strokeStyle",
+  "opacity",
+  "ring",
+  "aura",
+  "stack",
+];
+
 /** How big a reference is drawn, relative to its ingredient (and never bigger than the room the layout kept). */
 const REFERENCE_SCALE = 0.7;
 
@@ -53,7 +69,7 @@ export function linkGlyphs(scene, minimum = GLYPH_MIN_PX) {
   const first = scene.matrix?.count ?? 0;
   for (let i = first; i < graph.nodes.length; i++) {
     const n = graph.nodes[i];
-    if (n.reference === undefined) continue;
+    if (n.reference === undefined || n.copy) continue;
     const radius = glyphRadius(looks.radius[i]);
     if (radius * camera.k < minimum) continue;
     out.push({ index: i, x: n.x, y: n.y, radius, colour: looks.fill[i] });
@@ -89,6 +105,18 @@ export function withReferences(graph, references, base) {
   }
   shade.set(base.shade.subarray(0, count));
   appear.set(base.appear.subarray(0, count));
+  // The looks only copies use, extended (a chip's: none, and a whole fill).
+  const extra = {};
+  for (const key of COPIED) {
+    const list = base.looks[key];
+    if (!list) continue;
+    const out = Array.isArray(list)
+      ? list.concat(new Array(references.length).fill(null))
+      : new /** @type {any} */ (list.constructor)(total);
+    if (!Array.isArray(list)) out.set(list.subarray(0, count));
+    if (key === "opacity") out.fill(1, count);
+    extra[key] = out;
+  }
 
   references.forEach((ref, k) => {
     const i = count + k;
@@ -99,7 +127,8 @@ export function withReferences(graph, references, base) {
       y = ref.y + s.y - s.homeY;
     nodes.push({
       id: `${t.id}@${s.id}`,
-      label: "",
+      label: ref.copy ? t.label : "",
+      ...(ref.copy && { copy: true, style: t.style, data: t.data }),
       labelAngle: t.labelAngle,
       index: i,
       x,
@@ -111,9 +140,14 @@ export function withReferences(graph, references, base) {
       depth: s.depth + 1,
       reference: ref.target,
     });
-    radius[i] = referenceRadius(ref, base.looks.radius[ref.target]);
+    radius[i] = ref.copy
+      ? base.looks.radius[ref.target]
+      : referenceRadius(ref, base.looks.radius[ref.target]);
     fill[i] = base.looks.fill[ref.target];
-    shape[i] = "ring";
+    shape[i] = ref.copy ? base.looks.shape[ref.target] : "ring";
+    if (ref.copy)
+      for (const key of Object.keys(extra))
+        extra[key][i] = base.looks[key][ref.target];
     // Lit when the hover lights both ends of the edge it stands in for.
     shade[i] = Math.min(base.shade[ref.source], base.shade[ref.target]);
     appear[i] = Math.min(base.appear[ref.source], base.appear[ref.target]);
@@ -135,7 +169,7 @@ export function withReferences(graph, references, base) {
       order: graph.order,
       uses,
     },
-    looks: { ...base.looks, radius, fill, shape },
+    looks: { ...base.looks, ...extra, radius, fill, shape },
     shade,
     appear,
   };

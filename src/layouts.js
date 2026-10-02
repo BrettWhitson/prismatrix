@@ -51,7 +51,8 @@ import { layeredLayout, medianShift } from "./layered.js";
  * @property {"sifting" | "barycenter"} ordering how each layer is ordered to cut crossings
  * @property {"balanced" | "median"} placement where nodes sit along their layer: balanced keeps long edges straight
  *   (an exact L1 placement), median sits each node at the median of its neighbours
- * @property {"hubs" | "off"} references busy shared ingredients get reference chips, or long edges
+ * @property {"crossing" | "hubs" | "off"} references shared ingredients get copies where edges would cross, chips
+ *   when busy, or long edges
  * @property {number} shareMin   how many users make an ingredient busy
  * @property {number} stability  0–1: how firmly a change keeps everything else in its place
  *
@@ -629,13 +630,14 @@ export const LAYOUTS = {
       ),
       select(
         "references",
-        "Busy shared ingredients",
+        "Shared ingredients",
         [
-          { value: "hubs", label: "References under each user" },
+          { value: "crossing", label: "Split where edges would cross" },
+          { value: "hubs", label: "Chips for busy ones" },
           { value: "off", label: "Long edges" },
         ],
-        "hubs",
-        "An ingredient used by many recipes keeps one edge, from a recipe just above it; every other recipe that uses it gets a small chip under it instead of an edge.",
+        "crossing",
+        "Split: a shared ingredient keeps every edge with a clean path; a recipe whose edge to it would cross another edge gets its own copy of it instead. Chips: an ingredient used by shareMin recipes or more keeps one edge, and every other recipe gets a small chip under it.",
       ),
       range(
         "shareMin",

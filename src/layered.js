@@ -20,11 +20,13 @@
 //      (Gansner's auxiliary-graph LP) at a fraction of the cost. Placement "median" is the older unweighted version.
 //   6. Edges follow their dummy nodes ("bends"), recorded per edge for the edge geometry.
 //
-// References (step 2b, on by default): every cross-link into an ingredient used by `shareMin` or more recipes ends
-// at a reference instead: a small chip one layer below its source, laid out like a little node (references.js draws
-// it). Only the ingredient's tree edge stays a real edge. Busy ingredients are what make dense recipe graphs a
-// tangle, and even their short edges cross everything between their users; on the crafting fixtures references
-// remove 75–95% of crossings and over half the ink, and on real recipe data 96%.
+// References (step 2b): a cross-link can end at a reference instead of its ingredient, a node one layer below its
+// source laid out like any other (references.js draws it). Only the ingredient's tree edge always stays a real edge.
+// With references "crossing" (the default), the graph is ordered once without any, and every cross-link that still
+// crosses another edge then ends at a copy of its ingredient beside its user: a shared ingredient keeps every edge
+// that has a clean path, and is split only where there's none. With "hubs", every cross-link into an ingredient used
+// by `shareMin` or more recipes ends at a small chip instead (busy ingredients are what make dense recipe graphs a
+// tangle; on the crafting fixtures chips remove 75–95% of crossings).
 //
 // Stability (with a hint: the layout before a change): the old order, pulls towards old places, and the drawing
 // moved so kept nodes stay put. See layeredLayout.
@@ -79,12 +81,13 @@ export function layeredLayout(
     ranking = "longest",
     ordering = "sifting",
     placement = "balanced",
-    references = "hubs",
+    references = "crossing",
     shareMin = 3,
     stability = STABILITY,
   } = {},
   sizing = DEFAULT_SIZING,
   hint = null,
+  collect = false,
 ) {
   const { nodes, edges } = graph;
   const n = nodes.length;
@@ -161,12 +164,43 @@ export function layeredLayout(
   const lay = Array.from(layerOf); // layer per layout node
   const endOf = edges.map((_, ei) => to(ei)); // where each edge ends in the layout: its target or a reference
   const refs = [];
-  if (references === "hubs") {
+  // "crossing": the cross-links that still cross something once ordered without references (null: too big to
+  // check, so busy ingredients get chips as with "hubs").
+  const split = /** @type {Set<number> | null} */ (
+    /** @type {unknown} */ (
+      references === "crossing" && !collect
+        ? layeredLayout(
+            graph,
+            {
+              direction,
+              levelGap,
+              nodeGap,
+              ranking,
+              ordering,
+              placement,
+              references: "off",
+              shareMin,
+              stability,
+            },
+            sizing,
+            hint,
+            true,
+          )
+        : null
+    )
+  );
+  const copies = !!split;
+  // A split stays split while its edge lasts (the hint knows it ended at a reference): which edges cross can tip
+  // with any change, and copies coming and going would move everything round them.
+  if (split && hint?.refX)
+    for (let ei = 0; ei < edges.length; ei++)
+      if (!Number.isNaN(hint.refX[ei])) split.add(ei);
+  if (references === "hubs" || (references === "crossing" && !collect)) {
     const uses = new Int32Array(n);
     edges.forEach((e) => uses[e.target]++);
     edges.forEach((e, ei) => {
       if (tree[ei] || reversed[ei] || e.source === e.target) return;
-      if (uses[e.target] < shareMin) return;
+      if (split ? !split.has(ei) : uses[e.target] < shareMin) return;
       endOf[ei] = n + refs.length;
       lay.push(layerOf[e.source] + 1);
       refs.push({ edge: ei, source: e.source, target: e.target });
@@ -274,6 +308,11 @@ export function layeredLayout(
   layers = ordered.layers;
   const bestCrossings = ordered.crossings;
   indexLayers(layers, pos);
+  // The first of two passes (references "crossing"): only which cross-links cross.
+  if (collect)
+    return /** @type {any} */ (
+      crossingLinks(chains, lay, pos, tree, layerCount)
+    );
 
   // ---- 5. positions along each layer
   const left = new Float64Array(total),
@@ -282,11 +321,13 @@ export function layeredLayout(
     far = new Float64Array(total);
   levelFootprints(nodes, sizing, direction, left, right, near, far);
   refs.forEach(({ target }, k) => {
-    // A reference is a chip with no label: REFERENCE_HALF each way, or less if its ingredient is smaller.
-    left[n + k] = Math.min(REFERENCE_HALF, left[target]);
-    right[n + k] = Math.min(REFERENCE_HALF, right[target]);
-    near[n + k] = Math.max(-REFERENCE_HALF, near[target]);
-    far[n + k] = Math.min(REFERENCE_HALF, far[target]);
+    // A copy takes its ingredient's whole footprint; a chip has no label: REFERENCE_HALF each way, or less if its
+    // ingredient is smaller.
+    const half = copies ? Infinity : REFERENCE_HALF;
+    left[n + k] = Math.min(half, left[target]);
+    right[n + k] = Math.min(half, right[target]);
+    near[n + k] = Math.max(-half, near[target]);
+    far[n + k] = Math.min(half, far[target]);
   });
   const gap = nodeGap + sizing.gap;
   const dummyHalf = 2;
@@ -420,7 +461,7 @@ export function layeredLayout(
     references: refs.map(({ edge, source, target }, k) => {
       const [x, y] = place(n + k);
       const radius = Math.min(left[n + k], right[n + k]);
-      return { edge: edges[edge], source, target, x, y, radius };
+      return { edge: edges[edge], source, target, x, y, radius, copy: copies };
     }),
     crossings: bestCrossings,
     initialCrossings,
@@ -778,6 +819,7 @@ function seeded(seed) {
  * @property {number} x      where the chip sits
  * @property {number} y
  * @property {number} radius the most the chip should reach from its centre: the room the layout kept for it
+ * @property {boolean} copy drawn as a whole copy of its ingredient (label, icon and all), not a chip
  */
 
 /**
@@ -847,6 +889,37 @@ function transpose(layers, upper, lower, pos) {
     }
     if (!improved) break;
   }
+}
+
+/** Above this many segments between two layers, crossingLinks doesn't check (its cost grows with their square). */
+const CROSSING_CHECK_MAX = 4000;
+
+/**
+ * The cross-links (edges that aren't tree edges) with a segment crossing another edge's, between any two neighbouring
+ * layers, as a set of edge indices; null when some pair of layers has too many segments to check.
+ * ponytail: every pair of segments per pair of layers (fine for recipe graphs); a Fenwick sweep as in countCrossings
+ * if bigger graphs need it.
+ */
+function crossingLinks(chains, lay, pos, tree, layerCount) {
+  const between = Array.from({ length: layerCount }, () => []);
+  chains.forEach((chain, ei) => {
+    for (let i = 1; i < chain.length; i++)
+      between[lay[chain[i - 1]]].push(pos[chain[i - 1]], pos[chain[i]], ei);
+  });
+  const out = new Set();
+  for (const segs of between) {
+    if (segs.length / 3 > CROSSING_CHECK_MAX) return null;
+    for (let a = 0; a < segs.length; a += 3)
+      for (let b = a + 3; b < segs.length; b += 3) {
+        const ea = segs[a + 2],
+          eb = segs[b + 2];
+        if (ea === eb) continue;
+        if ((segs[a] - segs[b]) * (segs[a + 1] - segs[b + 1]) >= 0) continue;
+        if (!tree[ea]) out.add(ea);
+        if (!tree[eb]) out.add(eb);
+      }
+  }
+  return out;
 }
 
 /**

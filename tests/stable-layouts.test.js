@@ -100,21 +100,29 @@ test("one leaf added or removed moves only a local neighbourhood of the merged t
     "crafting-large",
   ]) {
     const json = fixture(name);
-    const before = lay(json);
-    for (const at of [0.25, 0.5, 0.75])
-      for (const changed of oneLeafChanges(json, at)) {
-        const after = lay(changed, "merged", before);
-        const { moved, shift } = moves(before, after);
-        assert.ok(moved < 0.2, `${name} @${at}: ${moved * 100}% moved`);
-        assert.ok(shift < 30, `${name} @${at}: mean move ${shift} px`);
-        assert.ok(
-          after.routing.crossings <= before.routing.crossings * 1.05 + 2,
-          `${name} @${at}: ${before.routing.crossings} → ${after.routing.crossings} crossings`,
-        );
-        // Without the hint, nearly everything moves (what the hint is for).
-        if (at === 0.5 && name === "crafting-medium")
-          assert.ok(moves(before, lay(changed)).moved > 0.5);
-      }
+    for (const references of ["hubs", "crossing"]) {
+      const before = lay(json, "merged", null, { references });
+      for (const at of [0.25, 0.5, 0.75])
+        for (const changed of oneLeafChanges(json, at)) {
+          const after = lay(changed, "merged", before, { references });
+          const { moved, shift } = moves(before, after);
+          const what = `${name} ${references} @${at}`;
+          assert.ok(moved < 0.2, `${what}: ${moved * 100}% moved`);
+          assert.ok(shift < 30, `${what}: mean move ${shift} px`);
+          // Chips are fixed by the graph; splits follow the order, which a change can tip.
+          if (references === "hubs")
+            assert.ok(
+              after.routing.crossings <= before.routing.crossings * 1.05 + 2,
+              `${what}: ${before.routing.crossings} → ${after.routing.crossings} crossings`,
+            );
+          // Without the hint, nearly everything moves (what the hint is for).
+          if (at === 0.5 && name === "crafting-medium")
+            assert.ok(
+              moves(before, lay(changed, "merged", null, { references }))
+                .moved > 0.5,
+            );
+        }
+    }
   }
 });
 
@@ -131,37 +139,48 @@ test("collapsing and expanding a recipe in the merged tree keeps everything else
           return model.nodes[i].id;
     return null;
   });
-  const c = new GraphController(model, null, {
-    worker: false,
-    layout: "merged",
-  });
-  c.setViewport(800, 600);
-  const homes = () =>
-    new Map(c.graph.nodes.map((n) => [n.id, [n.homeX, n.homeY]]));
-  const share = (a, b) => {
-    let moved = 0,
-      kept = 0;
-    for (const [id, [x, y]] of b) {
-      const was = a.get(id);
-      if (!was) continue;
-      if (Math.hypot(x - was[0], y - was[1]) > 2) moved++;
-      kept++;
+  // Chips are fixed by the graph; splits (references "crossing") take their ingredient's room and follow the order,
+  // so a change ripples a little further.
+  for (const [references, most] of [
+    ["hubs", 0.1],
+    ["crossing", 0.2],
+  ]) {
+    const c = new GraphController(model, null, {
+      worker: false,
+      layout: "merged",
+      layoutOptions: { references },
+    });
+    c.setViewport(800, 600);
+    const homes = () =>
+      new Map(c.graph.nodes.map((n) => [n.id, [n.homeX, n.homeY]]));
+    const share = (a, b) => {
+      let moved = 0,
+        kept = 0;
+      for (const [id, [x, y]] of b) {
+        const was = a.get(id);
+        if (!was) continue;
+        if (Math.hypot(x - was[0], y - was[1]) > 2) moved++;
+        kept++;
+      }
+      return moved / kept;
+    };
+    for (const id of recipes) {
+      const start = homes();
+      c.collapse(id);
+      const folded = homes();
+      assert.ok(folded.size < start.size, `${id} hid something`);
+      assert.ok(share(start, folded) < most, `${references}: collapsing ${id}`);
+      c.expand(id, { depth: Infinity });
+      const open = homes();
+      assert.equal(open.size, start.size);
+      assert.ok(share(folded, open) < most, `${references}: expanding ${id}`);
+      assert.ok(
+        share(start, open) < most,
+        `${references}: ${id} back about where it started`,
+      );
     }
-    return moved / kept;
-  };
-  for (const id of recipes) {
-    const start = homes();
-    c.collapse(id);
-    const folded = homes();
-    assert.ok(folded.size < start.size, `${id} hid something`);
-    assert.ok(share(start, folded) < 0.1, `collapsing ${id}`);
-    c.expand(id, { depth: Infinity });
-    const open = homes();
-    assert.equal(open.size, start.size);
-    assert.ok(share(folded, open) < 0.1, `expanding ${id}`);
-    assert.ok(share(start, open) < 0.1, `${id} back about where it started`);
+    c.destroy();
   }
-  c.destroy();
 });
 
 test("with no hint every layout is as it was; with a hint at stability 0, the merged tree is the fresh drawing moved into place", () => {

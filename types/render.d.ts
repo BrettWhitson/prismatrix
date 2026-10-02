@@ -112,6 +112,10 @@ export type DisplayNode = {
    */
   reference?: number;
   /**
+   * a reference drawn as a whole copy of its ingredient (a split)
+   */
+  copy?: boolean;
+  /**
    * a node that left the graph, folding away
    */
   ghost?: boolean;
@@ -203,6 +207,7 @@ export type Shown = {
  * @property {Record<string, any>} [style]
  * @property {Record<string, any>} [data]
  * @property {number} [reference] a reference chip: its ingredient's index
+ * @property {boolean} [copy]    a reference drawn as a whole copy of its ingredient (a split)
  * @property {boolean} [ghost]    a node that left the graph, folding away
  *
  * @typedef {object} DisplayEdge An edge as painters read it (graph.js's Edge, or one that's only drawn).
@@ -398,8 +403,10 @@ export declare function haloList(scene: any): Halo[];
  * round), stroked. The WebGL painter draws the same rings as distance fields (HALO_FRAGMENT).
  */
 export declare function drawHalos(ctx: any, scene: any): void;
-/** How many of the scene's display nodes are real (the rest are reference chips and ghosts, never cards). */
+/** How many of the scene's display nodes are real (the rest are references and ghosts). */
 export declare const realCount: (scene: any) => number;
+/** Whether display node `i` is drawn as a card: cards on, and a real node or a copy of one (not a chip or ghost). */
+export declare const isCard: (scene: any, i: any) => boolean;
 /** Fill the canvas with `colour`, or clear it to transparent when there's none. */
 export declare function clearTo(
   ctx: any,

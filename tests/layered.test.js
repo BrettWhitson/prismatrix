@@ -460,8 +460,8 @@ test("simplex layering leaves fewer long edges than longest path", () => {
         (s, b) => s + b.length,
         0,
       );
-    simplex += count({ ranking: "simplex" });
-    longest += count({ ranking: "longest" });
+    simplex += count({ ranking: "simplex", references: "hubs" });
+    longest += count({ ranking: "longest", references: "hubs" });
   }
   assert.ok(simplex < longest * 0.95, `${simplex} vs ${longest}`);
 });
@@ -470,9 +470,13 @@ test("global sifting keeps each long edge in one place and doesn't add crossings
   for (let seed = 1; seed <= 10; seed++) {
     const bary = layeredLayout(recipes(seed, 120, 25), {
       ordering: "barycenter",
+      references: "hubs",
     });
     const g = recipes(seed, 120, 25);
-    const sifted = layeredLayout(g, { ordering: "sifting" });
+    const sifted = layeredLayout(g, {
+      ordering: "sifting",
+      references: "hubs",
+    });
     assert.ok(sifted.crossings <= bary.crossings * 1.05, `seed ${seed}`);
     // A long edge's bends never swap sides with another long edge's between layers: check pairs that share layers.
     const chains = [...sifted.bends.values()].filter((b) => b.length > 1);
@@ -575,7 +579,7 @@ test("an ingredient's tree edge is its edge from one layer up, not its shallowes
       (e) => g.nodes[e.source].id === s && g.nodes[e.target].id === t,
     );
   assert.ok(byPair("top", "hub").tree, "the forest picks the shallowest user");
-  const routing = layeredLayout(g, { shareMin: 3 });
+  const routing = layeredLayout(g, { shareMin: 3, references: "hubs" });
   assert.deepEqual(routing.references.map((r) => g.nodes[r.source].id).sort(), [
     "mid",
     "top",
@@ -600,7 +604,11 @@ test("reference chips are compact: chips side by side on a layer sit closer than
     for (const u of ["a", "b"]) edges.push({ source: u, target: `h${h}` });
   }
   const g = graphOf(nodes, edges);
-  const routing = layeredLayout(g, { shareMin: 3, nodeGap: 16 }, wide);
+  const routing = layeredLayout(
+    g,
+    { shareMin: 3, nodeGap: 16, references: "hubs" },
+    wide,
+  );
   const underR = routing.references
     .filter((r) => g.nodes[r.source].id === "r")
     .map((r) => r.x)
@@ -797,4 +805,86 @@ test("network simplex finishes on big graphs: 20,000 recipe nodes reach the opti
   const r = networkSimplex(g.nodes.length, tail, head, ones, ones);
   assert.ok(r.optimal);
   assert.ok(r.pivots > 1000, `${r.pivots} pivots`);
+});
+
+// ---- splits (references "crossing", the default) --------------------------------------------------------------------
+
+test("a shared ingredient keeps its edges where they have a clean path, and is split where one would cross", () => {
+  // Two neighbours share an ingredient: nothing crosses, so it's one node with two edges.
+  const near = graphOf(
+    ["r", "a", "b", "x"].map((id) => ({ id })),
+    [
+      ["r", "a"],
+      ["r", "b"],
+      ["a", "x"],
+      ["b", "x"],
+    ].map(([source, target]) => ({ source, target })),
+  );
+  assert.deepEqual(layeredLayout(near).references, []);
+  // Random recipe graphs: whatever still crossed ends at a copy beside its user, and far fewer crossings are left.
+  for (let seed = 1; seed <= 5; seed++) {
+    const off = layeredLayout(recipes(seed, 120, 25), { references: "off" });
+    const g = recipes(seed, 120, 25);
+    const split = layeredLayout(g);
+    assert.ok(split.references.length > 0, `seed ${seed}: some split`);
+    const cut = new Set(split.references.map((r) => r.edge));
+    for (const ref of split.references) {
+      assert.equal(ref.copy, true);
+      // Its ingredient keeps one real edge (its tree edge): only extra users get copies.
+      assert.ok(
+        g.edges.some((e) => e.target === ref.target && !cut.has(e)),
+        `seed ${seed}: ${g.nodes[ref.target].id} keeps an edge`,
+      );
+    }
+    assert.ok(
+      split.crossings < off.crossings * 0.5,
+      `seed ${seed}: ${off.crossings} → ${split.crossings} crossings`,
+    );
+  }
+  // The same graph always splits the same way.
+  const once = layeredLayout(recipes(3, 120, 25)).references;
+  const again = layeredLayout(recipes(3, 120, 25)).references;
+  assert.deepEqual(
+    once.map((r) => [r.source, r.target, r.x, r.y]),
+    again.map((r) => [r.source, r.target, r.x, r.y]),
+  );
+});
+
+test("a split is drawn as a whole copy of its ingredient: its label, size, shape and looks", async () => {
+  const { GraphController } = await import("../src/controller.js");
+  const { withReferences } = await import("../src/references.js");
+  // A fixture with shared parts, every shared ingredient marked with a ring and an icon.
+  const json = JSON.parse(
+    readFileSync(
+      new URL("./fixtures/graphs/crafting-medium.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const uses = new Map();
+  for (const e of json.edges) uses.set(e.target, (uses.get(e.target) ?? 0) + 1);
+  for (const n of json.nodes)
+    if (uses.get(n.id) > 1)
+      n.style = { ...n.style, ring: "#ff0000", icon: "x.png" };
+  const c = new GraphController(json, null, {
+    layout: "merged",
+    worker: false,
+  });
+  c.setViewport(800, 600);
+  c.run(500, { start: 0 });
+  const refs = c.routing.references;
+  assert.ok(refs.length > 0, "something was split");
+  const shown = withReferences(c.graph, refs, {
+    looks: c.looks,
+    shade: c.scene.shade,
+    appear: c.scene.appear,
+  });
+  const copy = shown.graph.nodes.length - refs.length;
+  const node = shown.graph.nodes[copy];
+  assert.equal(node.copy, true);
+  assert.equal(node.label, c.graph.nodes[refs[0].target].label);
+  assert.equal(shown.looks.shape[copy], shown.looks.shape[refs[0].target]);
+  assert.equal(shown.looks.radius[copy], shown.looks.radius[refs[0].target]);
+  assert.equal(shown.looks.ring[copy], "#ff0000");
+  assert.equal(shown.looks.icon[copy], "x.png");
+  c.destroy();
 });

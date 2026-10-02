@@ -8,7 +8,13 @@ import {
   trimmedRoute,
 } from "./geometry.js";
 import { linkGlyphs } from "./references.js";
-import { edgeAlpha, edgeLineage, haloList, nodeAlpha } from "./render.js";
+import {
+  edgeAlpha,
+  edgeLineage,
+  haloList,
+  isCard,
+  nodeAlpha,
+} from "./render.js";
 import { iconBox } from "./icons.js";
 
 /** Shape names to the ids the node shader switches on. */
@@ -190,7 +196,7 @@ function packNode(scene, n, out, origin, colour, iconAt) {
     out.fill(0, o + 30, o + 34);
     out[o + 34] = -1;
   }
-  out[o + 35] = looks.card && i < (scene.matrix?.count ?? Infinity) ? 1 : 0;
+  out[o + 35] = isCard(scene, i) ? 1 : 0;
 }
 
 const NONE = [0, 0, 0];

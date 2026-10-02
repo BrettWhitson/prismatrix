@@ -587,7 +587,7 @@ export function endTrims(scene) {
 /** How far an edge stays off node `i` when nothing else is in the way: its radius, or its card's half height. */
 export function clearOf(scene, i) {
   const real = scene.matrix?.count ?? Infinity;
-  return scene.node?.look === "card" && i < real
+  return scene.node?.look === "card" && (i < real || scene.graph.nodes[i]?.copy)
     ? scene.node.cardHeight / 2
     : scene.looks.radius[i];
 }

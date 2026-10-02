@@ -41,6 +41,7 @@ export declare function layeredLayout(
   },
   sizing?: import("./layouts.js").Sizing,
   hint?: import("./layout-job.js").LayoutHint | null,
+  collect?: boolean,
 ): {
   kind: "layered";
   direction: string;
@@ -86,6 +87,10 @@ export type Reference = {
    * the most the chip should reach from its centre: the room the layout kept for it
    */
   radius: number;
+  /**
+   * drawn as a whole copy of its ingredient (label, icon and all), not a chip
+   */
+  copy: boolean;
 };
 /**
  * Edge crossings between every pair of neighbouring layers, at places `pos` (each node's index on its layer): for

@@ -67,6 +67,7 @@ import {
  * @property {Record<string, any>} [style]
  * @property {Record<string, any>} [data]
  * @property {number} [reference] a reference chip: its ingredient's index
+ * @property {boolean} [copy]    a reference drawn as a whole copy of its ingredient (a split)
  * @property {boolean} [ghost]    a node that left the graph, folding away
  *
  * @typedef {object} DisplayEdge An edge as painters read it (graph.js's Edge, or one that's only drawn).
@@ -449,7 +450,7 @@ export function drawHalos(ctx, scene) {
     const n = graph.nodes[i];
     ctx.strokeStyle = h.colour;
     ctx.beginPath();
-    const card = looks.card && i < realCount(scene) ? looks.card : null;
+    const card = isCard(scene, i) ? looks.card : null;
     haloPath(
       ctx,
       card ? "card" : looks.shape[i],
@@ -533,9 +534,13 @@ function haloPath(ctx, shape, x, y, r, o, card = null) {
   }
 }
 
-/** How many of the scene's display nodes are real (the rest are reference chips and ghosts, never cards). */
+/** How many of the scene's display nodes are real (the rest are references and ghosts). */
 export const realCount = (scene) =>
   Math.min(scene.matrix?.count ?? Infinity, scene.graph.nodes.length);
+
+/** Whether display node `i` is drawn as a card: cards on, and a real node or a copy of one (not a chip or ghost). */
+export const isCard = (scene, i) =>
+  !!scene.looks.card && (i < realCount(scene) || !!scene.graph.nodes[i]?.copy);
 
 /** Fill the canvas with `colour`, or clear it to transparent when there's none. */
 export function clearTo(ctx, { width, height, dpr }, colour) {
@@ -658,7 +663,6 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
   const background = scene.background ?? scene.theme?.background;
   ctx.setTransform(...worldTransform(scene));
   ctx.imageSmoothingQuality = "high";
-  const real = realCount(scene);
   for (const n of graph.nodes) {
     const alpha = nodeAlpha(scene, n.index);
     if (!alpha) continue;
@@ -701,7 +705,7 @@ export function drawNodes(ctx, scene, icons = iconStore()) {
       stack: looks.stack?.[i] ?? 0,
       badge,
       badgeShown,
-      card: looks.card && i < real ? looks.card : null,
+      card: isCard(scene, i) ? looks.card : null,
       theme: scene.theme ?? DEFAULT_THEME,
     };
     const marked = !!(

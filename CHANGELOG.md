@@ -67,6 +67,13 @@ Nothing from 0.4 carries over: an app moves to the new API ([API.md](API.md)). T
 - **Tree steps and curves turn clear of labels:** the run across sits halfway between where an edge leaves its
   parent (past its label) and where it reaches its child, not halfway between their centres, so it no longer cuts
   through a big parent's label.
+- **Merged tree: split where edges would cross** (`references: "crossing"`, the new default). The graph is ordered
+  once without references; every cross-link that still crosses another edge then ends at a whole copy of its
+  ingredient beside its user (label, icon and looks; hovering or tapping it is the real one), and the graph is laid
+  out again. A shared ingredient keeps every edge with a clean path. On the fixtures that leaves 0 crossings on most
+  (5–6 on two small ones, 59 on the 1,589-node real-data twin), for about twice the layout time. A split stays
+  split while its edge lasts, so expanding and collapsing don't flip copies on and off. Chips (`"hubs"`) are
+  still there.
 - **Speed at 40k nodes:** edges are traced on the GPU from a positions texture, so a tree morph frame takes a few ms
   (105–199 ms when the CPU traced them; merged-tree morph frames are still 47–52 ms). Pans rebuild nothing;
   hover hit tests take 0.07 ms at 100k nodes; a restyle uploads only the bytes that changed.

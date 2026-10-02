@@ -110,9 +110,10 @@ export type MergedLayoutOptions = {
    */
   placement: "balanced" | "median";
   /**
-   * busy shared ingredients get reference chips, or long edges
+   * shared ingredients get copies where edges would cross, chips
+   * when busy, or long edges
    */
-  references: "hubs" | "off";
+  references: "crossing" | "hubs" | "off";
   /**
    * how many users make an ingredient busy
    */
@@ -215,7 +216,8 @@ export type LayoutSpec = {
  * @property {"sifting" | "barycenter"} ordering how each layer is ordered to cut crossings
  * @property {"balanced" | "median"} placement where nodes sit along their layer: balanced keeps long edges straight
  *   (an exact L1 placement), median sits each node at the median of its neighbours
- * @property {"hubs" | "off"} references busy shared ingredients get reference chips, or long edges
+ * @property {"crossing" | "hubs" | "off"} references shared ingredients get copies where edges would cross, chips
+ *   when busy, or long edges
  * @property {number} shareMin   how many users make an ingredient busy
  * @property {number} stability  0–1: how firmly a change keeps everything else in its place
  *

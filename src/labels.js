@@ -367,8 +367,10 @@ export function planText(scene, { fit, measure = null, near = null }) {
         pill: false,
       });
     }
-    for (let i = 0; i < real; i++) {
+    // Real nodes, and copies of them (references "crossing"): their badges too.
+    for (let i = 0; i < graph.nodes.length; i++) {
       const n = graph.nodes[i];
+      if (i >= real && !n.copy) continue;
       if (!scene.collapsed?.[i] && !n.style?.badge) continue;
       if (!inside(n)) continue;
       const alpha = nodeAlpha(scene, i);
@@ -465,9 +467,9 @@ export function planText(scene, { fit, measure = null, near = null }) {
 
   const cards = node.look === "card";
   if (cards && show.labels)
-    for (let i = 0; i < real; i++) {
+    for (let i = 0; i < graph.nodes.length; i++) {
       const n = graph.nodes[i];
-      if (inside(n))
+      if ((i < real || n.copy) && inside(n))
         cardText(scene, n, show.small, colours, fit, measure, items);
     }
   else if (labelled && show.labels) {

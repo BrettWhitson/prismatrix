@@ -802,12 +802,21 @@ other edge into it is drawn as a cross-link.
 
 ### merged
 
-A layered (Sugiyama) drawing for graphs with shared nodes: every shared ingredient appears once. Cycles are broken by
-reversing back edges; nodes are put on layers (`ranking`), ordered along each layer to cut crossings (`ordering`), and
-placed so long edges run straight (`placement`). An ingredient used by many recipes (`shareMin` or more) keeps one
-edge, from a recipe a layer above it, and every other recipe that uses it gets a small reference chip under it
-instead (`references`): the chip shows a link glyph, pointing at it lights up the ingredient, and the ingredient
-shows "×N". With a hint, `stability` decides how firmly a change keeps everything else in place (0: laid out afresh,
+A layered (Sugiyama) drawing for graphs with shared nodes: a shared ingredient appears once wherever its edges have a
+clean path. Cycles are broken by reversing back edges; nodes are put on layers (`ranking`), ordered along each layer
+to cut crossings (`ordering`), and placed so long edges run straight (`placement`). Shared ingredients
+(`references`):
+
+- `crossing` (the default): the graph is ordered once as it is; every cross-link that still crosses another edge then
+  ends at a copy of its ingredient beside its user instead, and the graph is laid out again. A copy is the ingredient
+  drawn whole (label, icon and looks); pointing at it or tapping it is the ingredient (`tap` says `reference: true`).
+  An ingredient always keeps its own edge from a recipe a layer above it. With a hint, a split stays split while its
+  edge lasts.
+- `hubs`: an ingredient used by many recipes (`shareMin` or more) keeps that one edge, and every other recipe that
+  uses it gets a small chip under it instead, with a link glyph.
+- `off`: every edge is drawn, bending round the layers it crosses.
+
+An ingredient with copies or chips shows "×N". With a hint, `stability` decides how firmly a change keeps everything else in place (0: laid out afresh,
 then only moved into place). Edges are curves unless the edge `shape` was set on purpose.
 
 <!-- generated:layout-merged -->
@@ -820,7 +829,7 @@ then only moved into place). Edges are curves unless the edge `shape` was set on
 | `ranking` | `"longest"` | `longest` (by depth from the top), `simplex` (fewest long edges) | Fewest long edges lets a node sit lower, next to what it's made from. |
 | `ordering` | `"sifting"` | `sifting` (global sifting), `barycenter` (faster) | How nodes are ordered along each layer to cut crossings. |
 | `placement` | `"balanced"` | `balanced` (straight long edges), `median` | Where nodes sit along their layer: balanced keeps long edges straight (an exact L1 placement), median sits each node at the median of its neighbours |
-| `references` | `"hubs"` | `hubs` (references under each user), `off` (long edges) | An ingredient used by many recipes keeps one edge, from a recipe just above it; every other recipe that uses it gets a small chip under it instead of an edge. |
+| `references` | `"crossing"` | `crossing` (split where edges would cross), `hubs` (chips for busy ones), `off` (long edges) | Split: a shared ingredient keeps every edge with a clean path; a recipe whose edge to it would cross another edge gets its own copy of it instead. Chips: an ingredient used by shareMin recipes or more keeps one edge, and every other recipe gets a small chip under it. |
 | `shareMin` | `3` | 2 – 20 | How many recipes must use an ingredient before all but one get references. |
 | `stability` | `0.5` | 0 – 1 | When the graph changes (a recipe expanded or collapsed), how firmly everything else keeps its place: the old order is kept and nodes are pulled back to where they were. At 0, every change is laid out afresh. |
 
