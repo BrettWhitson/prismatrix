@@ -681,3 +681,19 @@ test("new nodes find where to grow from in one pass: a long new chain costs abou
     assert.deepEqual([c1.x[i], c1.y[i]], [c1.x[at], c1.y[at]], id);
   }
 });
+
+test("frames at rest (hover fades) don't step a sleeping simulation; a release wakes it", (t) => {
+  const { c, wait, now } = setup(SMALL, { physics: "elastic" });
+  wait(3000);
+  assert.ok(c.sim.asleep);
+  const advance = t.mock.method(c.sim, "advance");
+  c.pointerMove(onScreen(c, "a1"));
+  assert.equal(wait(500).busy, false);
+  assert.equal(advance.mock.callCount(), 0);
+  const s = onScreen(c, "b1");
+  c.pointerDown({ ...s, time: now() });
+  c.pointerMove({ x: s.x + 40, y: s.y, time: now() });
+  c.pointerUp({ time: now() + 500 });
+  wait(100);
+  assert.ok(advance.mock.callCount() > 0);
+});

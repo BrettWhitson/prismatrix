@@ -1118,6 +1118,10 @@ export class GraphController {
       }
       this.version++;
       busy = true;
+    } else if (this.sim.asleep) {
+      // Nothing to step: a simulation at rest stays at rest until it's woken (a release, new settings, a layout) or
+      // a node is held. (Frames at rest still come for hover fades: they mustn't pay for physics.)
+      busy = false;
     } else {
       this.sim.advance(dt);
       if (this.sim.moved) this.version++;
