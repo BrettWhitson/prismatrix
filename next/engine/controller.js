@@ -954,7 +954,10 @@ export class GraphController {
     target.matrix.homeY.set(result.homeY);
     let previous = null,
       was = null,
-      fit = job.fit ?? (this.framed ? (this.pendingFit ?? "animate") : null);
+      // A framed view frames the new layout, except under a drag or pan: the camera then holds still on what's held.
+      fit =
+        job.fit ??
+        (this.framed && !this.pointer ? (this.pendingFit ?? "animate") : null);
     const asked = this.pendingFit; // a fit() asked for while this layout was on its way
     this.pendingFit = null;
     if (job.rebuilding) {
