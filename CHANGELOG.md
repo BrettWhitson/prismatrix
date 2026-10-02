@@ -33,6 +33,35 @@ draws with WebGL2 (Canvas 2D as the fallback), and isn't exported from the packa
 - **Layouts in a worker** for graphs of 2,000 nodes or more: the page keeps drawing and taking input while a big
   layout is worked out, then the new layout morphs in. A 30k → 40k update now blocks the page for about 0.13 s.
 - **Radial edges ease between step and curve** as a node is dragged off its ring and back, instead of snapping.
+- **Quality and robustness:**
+  - **Merged tree quality:** each ingredient's tree edge comes from a user one layer up; every cross-link into a
+    busy ingredient becomes a compact reference chip; several seeded orderings on small graphs, transposition on big
+    ones; an exact L1 placement that keeps long edges straight; curves by default. Crossings on the real recipe data
+    (3,294 items) 220,687 → 20,978; crafting-large 1,192 → 640; Mjölnir 2 → 0. Network simplex reaches its optimum
+    on the real data in 47 ms (was 2.4 s).
+  - **Deterministic:** no layout reads a clock any more (work budgets instead), so the same graph always gives the
+    same drawing, on the page or in the worker.
+  - **Stable under change:** layouts take the previous layout as a hint (`stability`, default 0.5). Adding or
+    removing a leaf in the merged tree moves 0–2% of the other nodes (was 81–100%).
+  - **Expand and collapse:** `collapse`, `expand`, `toggle`, `expandAll`, `collapseTo(depth)`, `reveal`, a `depth`
+    option to start with the top levels; children grow out of their parent and fold back into it; shared
+    ingredients stay while any recipe showing them is open.
+  - **Interaction:** pointers by id, pinch zoom, two-finger trackpad pan, wheel line/page modes; tap, double tap,
+    long press, hover enter/leave and selection events (`on(type, fn)`), `select`, `focus(id)`, `laidOut()` and
+    `settled()`; drags, hover and fades survive graph changes; Fit frames any graph; the camera holds its place
+    across relayouts and under a drag; selected nodes get a halo.
+  - **Looks:** dark and light themes (`theme`, `setTheme`); node icons from an atlas, `tile` nodes that are their
+    icon, per-node borders (`stroke`, `strokeWidth`); a restyle of a few nodes uploads only those bytes.
+  - **Model:** one-node updates cost what they change (0.01–0.6 ms at 100k nodes, was 140–630 ms); data-only changes
+    are free; a throwing listener or an update made from inside a listener can't break it; out-of-range options are
+    clamped and misspelt ones warned about.
+  - **Speed at 40k nodes:** bundled cross-links traced on the GPU too (tree morph frame 263 → 4.5 ms headless);
+    straight edges draw 6 vertices instead of 90; merged-tree pans rebuild nothing; hover 0.07 ms at 100k nodes
+    (was 4.4); physics steps about 10× faster (a typed-array collision grid) and nothing at all while at rest.
+  - **Robustness:** no crash above 130k nodes; a second finger no longer leaves a node held for ever; the layout
+    worker falls back to the page when it can't start or stops answering, and quick updates coalesce (the newest
+    layout lands 1 s after ten quick updates, was 7 s); busy ingredients get mass, so elastic physics settles around
+    hundreds of users; a released node always springs home.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): drives every option, built from the engine's schemas, and
   writes a rolling 30-second engine log to `logs/engine-stats.log`.
 
