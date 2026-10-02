@@ -46,25 +46,18 @@ export function iconBox(shape, fit, aspect, radius, strokeWidth = 0) {
     case "rounded":
     case "tile": {
       // Inside a rounded square of half side 1 and corner radius c: square within the straight sides, and the box's
-      // corner no further out than the corner's arc.
+      // corner no further out than the corner's arc (centred at i, i, i = 1 - c): where it's past it, the box's
+      // corner on the arc, the larger root of (a·h - i)² + (h - i)² = c².
       const c = shape === "tile" ? TILE_CORNER : ROUNDED_CORNER;
+      const i = 1 - c;
       h = Math.min(1, 1 / a);
-      const inner = 1 - c;
-      const cornerFits = (y) => {
-        const dx = Math.max(0, a * y - inner),
-          dy = Math.max(0, y - inner);
-        return Math.hypot(dx, dy) <= c + 1e-12;
-      };
-      if (!cornerFits(h)) {
-        let lo = 0,
-          hi = h;
-        for (let k = 0; k < 40; k++) {
-          const m = (lo + hi) / 2;
-          if (cornerFits(m)) lo = m;
-          else hi = m;
-        }
-        h = lo;
-      }
+      if (Math.hypot(Math.max(0, a * h - i), Math.max(0, h - i)) > c + 1e-12)
+        h =
+          (i * (a + 1) +
+            Math.sqrt(
+              Math.max(0, c * c * (a * a + 1) - i * i * (a - 1) ** 2),
+            )) /
+          (a * a + 1);
       break;
     }
     case "diamond":
@@ -174,11 +167,6 @@ export class IconStore {
     return () => this.listeners.delete(listener);
   }
 
-  /** How many icons are waiting or loading. */
-  get pending() {
-    return this.queue.length + this.active;
-  }
-
   #next() {
     while (this.active < this.concurrency && this.queue.length) {
       const entry = this.queue.shift();
@@ -273,24 +261,20 @@ export class AtlasPacker {
   }
 
   /**
-   * The next free cell: its page (`layer`) and column and row, and how the atlas grew to make room for it ("page":
-   * pages are bigger, "layer": one more page, null: no change). Null when the atlas is full.
-   * @returns {{ layer: number, x: number, y: number, grew: "page" | "layer" | null } | null}
+   * The next free cell: its page (`layer`) and column and row, the page doubling or a page added first when the
+   * last is full. Null when the atlas is full.
+   * @returns {{ layer: number, x: number, y: number } | null}
    */
   place() {
-    let grew = null;
     if (this.used >= this.side * this.side) {
-      if (this.side < this.maxSide) {
-        this.side *= 2;
-        grew = "page";
-      } else if (this.layers < this.maxLayers) {
+      if (this.side < this.maxSide) this.side *= 2;
+      else if (this.layers < this.maxLayers) {
         this.layers++;
         this.used = 0;
-        grew = "layer";
       } else return null;
     }
     const [x, y] = zOrder(this.used++);
-    return { layer: this.layers - 1, x, y, grew };
+    return { layer: this.layers - 1, x, y };
   }
 }
 

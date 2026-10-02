@@ -1,5 +1,5 @@
 // The edge shaders' geometry (gl-shaders.js) in JavaScript, so tests can check what the GPU traces against the CPU's
-// own edge routes: the same constants (gl-edges.js) and the same steps.
+// own edge routes: the same constants (gl-edges.js) and the same steps. And where a label's text sits.
 
 import {
   CORNER_POINTS,
@@ -9,6 +9,8 @@ import {
   RADIAL_CORNER_POINTS,
   RADIAL_POINTS,
 } from "../../next/engine/gl-edges.js";
+import { labelAnchor } from "../../next/engine/boxes.js";
+import { textBox } from "../../next/engine/labels.js";
 import {
   ARC_STEP,
   BUNDLE_STEPS,
@@ -353,4 +355,15 @@ export function piecePoints(shape, axis, a, b, trimA, trimB, corner) {
   }
   out[PIECE_POINTS - 1] = B;
   return out.map(fromAxis);
+}
+
+/**
+ * Where a label sits in the world: its left edge, its vertical middle (the middle of the em box, as Canvas 2D's
+ * "middle" baseline), and its width, for a node at (x, y) of radius `r`, label direction `angle`, font size `size`
+ * and text width `width` (world px).
+ */
+export function labelBox(x, y, r, angle, size, width) {
+  const a = labelAnchor(angle, r);
+  const box = textBox({ size, align: a.align, baseline: a.baseline }, width);
+  return { left: x + a.x + box.left, middle: y + a.y + box.middle, width };
 }

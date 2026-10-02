@@ -517,11 +517,8 @@ test("chips get a link glyph once it's big enough to see; the GPU gets every one
 
 // ---- the WebGL text layer ----------------------------------------------------------------------------------------
 
-import {
-  LABEL_STRIDE,
-  LabelLayer,
-  labelBox,
-} from "../../next/engine/gl-text.js";
+import { LABEL_STRIDE, LabelLayer } from "../../next/engine/gl-text.js";
+import { labelBox } from "../helpers/gl-twins.js";
 
 /** Just enough DOM and GL for the text layer: text 6 px a character, every upload counted. */
 function withDom(body) {

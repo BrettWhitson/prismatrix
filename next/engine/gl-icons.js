@@ -4,8 +4,8 @@
 // are added. Mipmaps keep icons smooth when nodes are small; below ICON_MIN_PX on screen they aren't drawn at all.
 //
 // Icons are loaded by the IconStore (icons.js), which the Canvas 2D painter shares; the atlas copies each in the
-// first time a node asks for it once it's loaded. `version` changes whenever a node's icon may have moved or come
-// in, so the painter packs its nodes again then.
+// first time a node asks for it once it's loaded. `moved` changes when the pages grow (every icon's rectangle with
+// them), so the painter packs its nodes again then.
 
 import { AtlasPacker, ICON_GUTTER, ICON_SLOT, cellFit } from "./icons.js";
 
@@ -36,7 +36,6 @@ export class IconAtlas {
     this.texture = null;
     this.side = 0; // cells per page side the texture has room for
     this.layers = 0;
-    this.version = 0; // bumped by every change: an icon in, more room
     this.moved = 0; // bumped when icons already in moved (bigger pages): every node's icon rectangle changed
     this.mipsDirty = false;
     this.full = false;
@@ -47,11 +46,6 @@ export class IconAtlas {
     gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, 1, 1, 1);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
-  }
-
-  /** Icons in the atlas. */
-  get count() {
-    return this.placed.size;
   }
 
   /**
@@ -102,7 +96,6 @@ export class IconAtlas {
     };
     this.#upload(entry.image, at);
     this.placed.set(entry.id, at);
-    this.version++;
     return at;
   }
 
@@ -166,20 +159,16 @@ export class IconAtlas {
     this.layers = room;
     // Every icon's place on its page, as a share of the page, has changed (when the pages grew).
     if (hadIcons) this.moved++;
-    this.version++;
   }
 
   /** Draw an icon into its cell: fitted whole, and stretched to the cell's border underneath for the gutter. */
   #upload(image, at) {
     const { gl } = this;
     if (!this.scratch) {
-      this.scratch =
-        typeof OffscreenCanvas === "function"
-          ? new OffscreenCanvas(ICON_SLOT, ICON_SLOT)
-          : Object.assign(document.createElement("canvas"), {
-              width: ICON_SLOT,
-              height: ICON_SLOT,
-            });
+      this.scratch = Object.assign(document.createElement("canvas"), {
+        width: ICON_SLOT,
+        height: ICON_SLOT,
+      });
       this.ctx = this.scratch.getContext("2d");
     }
     const ctx = this.ctx;

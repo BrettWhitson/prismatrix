@@ -338,7 +338,6 @@ test("icons load once per URL, a few at a time, and listeners hear each arrive",
   store.get("c.png");
   assert.deepEqual(loader.loads, ["a.png", "b.png"], "two at a time");
   assert.equal(a.state, "loading");
-  assert.equal(store.pending, 3);
   loader.finish("a.png", { width: 32, height: 16 });
   await tick();
   assert.equal(a.state, "ready");
@@ -421,9 +420,11 @@ test("atlas cells fill a page in Z order, keep their places as the page doubles,
   ]);
   const packer = new AtlasPacker({ side: 2, maxSide: 4, maxLayers: 2 });
   const spots = Array.from({ length: 33 }, () => packer.place());
-  assert.equal(spots[3].grew, null);
-  assert.equal(spots[4].grew, "page", "the fifth doubles the page");
-  assert.equal(spots[16].grew, "layer");
+  assert.deepEqual(
+    [spots[4].layer, spots[4].x, spots[4].y],
+    [0, 2, 0],
+    "the fifth doubles the page",
+  );
   assert.deepEqual([spots[16].layer, spots[16].x, spots[16].y], [1, 0, 0]);
   assert.equal(spots[32], null, "full");
   // No two icons share a cell.

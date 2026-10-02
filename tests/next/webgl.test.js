@@ -290,7 +290,8 @@ test("packing grows its buffers mid-frame without losing what's already in them"
   assert.notEqual(out.segments[0], 0, "the first segment survived the growth");
 });
 
-import { bucketScale, labelBox } from "../../next/engine/gl-text.js";
+import { bucketScale } from "../../next/engine/gl-text.js";
+import { labelBox } from "../helpers/gl-twins.js";
 
 test("labels are rasterised at the zoom rounded up to a power of two, between ¼ and 8", () => {
   assert.equal(bucketScale(1, 1), 1);
@@ -670,4 +671,42 @@ test("labels: kept-room labels show until they're a smudge, others until they're
   assert.ok(!labelsShown({ ...node, labelCollide: false }, { k: 0.4 }));
   assert.ok(labelsShown({ ...node, labelCollide: false }, { k: 0.5 }));
   assert.ok(!labelsShown({ ...node, labels: "off" }, { k: 4 }));
+});
+
+import {
+  ROUNDED_CORNER,
+  TILE_CORNER,
+  iconBox,
+} from "../../next/engine/icons.js";
+
+test("a contained icon's box in a rounded square or tile: its corner on the corner's arc, as a bisection finds it", () => {
+  for (const [shape, c] of [
+    ["rounded", ROUNDED_CORNER],
+    ["tile", TILE_CORNER],
+  ])
+    for (let k = -60; k <= 60; k++) {
+      const a = Math.exp(k / 15); // aspects from about 1/55 to 55
+      // The tallest box of this aspect whose corner is inside the arc, by bisection.
+      const inner = 1 - c;
+      const fits = (y) =>
+        Math.hypot(Math.max(0, a * y - inner), Math.max(0, y - inner)) <=
+        c + 1e-12;
+      let h = Math.min(1, 1 / a);
+      if (!fits(h)) {
+        let lo = 0,
+          hi = h;
+        for (let i = 0; i < 40; i++) {
+          const m = (lo + hi) / 2;
+          if (fits(m)) lo = m;
+          else hi = m;
+        }
+        h = lo;
+      }
+      const [w, half] = iconBox(shape, "contain", a, 10, 2);
+      assert.ok(
+        Math.abs(half - h * 8) < 1e-9,
+        `${shape} ${a}: ${half}, ${h * 8}`,
+      );
+      assert.ok(Math.abs(w - a * h * 8) < 1e-9, `${shape} ${a}: width`);
+    }
 });

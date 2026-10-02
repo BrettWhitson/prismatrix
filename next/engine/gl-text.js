@@ -12,7 +12,6 @@
 // brings new text near, it fills in over the next frames a few milliseconds at a time, while the previous atlas
 // stands in, so labels never blink out.
 
-import { labelAnchor } from "./boxes.js";
 import { palette, room } from "./gl-pack.js";
 import {
   PILL,
@@ -40,17 +39,6 @@ const MAX_PAGES = 4;
 export function bucketScale(zoom, dpr) {
   const step = 2 ** Math.min(3, Math.max(-2, Math.ceil(Math.log2(zoom))));
   return step * dpr;
-}
-
-/**
- * Where a label sits in the world: its left edge, its vertical middle (the middle of the em box, as Canvas 2D's
- * "middle" baseline), and its width, for a node at (x, y) of radius `r`, label direction `angle`, font size `size`
- * and text width `width` (world px). Matches the Canvas 2D renderer's placement.
- */
-export function labelBox(x, y, r, angle, size, width) {
-  const a = labelAnchor(angle, r);
-  const box = textBox({ size, align: a.align, baseline: a.baseline }, width);
-  return { left: x + a.x + box.left, middle: y + a.y + box.middle, width };
 }
 
 /** A cell's key in the atlas: the text, its size and units, and whether it's a badge. */
