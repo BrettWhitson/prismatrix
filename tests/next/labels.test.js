@@ -31,12 +31,8 @@ import {
   textFitter,
   textVisibility,
 } from "../../next/engine/labels.js";
-import {
-  PIECE_STRIDE,
-  packPieces,
-  piecePoints,
-  AXIS,
-} from "../../next/engine/gl-edges.js";
+import { PIECE_STRIDE, packPieces, AXIS } from "../../next/engine/gl-edges.js";
+import { piecePoints } from "../helpers/gl-twins.js";
 import {
   GLYPH_STRIDE,
   packEdges,

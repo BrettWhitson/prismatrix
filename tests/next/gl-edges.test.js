@@ -24,9 +24,13 @@ import {
   packPieces,
   RADIAL_POINTS,
   packPositions,
+} from "../../next/engine/gl-edges.js";
+import {
+  bundleSpanCapsules,
+  bundleTip,
   piecePoints,
   radialPiecePoints,
-} from "../../next/engine/gl-edges.js";
+} from "../helpers/gl-twins.js";
 
 /** The furthest any point of polyline `a` is from polyline `b` (both flat or as [x, y] points). */
 function distance(a, b) {
@@ -314,9 +318,7 @@ import { packEdges, END_STRIDE } from "../../next/engine/gl-pack.js";
 import {
   BUNDLE_TIP_STRIDE,
   SPAN_STRIDE,
-  bundleSpanCapsules,
   bundleSteps,
-  bundleTip,
 } from "../../next/engine/gl-edges.js";
 import { readFileSync } from "node:fs";
 
