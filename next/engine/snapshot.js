@@ -1,5 +1,5 @@
 // Snapshots: everything needed to see again exactly what a view showed. The graph (as prismatrix-graph JSON), the
-// view's settings, the camera, and every node's layout state by id. Telemetry saves them (a button in the sandbox,
+// view's settings, the camera, the selection and collapsed nodes, and every shown node's layout state by id. Telemetry saves them (a button in the sandbox,
 // and automatically when the page hits an error), tests load them to reproduce a bug, and they're the shape of a
 // "save / load view" API later.
 //
@@ -15,11 +15,17 @@ const round = (v) => Math.round(v * 100) / 100;
 /**
  * @param {object} view the parts of a view a snapshot records
  * @param {import("./graph.js").Graph} view.graph
- * @param {object} view.settings  layout, layoutOptions, physics, physicsOptions, node, edge, animation, renderer
+ * @param {object} view.settings  layout, layoutOptions, physics, physicsOptions, node, edge, explicit, animation,
+ *   renderer
  * @param {{ x: number, y: number, k: number }} view.camera
+ * @param {string[]} [view.selection] the selected node ids, in the order they were selected
+ * @param {string[]} [view.collapsed] the collapsed node ids (their hidden descendants have no state)
  * @param {string} [note]         why it was taken ("button", "error: …")
  */
-export function takeSnapshot({ graph, settings, camera }, note = "") {
+export function takeSnapshot(
+  { graph, settings, camera, selection = [], collapsed = [] },
+  note = "",
+) {
   // Keyed by id with no prototype: an id like "__proto__" or "constructor" is just a key (JSON keeps it as one).
   const state = Object.create(null);
   for (const n of graph.nodes)
@@ -41,6 +47,8 @@ export function takeSnapshot({ graph, settings, camera }, note = "") {
     issues: graph.model.issues,
     settings: structuredClone(settings),
     camera: { x: round(camera.x), y: round(camera.y), k: camera.k },
+    selection: [...selection],
+    collapsed: [...collapsed],
     state,
   };
 }
