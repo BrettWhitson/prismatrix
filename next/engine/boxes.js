@@ -3,6 +3,8 @@
 // `labelMaxWidth` option with an ellipsis (fitLabel), the same for the room kept and the text drawn, and edges start
 // past their own node's label (startTrim) rather than striking through it.
 
+import { TREE_LABEL_ANGLE } from "./layouts.js";
+
 export const LABEL_GAP = 4;
 /** Line height of a label, as a multiple of its font size. */
 export const LINE = 1.25;
@@ -20,9 +22,7 @@ export function labelAngle(place, routing, x, y) {
       dy = y - routing.cy;
     return Math.hypot(dx, dy) > 1 ? Math.atan2(dy, dx) : Math.PI / 2;
   }
-  return { TB: Math.PI / 2, BT: -Math.PI / 2, LR: 0, RL: Math.PI }[
-    routing.direction
-  ];
+  return TREE_LABEL_ANGLE[routing.direction];
 }
 
 /** Where a label is drawn from, relative to its node, and how it's aligned there. */
@@ -61,14 +61,14 @@ export function labelRect(r, angle, w, h) {
  * @returns {{ x0: number, y0: number, x1: number, y1: number }}
  */
 export function footprint(r, angle, w, h) {
-  const box = { x0: -r, y0: -r, x1: r, y1: r };
-  if (!(w > 0)) return box;
-  const label = labelRect(r, angle, w, h);
-  box.x0 = Math.min(box.x0, label.x0);
-  box.y0 = Math.min(box.y0, label.y0);
-  box.x1 = Math.max(box.x1, label.x1);
-  box.y1 = Math.max(box.y1, label.y1);
-  return box;
+  if (!(w > 0)) return { x0: -r, y0: -r, x1: r, y1: r };
+  const l = labelRect(r, angle, w, h);
+  return {
+    x0: Math.min(-r, l.x0),
+    y0: Math.min(-r, l.y0),
+    x1: Math.max(r, l.x1),
+    y1: Math.max(r, l.y1),
+  };
 }
 
 /** What a label cut short ends with. */
