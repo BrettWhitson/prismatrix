@@ -7,13 +7,30 @@
 // origin (the middle of the layout), and so is u_camera: 32-bit floats stay precise however far out a drawing
 // reaches.
 
-import { BUNDLE_STEPS } from "./geometry.js";
+import { ARC_STEP, BUNDLE_STEPS, END_ROOM } from "./geometry.js";
+import {
+  CORNER_POINTS,
+  CUT_STEPS,
+  PIECE_POINTS,
+  RADIAL_ARC_POINTS,
+  RADIAL_CORNER_POINTS,
+  RADIAL_POINTS,
+} from "./gl-edges.js";
 import {
   ICON_FADE_PX,
   ICON_MIN_PX,
   ROUNDED_CORNER,
   TILE_CORNER,
 } from "./icons.js";
+
+// Numbers the JavaScript twins of these shaders (gl-edges.js) use too, written into the GLSL: a float literal, and
+// the points of a piece (PIECE_POINTS: two ends and a rounded corner of CORNER_POINTS each) and of a radial step
+// (RADIAL_POINTS: two ends, a corner of RC points at each end of an arc of RA).
+const float = (n) => n.toFixed(1);
+const LAST = PIECE_POINTS - 1;
+const RC = RADIAL_CORNER_POINTS,
+  RA = RADIAL_ARC_POINTS,
+  RADIAL_LAST = RADIAL_POINTS - 1;
 
 /** World position to clip space, and the coverage of a pixel whose centre is d world px outside an edge. */
 const COMMON_VERTEX = `
@@ -572,7 +589,7 @@ float curveCut(float reach, vec2 A, vec2 B, float mid, bool fromB) {
   if (reach <= 0.0) return fromB ? 1.0 : 0.0;
   vec2 end = fromB ? B : A;
   float lo = 0.0, hi = 0.5;
-  for (int k = 0; k < 12; k++) {
+  for (int k = 0; k < ${CUT_STEPS}; k++) {
     float m = (lo + hi) * 0.5;
     if (length(curveAt(fromB ? 1.0 - m : m, A, B, mid) - end) < reach) lo = m;
     else hi = m;
@@ -600,7 +617,7 @@ float cubicCut(float reach, vec2 p0, vec2 p1, vec2 p2, vec2 p3, bool fromB) {
   if (reach <= 0.0) return fromB ? 1.0 : 0.0;
   vec2 end = fromB ? p3 : p0;
   float lo = 0.0, hi = 0.5;
-  for (int k = 0; k < 12; k++) {
+  for (int k = 0; k < ${CUT_STEPS}; k++) {
     float m = (lo + hi) * 0.5;
     if (length(cubicAt(fromB ? 1.0 - m : m, p0, p1, p2, p3) - end) < reach) lo = m;
     else hi = m;
@@ -643,21 +660,21 @@ uniform bool u_radial;
 
 const float HALF_PI = 1.5707963;
 
-// Point i (0–15) of the piece from A to B, in the axis frame. Curves run between t0 and t1.
+// Point i (0–${LAST}) of the piece from A to B, in the axis frame. Curves run between t0 and t1.
 vec2 pointAt(int i, vec2 A, vec2 B, float mid, float r1, float r2, float sx, float sy, bool straight, vec2 cut) {
   if (straight) return i == 0 ? A : B;
-  if (u_shape == 2) return curveAt(mix(cut.x, cut.y, float(i) / 15.0), A, B, mid);
+  if (u_shape == 2) return curveAt(mix(cut.x, cut.y, float(i) / ${float(LAST)}), A, B, mid);
   if (i == 0) return A;
-  if (i == 15) return B;
-  if (i <= 7) {
-    float th = float(i - 1) / 6.0 * HALF_PI;
+  if (i == ${LAST}) return B;
+  if (i <= ${CORNER_POINTS}) {
+    float th = float(i - 1) / ${float(CORNER_POINTS - 1)} * HALF_PI;
     return vec2(A.x + sx * r1 - sx * r1 * cos(th), mid - sy * r1 + sy * r1 * sin(th));
   }
-  float th = float(i - 8) / 6.0 * HALF_PI;
+  float th = float(i - ${CORNER_POINTS + 1}) / ${float(CORNER_POINTS - 1)} * HALF_PI;
   return vec2(B.x - sx * r2 + sx * r2 * sin(th), mid + sy * r2 - sy * r2 * cos(th));
 }
 
-// The capsule numbered part of a tree or layered piece (its points 0–15), in world px relative to the origin.
+// The capsule numbered part of a tree or layered piece (its points 0–${LAST}), in world px relative to the origin.
 void treePart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   vec2 A = u_axis * stopAt(a_stopA, s, t);
   vec2 B = u_axis * stopAt(a_stopB, s, t);
@@ -687,52 +704,52 @@ void treePart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
 
 // ---- radial pieces: out along the source's spoke, round the ring halfway between, in along the target's spoke
 
-const float ARC_STEP = 0.06; // radians per chord along a ring arc, as the CPU traces them
+const float ARC_STEP = ${ARC_STEP}; // radians per chord along a ring arc, as the CPU traces them
 
-// Point i (0–29) of a radial step: the source end, a rounded corner (4 points), the ring arc (20), a rounded
-// corner (4), the target end. Each corner is a quadratic curve through the spoke and ring meeting point.
+// Point i (0–${RADIAL_LAST}) of a radial step: the source end, a rounded corner (${RC} points), the ring arc (${RA}), a rounded
+// corner (${RC}), the target end. Each corner is a quadratic curve through the spoke and ring meeting point.
 vec2 radialStepAt(int i, vec2 A, vec2 B, float as_, float at, float delta, float rm, float f1, float f2, float turn) {
   vec2 c = u_centre;
   if (i == 0) return A;
-  if (i == 29) return B;
-  if (i <= 4) {
-    float k = float(i - 1) / 3.0;
+  if (i == ${RADIAL_LAST}) return B;
+  if (i <= ${RC}) {
+    float k = float(i - 1) / ${float(RC - 1)};
     vec2 q = c + ray(as_) * (rm - f1), j = c + ray(as_) * rm, r = c + ray(as_ + turn * f1 / rm) * rm;
     return mix(mix(q, j, k), mix(j, r, k), k);
   }
-  if (i >= 25) {
-    float k = float(i - 25) / 3.0;
+  if (i >= ${1 + RC + RA}) {
+    float k = float(i - ${1 + RC + RA}) / ${float(RC - 1)};
     vec2 r = c + ray(at - turn * f2 / rm) * rm, j = c + ray(at) * rm, q = c + ray(at) * (rm + f2);
     return mix(mix(r, j, k), mix(j, q, k), k);
   }
   // Round the short way: from the source's angle by the (wrapped) turn between them.
   float from = as_ + turn * f1 / rm, to = as_ + delta - turn * f2 / rm;
-  return c + ray(mix(from, to, float(i - 5) / 19.0)) * rm;
+  return c + ray(mix(from, to, float(i - ${1 + RC}) / ${float(RA - 1)})) * rm;
 }
 
 // How far point i of a radial step is along it, as radialStepAt places them: from A, round the first corner (the
-// quadratic q1, j1, r1: points 1-4), along the arc (points 5-24, 19 equal chords; it starts where the corner
-// ends), round the second corner (r2, j2, q2: points 25-28) and on to B.
+// quadratic q1, j1, r1: points 1-${RC}), along the arc (points ${1 + RC}-${RC + RA}, ${RA - 1} equal chords; it starts where the corner
+// ends), round the second corner (r2, j2, q2: points ${1 + RC + RA}-${2 * RC + RA}) and on to B.
 float stepAlong(int i, vec2 A, vec2 B, vec2 q1, vec2 j1, vec2 r1, vec2 q2, vec2 j2, vec2 r2, float arcChord) {
   if (i <= 0) return 0.0;
   float run = 0.0;
   vec2 previous = A;
-  for (int k = 0; k < 4; k++) {
-    float f = float(k) / 3.0;
+  for (int k = 0; k < ${RC}; k++) {
+    float f = float(k) / ${float(RC - 1)};
     vec2 p = mix(mix(q1, j1, f), mix(j1, r1, f), f);
     run += length(p - previous);
     previous = p;
     if (i == k + 1) return run;
   }
-  if (i <= 24) return run + float(i - 5) * arcChord;
-  run += 19.0 * arcChord;
+  if (i <= ${RC + RA}) return run + float(i - ${1 + RC}) * arcChord;
+  run += ${float(RA - 1)} * arcChord;
   previous = r2;
-  for (int k = 0; k < 4; k++) {
-    float f = float(k) / 3.0;
+  for (int k = 0; k < ${RC}; k++) {
+    float f = float(k) / ${float(RC - 1)};
     vec2 p = mix(mix(r2, j2, f), mix(j2, q2, f), f);
     run += length(p - previous);
     previous = p;
-    if (i == k + 25) return run;
+    if (i == k + ${1 + RC + RA}) return run;
   }
   return run + length(B - previous);
 }
@@ -771,12 +788,12 @@ void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   if (mode == 2) {
     vec2 c1 = c + ray(as_) * rm, c2 = c + ray(at) * rm;
     float t0 = cubicCut(a_trim.x, S, c1, c2, T, false), t1 = cubicCut(a_trim.y, S, c1, c2, T, true);
-    if (part >= 15) {
+    if (part >= ${LAST}) {
       a = b = T;
       return;
     }
-    a = cubicAt(mix(t0, t1, float(part) / 15.0), S, c1, c2, T);
-    b = cubicAt(mix(t0, t1, float(part + 1) / 15.0), S, c1, c2, T);
+    a = cubicAt(mix(t0, t1, float(part) / ${float(LAST)}), S, c1, c2, T);
+    b = cubicAt(mix(t0, t1, float(part + 1) / ${float(LAST)}), S, c1, c2, T);
     return;
   }
   vec2 A = S + ray(as_) * a_trim.x, B = T - ray(at) * a_trim.y;
@@ -792,12 +809,12 @@ void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   vec2 c1 = c + ray(as_) * rm, c2 = c + ray(at) * rm;
   float t0 = cubicCut(a_trim.x, S, c1, c2, T, false), t1 = cubicCut(a_trim.y, S, c1, c2, T, true);
   // The corners' points (quadratics through where spoke and ring meet) and the arc's equal chords: enough to
-  // measure along the step without tracing all 30 of its points for every vertex.
+  // measure along the step without tracing all ${RADIAL_POINTS} of its points for every vertex.
   vec2 q1 = c + ray(as_) * (rm - f1), r1 = c + ray(as_ + turn * f1 / rm) * rm;
   vec2 q2 = c + ray(at) * (rm + f2), r2 = c + ray(at - turn * f2 / rm) * rm;
   float from = as_ + turn * f1 / rm, to = as_ + delta - turn * f2 / rm;
-  float arcChord = 2.0 * rm * abs(sin((to - from) / 38.0));
-  float total = max(stepAlong(29, A, B, q1, c1, r1, q2, c2, r2, arcChord), 1e-6);
+  float arcChord = 2.0 * rm * abs(sin((to - from) / ${float(2 * (RA - 1))}));
+  float total = max(stepAlong(${RADIAL_LAST}, A, B, q1, c1, r1, q2, c2, r2, arcChord), 1e-6);
   float alongA = stepAlong(part, A, B, q1, c1, r1, q2, c2, r2, arcChord);
   float alongB = stepAlong(part + 1, A, B, q1, c1, r1, q2, c2, r2, arcChord);
   a = mix(a, cubicAt(mix(t0, t1, alongA / total), S, c1, c2, T), w);
@@ -874,7 +891,7 @@ void main() {
   vec2 S = nodeAt(a_nodes.x).xy, T = nodeAt(a_nodes.y).xy;
   vec2 q0 = control(a_controls.x, a_along.x, S, T), q1 = control(a_controls.y, a_along.y, S, T);
   vec2 q2 = control(a_controls.z, a_along.z, S, T), q3 = control(a_controls.w, a_along.w, S, T);
-  float end = a_shape.y * 0.9;
+  float end = a_shape.y * ${END_ROOM};
   float reach = a_shape.x + end;
   int steps = int(STEPS);
   vec2 previous = T, tip, dir;
@@ -939,7 +956,7 @@ const vec2 TINY = vec2(0.0, 1e-9);
 void main() {
   vec4 s = nodeAt(a_nodes.x), t = nodeAt(a_nodes.y);
   vec2 from = stopAt(a_stop, s, t), to = t.xy;
-  float end = a_shape.y * 0.9;
+  float end = a_shape.y * ${END_ROOM};
   float reach = a_shape.x + end;
   vec2 dir;
   // Where the edge is cut off the target: straight back along dir unless a curve says otherwise.

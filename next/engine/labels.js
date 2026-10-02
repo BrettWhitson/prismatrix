@@ -20,7 +20,13 @@
 // Pure: no DOM, no GL. Text is measured by the painter, the way it draws it (`fit`).
 
 import { fitLabel, labelAnchor, reach } from "./boxes.js";
-import { edgeRoute, fanJunctions, startTrims, trim } from "./geometry.js";
+import {
+  END_ROOM,
+  edgeRoute,
+  fanJunctions,
+  startTrims,
+  trim,
+} from "./geometry.js";
 import { ringStroke } from "./references.js";
 import { edgeAlpha, labelAlpha, labelsShown, nodeAlpha } from "./render.js";
 import { DEFAULT_THEME } from "./theme.js";
@@ -360,7 +366,7 @@ export function planText(scene, { fit, near = null }) {
   if (show.edges) {
     const size = node.labelSize * EDGE_LABEL_SCALE;
     const place = edge.labels === "middle" ? "middle" : "target";
-    const end = edge.arrow === "none" ? 0 : edge.arrowSize * 0.9;
+    const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
     const taken = new Room(size * 4);
     for (const item of small) taken.take(roughBox(item));
     let starts = null,

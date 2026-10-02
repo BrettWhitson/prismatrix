@@ -1,3 +1,7 @@
+/** Radians per point along a ring arc (the CPU's radial steps; the GPU's pieces size their corners by it too). */
+export declare const ARC_STEP = 0.06;
+/** How far an edge's end (an arrow or a dot) holds the edge off its target, as a share of the end's size. */
+export declare const END_ROOM = 0.9;
 /**
  * The points of an edge from `s` to `t` (anything with x and y).
  * @param {import("./layouts.js").Routing} routing

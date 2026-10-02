@@ -1,6 +1,7 @@
 // What the WebGL renderer sends the GPU each frame, worked out on the CPU. Pure: no GL, so it can be tested.
 
 import {
+  END_ROOM,
   edgeRoute,
   fanJunctions,
   rounded,
@@ -208,7 +209,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
   const junctions = edge.shape === "fan" ? fanJunctions(graph, routing) : null;
   const corner =
     edge.shape === "step" || edge.shape === "fan" ? edge.corner : 0;
-  const end = edge.arrow === "none" ? 0 : edge.arrowSize * 0.9;
+  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
   const kind = edge.arrow === "dot" ? 1 : 0;
   let segments = reuse.segments ?? null;
   let ends = reuse.ends ?? null;

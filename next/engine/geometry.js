@@ -3,7 +3,10 @@
 
 import { LINE, reach, startTrim } from "./boxes.js";
 
-const ARC_STEP = 0.06; // radians per point along a ring arc
+/** Radians per point along a ring arc (the CPU's radial steps; the GPU's pieces size their corners by it too). */
+export const ARC_STEP = 0.06;
+/** How far an edge's end (an arrow or a dot) holds the edge off its target, as a share of the end's size. */
+export const END_ROOM = 0.9;
 const FAN_STUB = 0.4; // how far a fan's junction sits towards the children, as a share of the way
 
 /**

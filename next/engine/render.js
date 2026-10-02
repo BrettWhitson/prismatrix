@@ -1,6 +1,12 @@
 // Canvas 2D drawing. Deliberately plain for now: the look is what's being worked out, speed comes later.
 
-import { edgeRoute, fanJunctions, startTrims, trim } from "./geometry.js";
+import {
+  END_ROOM,
+  edgeRoute,
+  fanJunctions,
+  startTrims,
+  trim,
+} from "./geometry.js";
 import { TEXT_HALO, font, planText, textBox, textFitter } from "./labels.js";
 import { LINK, linkGlyphs } from "./references.js";
 import {
@@ -652,7 +658,7 @@ function edgeLayer(canvas, kept = layers) {
 }
 
 function drawEdge(ctx, route, edge, looks, s, t, ei, from) {
-  const end = edge.arrow === "none" ? 0 : edge.arrowSize * 0.9;
+  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
   const pts = trim(route, from, looks.radius[t.index] + end);
   if (!pts) return;
   const colour = looks.edgeColour[ei];

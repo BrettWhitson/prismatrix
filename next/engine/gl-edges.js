@@ -12,17 +12,27 @@
 
 import { parseColour, runsOf } from "./gl-pack.js";
 import {
+  ARC_STEP,
   BUNDLE_STEPS,
+  END_ROOM,
   bundlePath,
   startTrims,
   stepCurveWeight,
 } from "./geometry.js";
 
+// The shaders (gl-shaders.js) take these from here, so the GPU and its JavaScript twins below trace the same points.
+
 /** Points along each piece: the shader draws the capsules between consecutive ones. */
 export const PIECE_POINTS = 16;
-/** Points along a radial piece: a ring arc needs more. */
-export const RADIAL_POINTS = 30;
-const ARC_STEP = 0.06; // radians per chord along a ring arc, as the CPU traces them
+/** Points round each rounded corner of a step piece (the other two are its ends). */
+export const CORNER_POINTS = (PIECE_POINTS - 2) / 2;
+/** A radial step's points round each of its two rounded corners, and along the ring arc between them. */
+export const RADIAL_CORNER_POINTS = 4;
+export const RADIAL_ARC_POINTS = 20;
+/** Points along a radial piece (a ring arc needs more): its ends, two corners and the arc. */
+export const RADIAL_POINTS = 2 + 2 * RADIAL_CORNER_POINTS + RADIAL_ARC_POINTS;
+/** Halvings that find where a curve is cut off the node it starts or ends at. */
+export const CUT_STEPS = 12;
 /** Floats per piece: stop A (x, y, f, node?), stop B, source and target index, trims, half-width, colour r, g, b. */
 export const PIECE_STRIDE = 16;
 /** Floats per edge end: last stop before the target (x, y, f, node?), source, target, radius, size, kind, r, g, b. */
@@ -85,7 +95,7 @@ export function gpuEdges(scene) {
 export function packPieces(scene, origin) {
   const { graph, routing, edge, looks } = scene;
   const layered = routing.kind === "layered";
-  const end = edge.arrow === "none" ? 0 : edge.arrowSize * 0.9;
+  const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
   const kind = edge.arrow === "dot" ? 1 : 0;
   const colours = new Map();
   const colour = (hex) => {
@@ -453,7 +463,7 @@ export function radialPiecePoints(
     const end = fromB ? p[3] : p[0];
     let lo = 0,
       hi = 0.5;
-    for (let k = 0; k < 12; k++) {
+    for (let k = 0; k < CUT_STEPS; k++) {
       const m = (lo + hi) / 2;
       const q = curveAt(fromB ? 1 - m : m);
       if (Math.hypot(q[0] - end[0], q[1] - end[1]) < reach) lo = m;
@@ -488,25 +498,26 @@ export function radialPiecePoints(
       (i) => (1 - k) * (1 - k) * q[i] + 2 * (1 - k) * k * j[i] + k * k * r[i],
     );
   const out = [A];
-  for (let i = 0; i < 4; i++)
+  for (let i = 0; i < RADIAL_CORNER_POINTS; i++)
     out.push(
       quad(
         ray(as, rm - f1),
         ray(as, rm),
         ray(as + (turn * f1) / rm, rm),
-        i / 3,
+        i / (RADIAL_CORNER_POINTS - 1),
       ),
     );
   const from = as + (turn * f1) / rm,
     to = as + delta - (turn * f2) / rm;
-  for (let i = 0; i < 20; i++) out.push(ray(from + ((to - from) * i) / 19, rm));
-  for (let i = 0; i < 4; i++)
+  for (let i = 0; i < RADIAL_ARC_POINTS; i++)
+    out.push(ray(from + ((to - from) * i) / (RADIAL_ARC_POINTS - 1), rm));
+  for (let i = 0; i < RADIAL_CORNER_POINTS; i++)
     out.push(
       quad(
         ray(at - (turn * f2) / rm, rm),
         ray(at, rm),
         ray(at, rm + f2),
-        i / 3,
+        i / (RADIAL_CORNER_POINTS - 1),
       ),
     );
   out.push(B);
@@ -612,7 +623,7 @@ export function piecePoints(shape, axis, a, b, trimA, trimB, corner) {
       const end = fromB ? B : A;
       let lo = 0,
         hi = 0.5;
-      for (let k = 0; k < 12; k++) {
+      for (let k = 0; k < CUT_STEPS; k++) {
         const m = (lo + hi) / 2;
         const p = at(fromB ? 1 - m : m);
         if (Math.hypot(p[0] - end[0], p[1] - end[1]) < reach) lo = m;
@@ -639,7 +650,7 @@ export function piecePoints(shape, axis, a, b, trimA, trimB, corner) {
     0,
     Math.min(corner, Math.abs(B[1] - mid) / 2, across / 2),
   );
-  const arc = (PIECE_POINTS - 2) / 2; // points per corner
+  const arc = CORNER_POINTS;
   out[0] = A;
   for (let k = 0; k < arc; k++) {
     const th = (k / (arc - 1)) * (Math.PI / 2);

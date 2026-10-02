@@ -1,7 +1,14 @@
 /** Points along each piece: the shader draws the capsules between consecutive ones. */
 export declare const PIECE_POINTS = 16;
-/** Points along a radial piece: a ring arc needs more. */
-export declare const RADIAL_POINTS = 30;
+/** Points round each rounded corner of a step piece (the other two are its ends). */
+export declare const CORNER_POINTS: number;
+/** A radial step's points round each of its two rounded corners, and along the ring arc between them. */
+export declare const RADIAL_CORNER_POINTS = 4;
+export declare const RADIAL_ARC_POINTS = 20;
+/** Points along a radial piece (a ring arc needs more): its ends, two corners and the arc. */
+export declare const RADIAL_POINTS: number;
+/** Halvings that find where a curve is cut off the node it starts or ends at. */
+export declare const CUT_STEPS = 12;
 /** Floats per piece: stop A (x, y, f, node?), stop B, source and target index, trims, half-width, colour r, g, b. */
 export declare const PIECE_STRIDE = 16;
 /** Floats per edge end: last stop before the target (x, y, f, node?), source, target, radius, size, kind, r, g, b. */
