@@ -8,14 +8,10 @@ import {
   RADIAL_ARC_POINTS,
   RADIAL_CORNER_POINTS,
   RADIAL_POINTS,
-} from "../../next/engine/gl-edges.js";
-import { labelAnchor } from "../../next/engine/boxes.js";
-import { textBox } from "../../next/engine/labels.js";
-import {
-  ARC_STEP,
-  BUNDLE_STEPS,
-  stepCurveWeight,
-} from "../../next/engine/geometry.js";
+} from "../../src/gl-edges.js";
+import { labelAnchor } from "../../src/boxes.js";
+import { textBox } from "../../src/labels.js";
+import { ARC_STEP, BUNDLE_STEPS, stepCurveWeight } from "../../src/geometry.js";
 
 /** A cubic Bézier through p0–p3 (each [x, y]) at t (0–1). */
 function cubicAt(t, p0, p1, p2, p3) {

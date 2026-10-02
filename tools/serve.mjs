@@ -1,14 +1,14 @@
 // Local static server for the demo. No dependencies.
 //
-// Serves the project root (so the demo reaches src/ and node_modules/tether) with correct MIME types and
+// Serves the project root (so the sandbox reaches src/) with correct MIME types and
 // `Cache-Control: no-store`, so edits show up on reload.
 //
 // POST /__log takes a page's rolling log (the sandbox's engine stats) and writes it to logs/engine-stats.log, so
 // what the engine is doing can be read live from outside the browser. POST /__snapshot takes a view snapshot
-// (prismatrix-snapshot JSON, see next/MODEL.md) and saves it in logs/snapshots/, keeping the newest 30, so a bug can
+// (prismatrix-snapshot JSON, see MODEL.md) and saves it in logs/snapshots/, keeping the newest 30, so a bug can
 // be reproduced exactly: load it in a test, or restore it in the sandbox.
 //
-// Usage:  node tools/serve.mjs [port] [start]   (default port 8650; / redirects to start, default /demo/)
+// Usage:  node tools/serve.mjs [port] [start]   (default port 8650; / redirects to start, default /sandbox/)
 import { createServer } from "node:http";
 import {
   mkdir,
@@ -32,7 +32,7 @@ const MIME_TYPES = {
   ".png": "image/png",
 };
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8650);
-const start = process.argv[3] ?? "/demo/";
+const start = process.argv[3] ?? "/sandbox/";
 const LOG_FILE = path.join(ROOT, "logs", "engine-stats.log");
 const LOG_LIMIT = 4 * 1024 * 1024;
 

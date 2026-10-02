@@ -17,7 +17,7 @@ An app works with three parts:
 - **A renderer** (`glRenderer` or `canvasRenderer`): the screen. It owns the canvas, input and the frame loop.
 
 ```js
-import { GraphModel, GraphController, glRenderer } from "prismatrix/next";
+import { GraphModel, GraphController, glRenderer } from "prismatrix";
 
 const model = new GraphModel({
   nodes: [
@@ -57,10 +57,10 @@ model.update({ addNodes: [{ id: "coin" }], addEdges: [{ source: "gift", target: 
   dark and light themes or your own.
 - **Everything checked:** every option is described by a schema (default, range, label, hint), so a settings UI can be
   built from it; bad input is reported, never silently fixed.
-- **Headless:** with no renderer, a controller runs in tests or on a server; `prismatrix/next/layout` lays graphs out
+- **Headless:** with no renderer, a controller runs in tests or on a server; `prismatrix/layout` lays graphs out
   with no DOM at all. Views save and restore as JSON snapshots.
 
-The full reference is [API.md](API.md); the graph and snapshot formats are in [next/MODEL.md](next/MODEL.md).
+The full reference is [API.md](API.md); the graph and snapshot formats are in [MODEL.md](MODEL.md).
 
 ## Install
 
@@ -68,8 +68,7 @@ The full reference is [API.md](API.md); the graph and snapshot formats are in [n
 npm install github:BrettWhitson/prismatrix#vX.Y.Z
 ```
 
-Pin a release tag. The engine described here is at `prismatrix/next` until the next release makes it the main
-entry; `prismatrix` itself is still the 0.4 engine it replaces (see [CHANGELOG.md](CHANGELOG.md)).
+Pin a release tag. Releases up to `v0.4.0` carry the earlier engine and its API (see [CHANGELOG.md](CHANGELOG.md)).
 
 In a browser without a bundler, map the imports:
 
@@ -77,8 +76,8 @@ In a browser without a bundler, map the imports:
 <script type="importmap">
   {
     "imports": {
-      "prismatrix/next": "./node_modules/prismatrix/next/engine/index.js",
-      "prismatrix/next/layout": "./node_modules/prismatrix/next/engine/layout.js"
+      "prismatrix": "./node_modules/prismatrix/src/index.js",
+      "prismatrix/layout": "./node_modules/prismatrix/src/layout.js"
     }
   }
 </script>
@@ -88,15 +87,14 @@ In a browser without a bundler, map the imports:
 
 | Where | What |
 | --- | --- |
-| `next/engine/index.js` | the public surface; `layout.js` is layout without a screen |
-| `next/engine/model.js` | `GraphModel`: the graph, its options, deltas and change events |
-| `next/engine/controller.js` | `GraphController`: layouts, physics, animation, camera, input, disclosure, snapshots |
-| `next/engine/renderer.js` | the renderers; `webgl.js` and `gl-*.js` draw with WebGL2, `render.js` with Canvas 2D |
-| `next/engine/layouts.js` | the layouts; `tidy.js`, `layered.js`, `sifting.js`, `simplex.js` and `references.js` do the work |
-| `next/engine/physics.js` | the physics modes |
-| `next/engine/layouter.js` | where layouts run: on the page or in the worker (`layout-worker.js`) |
-| `next/sandbox/` | the sandbox: every option, live |
-| `src/` | the 0.4 engine, until it's removed |
+| `src/index.js` | the public surface; `layout.js` is layout without a screen |
+| `src/model.js` | `GraphModel`: the graph, its options, deltas and change events |
+| `src/controller.js` | `GraphController`: layouts, physics, animation, camera, input, disclosure, snapshots |
+| `src/renderer.js` | the renderers; `webgl.js` and `gl-*.js` draw with WebGL2, `render.js` with Canvas 2D |
+| `src/layouts.js` | the layouts; `tidy.js`, `layered.js`, `sifting.js`, `simplex.js` and `references.js` do the work |
+| `src/physics.js` | the physics modes |
+| `src/layouter.js` | where layouts run: on the page or in the worker (`layout-worker.js`) |
+| `sandbox/` | the sandbox: every option, live |
 
 ## Development
 

@@ -9,17 +9,17 @@
 //   - every issue kind the model reports is listed (Issue) and explained in API.md;
 //   - every public member of GraphModel, GraphController and Renderer is mentioned in API.md.
 import { readFileSync, writeFileSync } from "node:fs";
-import { LAYOUTS } from "../next/engine/layouts.js";
-import { PHYSICS, physicsSchema } from "../next/engine/physics.js";
-import { EDGE_OPTIONS, NODE_OPTIONS } from "../next/engine/style.js";
-import { ANIMATION_OPTIONS } from "../next/engine/animation.js";
-import { THEMES } from "../next/engine/theme.js";
-import { EDGE_STYLE, GraphModel, NODE_STYLE } from "../next/engine/model.js";
-import { GraphController } from "../next/engine/controller.js";
-import { Renderer } from "../next/engine/renderer.js";
+import { LAYOUTS } from "../src/layouts.js";
+import { PHYSICS, physicsSchema } from "../src/physics.js";
+import { EDGE_OPTIONS, NODE_OPTIONS } from "../src/style.js";
+import { ANIMATION_OPTIONS } from "../src/animation.js";
+import { THEMES } from "../src/theme.js";
+import { EDGE_STYLE, GraphModel, NODE_STYLE } from "../src/model.js";
+import { GraphController } from "../src/controller.js";
+import { Renderer } from "../src/renderer.js";
 
 const engine = (file) =>
-  readFileSync(new URL(`../next/engine/${file}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
 const problems = [];
 
 // ---- JSDoc typedefs --------------------------------------------------------------------------------------------

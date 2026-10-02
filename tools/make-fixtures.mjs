@@ -1,4 +1,4 @@
-// Writes the fixture graphs in tests/fixtures/graphs: prismatrix-graph JSON (see next/MODEL.md) that tests, the
+// Writes the fixture graphs in tests/fixtures/graphs: prismatrix-graph JSON (see MODEL.md) that tests, the
 // layered-layout benchmark (tools/bench-layered.mjs) and bug reports share. Deterministic: the same files every
 // run, so a change in a fixture is a change in a generator.
 //
@@ -6,7 +6,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GraphModel } from "../next/engine/model.js";
+import { GraphModel } from "../src/model.js";
 
 const OUT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

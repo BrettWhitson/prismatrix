@@ -1,54 +1,69 @@
-/**
- * Prismatrix's public API. Everything an app needs is exported from here; the modules behind it (prism/<module>.js) stay
- * importable for tools that want one piece, but only this entry point is the stable interface.
- *
- * Layout and physics are Prismatrix's: its whole API is re-exported too (registerLayout, registerForce, the tuning…),
- * so an app needs only this one import.
- */
-export { GraphView } from "./graph-view.js";
-export {
-  OPTIONS_SCHEMA,
-  OPTIONS,
-  DEFAULT_OPTIONS,
-  resolveOptions,
-  STYLE_BASE,
-} from "./options.js";
-export {
-  THEME_SCHEMA,
-  THEME_OPTIONS,
-  DEFAULT_THEME,
-  resolveTheme,
-  NODE_STYLE_SCHEMA,
-  EDGE_STYLE_SCHEMA,
-  resolveNodeStyle,
-  resolveEdgeStyle,
-} from "./style.js";
-export {
-  registerNodeShape,
-  registerArrowShape,
-  registerEdgeRouting,
-  registerEasing,
-  nodeShapeNames,
-  edgeRoutingNames,
-  easingNames,
-  MAX_POLYGON_VERTICES,
-} from "./render/plugins.js";
-export {
-  WebGLGraph,
-  DEFAULT_COLORS,
-  DEFAULT_INPUT,
-} from "./render/webgl-graph.js";
-export * from "./layout/index.js";
+// Prismatrix (sandbox/ drives it). This is its public surface:
+// everything an app needs. The modules behind it stay importable by path (tests and tools use them), but only this
+// entry, and ./layout.js for layout without a screen, are the interface. The reference is API.md.
+//
+//   const renderer = glRenderer(canvas);
+//   const model = new GraphModel(json, { node, edge });
+//   const controller = new GraphController(model, renderer, { layout: "tree" });
 
+export { GraphModel, GRAPH_FORMAT, GRAPH_VERSION } from "./model.js";
+export { GraphController } from "./controller.js";
+export { glRenderer, canvasRenderer } from "./renderer.js";
+export { LAYOUTS } from "./layouts.js";
+export { PHYSICS, physicsSchema } from "./physics.js";
+export { NODE_OPTIONS, EDGE_OPTIONS } from "./style.js";
+export { ANIMATION_OPTIONS, EASINGS } from "./animation.js";
+export { resolve } from "./schema.js";
+export { THEMES, resolveTheme } from "./theme.js";
+export {
+  SNAPSHOT_FORMAT,
+  SNAPSHOT_VERSION,
+  snapshotModel,
+} from "./snapshot.js";
+export { WORKER_MIN } from "./layouter.js";
+
+// Types (for TypeScript and editors; nothing at run time).
 /**
- * @typedef {import('./options.js').Options} Options
- * @typedef {import('./style.js').Theme} Theme
- * @typedef {import('./style.js').NodeStyle} NodeStyle
- * @typedef {import('./style.js').EdgeStyle} EdgeStyle
- * @typedef {import('./style.js').ClassRules} ClassRules
- * @typedef {import('./graph-view.js').GraphNode} GraphNode
- * @typedef {import('./graph-view.js').GraphEdge} GraphEdge
- * @typedef {import('./graph-view.js').Viewport} Viewport
- * @typedef {import('./graph-view.js').GraphViewEvents} GraphViewEvents
- * @typedef {import('./render/plugins.js').EdgeRouter} EdgeRouter
+ * @typedef {import("./model.js").GraphJSON} GraphJSON
+ * @typedef {import("./model.js").NodeJSON} NodeJSON
+ * @typedef {import("./model.js").EdgeJSON} EdgeJSON
+ * @typedef {import("./model.js").NodeStyle} NodeStyle
+ * @typedef {import("./model.js").EdgeStyle} EdgeStyle
+ * @typedef {import("./model.js").ModelNode} ModelNode
+ * @typedef {import("./model.js").ModelEdge} ModelEdge
+ * @typedef {import("./model.js").ModelOptions} ModelOptions
+ * @typedef {import("./model.js").Delta} Delta
+ * @typedef {import("./model.js").NodeChange} NodeChange
+ * @typedef {import("./model.js").EdgeChange} EdgeChange
+ * @typedef {import("./model.js").Change} Change
+ * @typedef {import("./model.js").Issue} Issue
+ * @typedef {import("./controller.js").ControllerOptions} ControllerOptions
+ * @typedef {import("./controller.js").ControllerEvents} ControllerEvents
+ * @typedef {import("./controller.js").PointDetail} PointDetail
+ * @typedef {import("./controller.js").GraphDetail} GraphDetail
+ * @typedef {import("./controller.js").DisclosureDetail} DisclosureDetail
+ * @typedef {import("./controller.js").TickResult} TickResult
+ * @typedef {import("./controller.js").LayoutName} LayoutName
+ * @typedef {import("./controller.js").PhysicsMode} PhysicsMode
+ * @typedef {import("./renderer.js").Renderer} Renderer
+ * @typedef {import("./renderer.js").RendererOptions} RendererOptions
+ * @typedef {import("./renderer.js").FrameStats} FrameStats
+ * @typedef {import("./style.js").NodeOptions} NodeOptions
+ * @typedef {import("./style.js").EdgeOptions} EdgeOptions
+ * @typedef {import("./animation.js").AnimationOptions} AnimationOptions
+ * @typedef {import("./layouts.js").TreeLayoutOptions} TreeLayoutOptions
+ * @typedef {import("./layouts.js").MergedLayoutOptions} MergedLayoutOptions
+ * @typedef {import("./layouts.js").RadialLayoutOptions} RadialLayoutOptions
+ * @typedef {import("./layouts.js").LayoutOptions} LayoutOptions
+ * @typedef {import("./layouts.js").LayoutSpec} LayoutSpec
+ * @typedef {import("./physics.js").StaticPhysicsOptions} StaticPhysicsOptions
+ * @typedef {import("./physics.js").ElasticPhysicsOptions} ElasticPhysicsOptions
+ * @typedef {import("./physics.js").FloatingPhysicsOptions} FloatingPhysicsOptions
+ * @typedef {import("./physics.js").PhysicsOptions} PhysicsOptions
+ * @typedef {import("./theme.js").Theme} Theme
+ * @typedef {import("./theme.js").ThemeInput} ThemeInput
+ * @typedef {import("./schema.js").OptionSpec} OptionSpec
+ * @typedef {import("./snapshot.js").Snapshot} Snapshot
+ * @typedef {import("./snapshot.js").SnapshotSettings} SnapshotSettings
+ * @typedef {import("./snapshot.js").NodeState} NodeState
  */

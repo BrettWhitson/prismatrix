@@ -5,9 +5,10 @@ until the first stable release, continuing Prism's numbering.
 
 ## Unreleased
 
-The engine, rebuilt from the ground up in `next/engine/` and imported from `prismatrix/next`. It replaces the 0.4
-engine (`src/`), which stays the package's main entry until this is released. Nothing from 0.4 carries over: an app
-moves to the new API ([API.md](API.md)). The 0.4 reference is API.md at the `v0.4.0` tag.
+The engine, rebuilt from the ground up. It is now the package's main engine: `src/`, imported from `prismatrix` and
+`prismatrix/layout`. The 0.4 engine is removed, along with its demo; the sandbox (`npm run sandbox`) takes its place.
+Nothing from 0.4 carries over: an app moves to the new API ([API.md](API.md)). The 0.4 reference is API.md at the
+`v0.4.0` tag.
 
 - **Model, controller, renderer:** `new GraphController(new GraphModel(json, { node, edge }), glRenderer(canvas))`.
   - `GraphModel` is the graph and how it looks: prismatrix-graph JSON in and out, changed in place by deltas
@@ -51,7 +52,7 @@ moves to the new API ([API.md](API.md)). The 0.4 reference is API.md at the `v0.
   (105–199 ms when the CPU traced them; merged-tree morph frames are still 47–52 ms). Pans rebuild nothing;
   hover hit tests take 0.07 ms at 100k nodes; a restyle uploads only the bytes that changed.
 - **Snapshots:** `snapshot()` and `restore()` save and show a view exactly (prismatrix-snapshot JSON, see
-  [next/MODEL.md](next/MODEL.md)).
+  [MODEL.md](MODEL.md)).
 - **Schemas for everything:** every layout, physics, node, edge and animation option has a default, range, label and
   hint; `resolve` checks values against them, clamping and warning about typos.
 - **Sandbox** (`npm run sandbox`, http://localhost:8651): every option, built from the schemas, with a rolling engine

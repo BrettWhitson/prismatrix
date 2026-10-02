@@ -1,8 +1,8 @@
 # Prismatrix API
 
-The reference for the Prismatrix engine (`next/engine/`), imported from `prismatrix/next`. The sandbox
-(`npm run sandbox`, http://localhost:8651) drives every option described here. The 0.4 engine this replaces is still
-the package's main entry (`prismatrix`) for now; its reference is API.md at the `v0.4.0` tag.
+The reference for the Prismatrix engine (`src/`), imported from `prismatrix`. The sandbox
+(`npm run sandbox`, http://localhost:8651) drives every option described here. The 0.4 engine this replaces is documented in API.md
+at the `v0.4.0` tag.
 
 An app works with three parts:
 
@@ -17,7 +17,7 @@ An app works with three parts:
 The option, style, field and event tables are written from the code (the schemas and the JSDoc) by `npm run docs`
 (`tools/docs.mjs`); `npm run verify` fails when they're out of date, when a typedef and its schema disagree, or
 when an event, issue kind or public member isn't documented here. The file formats are also described in
-[next/MODEL.md](next/MODEL.md).
+[MODEL.md](MODEL.md).
 
 **Contents:** [Quick start](#quick-start) · [Entry points](#entry-points) · [GraphModel](#graphmodel) ·
 [GraphController](#graphcontroller) · [Events](#events) · [Renderers](#renderers) · [Layouts](#layouts) ·
@@ -28,7 +28,7 @@ when an event, issue kind or public member isn't documented here. The file forma
 ## Quick start
 
 ```js
-import { GraphModel, GraphController, glRenderer } from "prismatrix/next";
+import { GraphModel, GraphController, glRenderer } from "prismatrix";
 
 const canvas = document.querySelector("canvas"); // sized by CSS: the renderer follows its size
 const model = new GraphModel({
@@ -72,11 +72,11 @@ view.snapshot(); // everything on screen, as JSON
 
 | Import                       | What it is                                                                                                                 |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `prismatrix/next`            | The public surface (`next/engine/index.js`): everything below.                                                             |
-| `prismatrix/next/layout`     | Layout without a screen (`next/engine/layout.js`): `layoutGraph`, `GraphModel`, `LAYOUTS` and the schemas. No DOM needed. |
-| `prismatrix/next/<module>.js` | Any module by path (`next/engine/<module>.js`), for tools and tests. Not a stable interface.                             |
+| `prismatrix`            | The public surface (`src/index.js`): everything below.                                                             |
+| `prismatrix/layout`     | Layout without a screen (`src/layout.js`): `layoutGraph`, `GraphModel`, `LAYOUTS` and the schemas. No DOM needed. |
+| `prismatrix/<module>.js` | Any module by path (`src/<module>.js`), for tools and tests. Not a stable interface.                             |
 
-What `prismatrix/next` exports:
+What `prismatrix` exports:
 
 | Export                                          | What it is                                                                       |
 | ----------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -92,7 +92,7 @@ What `prismatrix/next` exports:
 | `SNAPSHOT_FORMAT`, `SNAPSHOT_VERSION`, `snapshotModel` | The snapshot format's name and version, and a snapshot's graph as a model. |
 | `WORKER_MIN`                                    | Graphs with at least this many nodes lay out in a worker (2,000).                |
 
-Types are in `types/next/` (generated from the JSDoc; `npm run types`). The index re-exports the ones an app uses:
+Types are in `types/` (generated from the JSDoc; `npm run types`). The index re-exports the ones an app uses:
 see [Types](#types).
 
 ## GraphModel
@@ -956,12 +956,12 @@ is a schema: a list of `OptionSpec`s, `{ key, label, type, default, min?, max?, 
 
 ## Layout without a screen
 
-`prismatrix/next/layout` lays graphs out with no renderer, no controller and nothing that needs a DOM: for a worker,
+`prismatrix/layout` lays graphs out with no renderer, no controller and nothing that needs a DOM: for a worker,
 a build step or a tool. It runs the same code a controller runs, sized the same way, so the homes are the ones a view
 would show.
 
 ```js
-import { layoutGraph } from "prismatrix/next/layout";
+import { layoutGraph } from "prismatrix/layout";
 
 const { positions, routing, model } = layoutGraph(json, {
   layout: "merged",
@@ -981,7 +981,7 @@ index in `model.edges` and nodes by theirs in `model.nodes`) and the `model`. Th
 ## Performance
 
 - **Layouts in a worker.** Graphs of `WORKER_MIN` (2,000) nodes or more lay out in a module worker
-  (`next/engine/layout-worker.js`); the page keeps drawing and taking input meanwhile. Quick updates coalesce: the
+  (`src/layout-worker.js`); the page keeps drawing and taking input meanwhile. Quick updates coalesce: the
   worker works on one layout at a time, and only the newest request waits. If the worker can't start (a content
   security policy, a bundler that didn't bundle it) or doesn't answer, layouts run on the page from then on and an
   `error` event says so once. `worker: false` always lays out on the page (layouts are then synchronous at every
@@ -1005,8 +1005,8 @@ measured headless; a real page adds drawing time.
 
 ## Types
 
-The declarations are generated from the JSDoc into `types/next/` (`npm run types`; `npm run verify` checks they're
-current and that `next/engine` type-checks). `prismatrix/next` exports these types:
+The declarations are generated from the JSDoc into `types/` (`npm run types`; `npm run verify` checks they're
+current and that `src/` type-checks). `prismatrix` exports these types:
 
 - the graph: `GraphJSON`, `NodeJSON`, `EdgeJSON`, `NodeStyle`, `EdgeStyle`, `ModelNode`, `ModelEdge`,
   `ModelOptions`, `Delta`, `NodeChange`, `EdgeChange`, `Change`, `Issue`;

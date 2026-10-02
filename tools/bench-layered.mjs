@@ -28,11 +28,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Graph } from "../next/engine/graph.js";
-import { GraphModel } from "../next/engine/model.js";
-import { layeredLayout } from "../next/engine/layered.js";
-import { radialLayout, treeLayout } from "../next/engine/layouts.js";
-import { hintFrom } from "../next/engine/layout-job.js";
+import { Graph } from "../src/graph.js";
+import { GraphModel } from "../src/model.js";
+import { layeredLayout } from "../src/layered.js";
+import { radialLayout, treeLayout } from "../src/layouts.js";
+import { hintFrom } from "../src/layout-job.js";
 
 const FIXTURES = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

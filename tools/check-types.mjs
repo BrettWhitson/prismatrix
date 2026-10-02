@@ -1,31 +1,21 @@
-// The committed declarations must match the source: regenerate each project's into a temporary folder and compare.
-//   types/       from src/         (tsconfig.json)
-//   types/next/  from next/engine/ (tsconfig.next.json)
+// The committed declarations in types/ must match the source in src/: regenerate them into a temporary folder and
+// compare.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const PROJECTS = [
-  { config: "tsconfig.json", out: "types", source: "src", skip: "next" },
-  {
-    config: "tsconfig.next.json",
-    out: "types/next",
-    source: "next/engine",
-  },
-];
+const PROJECTS = [{ config: "tsconfig.json", out: "types", source: "src" }];
 
 const tsc = join("node_modules", "typescript", "bin", "tsc");
 const prettier = join("node_modules", "prettier", "bin", "prettier.cjs");
 
-/** The .d.ts files under `dir`, relative to it, leaving out the folder `skip` (another project's). */
-const list = (dir, skip) => {
+/** The .d.ts files under `dir`, relative to it. */
+const list = (dir) => {
   try {
     return readdirSync(dir, { recursive: true })
       .map(String)
-      .filter(
-        (f) => f.endsWith(".d.ts") && !(skip && f.split(/[\\/]/)[0] === skip),
-      )
+      .filter((f) => f.endsWith(".d.ts"))
       .sort();
   } catch {
     return [];
@@ -33,7 +23,7 @@ const list = (dir, skip) => {
 };
 
 let failed = false;
-for (const { config, out: committedDir, source, skip } of PROJECTS) {
+for (const { config, out: committedDir, source } of PROJECTS) {
   const out = mkdtempSync(join(tmpdir(), "prism-types-"));
   try {
     execFileSync(process.execPath, [tsc, "-p", config, "--outDir", out], {
@@ -45,7 +35,7 @@ for (const { config, out: committedDir, source, skip } of PROJECTS) {
       { stdio: "inherit" },
     );
     const fresh = list(out);
-    const committed = list(committedDir, skip);
+    const committed = list(committedDir);
     const stale = [
       ...fresh.filter(
         (f) =>
