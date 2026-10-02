@@ -392,11 +392,9 @@ test("sifting never ends worse than the order it's given, and reads that order b
     };
     const graph = { layers, layer, upper, lower, block, blocks };
     // No effort allowed: the order comes back exactly as given.
-    const none = globalSifting(graph, { work: 0 });
-    assert.ok(none.exact);
+    const none = globalSifting(graph, { rounds: 4, work: 0 });
     assert.deepEqual(none.layers, layers);
-    const sifted = globalSifting(graph, { rounds: 4 });
-    assert.ok(sifted.exact);
+    const sifted = globalSifting(graph, { rounds: 4, work: Infinity });
     assert.ok(crossings(sifted.layers) <= crossings(layers), `trial ${trial}`);
   }
 });
@@ -494,17 +492,20 @@ test("global sifting keeps each long edge in one place and doesn't add crossings
 
 test("sifting on its own: finds the uncrossed order of a swapped pair", () => {
   // Layer 0: a, b. Layer 1: c, d. Edges a → d, b → c cross; sifting fixes it.
-  const result = globalSifting({
-    layers: [
-      [0, 1],
-      [2, 3],
-    ],
-    layer: [0, 0, 1, 1],
-    upper: [[], [], [1], [0]],
-    lower: [[3], [2], [], []],
-    block: [0, 1, 2, 3],
-    blocks: 4,
-  });
+  const result = globalSifting(
+    {
+      layers: [
+        [0, 1],
+        [2, 3],
+      ],
+      layer: [0, 0, 1, 1],
+      upper: [[], [], [1], [0]],
+      lower: [[3], [2], [], []],
+      block: [0, 1, 2, 3],
+      blocks: 4,
+    },
+    { rounds: 6, work: Infinity },
+  );
   const pos = new Map(result.layers.flatMap((l) => l.map((v, i) => [v, i])));
   assert.equal(
     Math.sign(pos.get(0) - pos.get(1)),

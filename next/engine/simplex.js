@@ -30,7 +30,7 @@ const SEARCH_SIZE = 30;
  * @param {Int32Array | number[]} head  per edge, its end
  * @param {ArrayLike<number>} minLength per edge, ≥ 0
  * @param {ArrayLike<number>} weight    per edge, ≥ 0
- * @param {{ maxPivots?: number, work?: number }} [options] work: stop pivoting once about this many nodes and edges
+ * @param {{ work?: number }} [options] work: stop pivoting once about this many nodes and edges
  *   have been visited (every pivot leaves a feasible ranking, so stopping early gives a good one, just not the best)
  * @returns {{ rank: Int32Array, pivots: number, optimal: boolean, work: number }} ranks start at 0; `work` is what
  *   the run used, setup included
@@ -43,7 +43,7 @@ export function networkSimplex(
   head,
   minLength,
   weight,
-  { maxPivots = Infinity, work: budget = Infinity } = {},
+  { work: budget = Infinity } = {},
 ) {
   // A virtual node joined to every node by a weightless edge makes the graph connected without changing the
   // objective. Edges from it have minimum length 0 so it never forces anything.
@@ -274,7 +274,7 @@ export function networkSimplex(
       optimal = true;
       break;
     }
-    if (pivots >= maxPivots || work >= budget) break;
+    if (work >= budget) break;
     const stamp = pivots + 1;
     // Removing the leaving edge splits the tree in two: the part below it (`child`'s subtree) and the rest. The
     // entering edge crosses between them the same way as the leaving edge, with the least slack. Either part will do

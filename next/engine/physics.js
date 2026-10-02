@@ -408,14 +408,14 @@ export class Simulation {
   }
 
   /**
-   * Advance by `dt` seconds of wall time in fixed steps. Returns the mean squared speed. Asleep, it does nothing at
-   * all (no forces, no collisions) until something wakes it.
+   * Advance by `dt` seconds of wall time in fixed steps (`energy`: the mean squared speed). Asleep, it does nothing
+   * at all (no forces, no collisions) until something wakes it.
    */
   advance(dt) {
     this.moved = false;
     if (this.asleep) {
       this.carry = 0;
-      return this.energy;
+      return;
     }
     this.carry = Math.min(this.carry + dt, 1 / 20);
     const start = now();
@@ -429,7 +429,6 @@ export class Simulation {
         break;
       }
     }
-    return this.energy;
   }
 
   step(h) {
