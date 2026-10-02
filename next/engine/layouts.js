@@ -424,7 +424,8 @@ export function constrainer(routing, opts) {
 
 /**
  * The layouts. `physics` lists the modes each one supports; for each mode, `options` are extra knobs only this
- * layout has and `defaults` override the mode's general defaults.
+ * layout has and `defaults` override the mode's general defaults. `edgeDefaults`, where a layout has them, replace
+ * EDGE_OPTIONS' defaults while it's shown, for any edge option that wasn't set on purpose (the controller's `edge`).
  */
 export const LAYOUTS = {
   tree: {
@@ -498,6 +499,8 @@ export const LAYOUTS = {
   merged: {
     label: "Merged tree",
     run: layeredLayout,
+    // Step edges from unrelated parents run along the same layer gaps and merge into rails; curves can each be traced.
+    edgeDefaults: { shape: "curve" },
     options: [
       select(
         "direction",

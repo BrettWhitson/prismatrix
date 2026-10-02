@@ -551,3 +551,118 @@ test("when a lost WebGL context comes back, the painter draws the last frame aga
     assert.ok(sent.bytes > 0, "restored: everything sent again and drawn");
   });
 });
+
+import { packHalos } from "../../next/engine/gl-pack.js";
+import { drawHalos, HALO_GAP, HALO_WIDTH } from "../../next/engine/render.js";
+
+test("selection halos: only selected real nodes, packed as nodes are; references and ghosts never", () => {
+  const g = small();
+  for (const n of g.nodes) [n.x, n.y] = [n.index * 10, 5];
+  const looks = {
+    radius: [4, 6, 8, 10, 12],
+    fill: ["#ff0000", "#00ff00", "#0000ff", "#ffffff", "#000000"],
+    shape: ["circle", "square", "diamond", "hexagon", "ring"],
+  };
+  // A fifth, display-only node past the real ones: the mask doesn't reach it.
+  const graph = { nodes: [...g.nodes, { index: 4, x: 0, y: 0 }] };
+  const scene = { graph, looks, selected: Uint8Array.of(0, 1, 0, 1) };
+  const { data, count } = packHalos(scene, null, { x: 1, y: 0 });
+  assert.equal(count, 2);
+  assert.deepEqual(
+    [...data.subarray(0, NODE_STRIDE)],
+    [9, 5, 6, 0, 1, 0, 1, SHAPE_IDS.square],
+  );
+  assert.equal(data[NODE_STRIDE + 7], SHAPE_IDS.hexagon);
+  assert.equal(packHalos({ ...scene, selected: null }).count, 0);
+});
+
+test("Canvas 2D halos sit the gap outside each shape, its corners rounded, in the node's colour", () => {
+  const g = small();
+  for (const n of g.nodes) [n.x, n.y] = [0, 0];
+  const calls = [];
+  const ctx = new Proxy(
+    {},
+    {
+      get:
+        (_, name) =>
+        (...args) =>
+          calls.push([name, ...args]),
+      set: (_, name, value) => (calls.push([`=${name}`, value]), true),
+    },
+  );
+  const k = 2;
+  const scene = {
+    graph: g,
+    camera: { x: 0, y: 0, k },
+    width: 100,
+    height: 100,
+    dpr: 1,
+    looks: {
+      radius: [10, 10, 10, 10],
+      fill: ["#123456", "#abcdef", "#000000", "#000000"],
+      shape: ["circle", "square", "circle", "circle"],
+    },
+    selected: Uint8Array.of(1, 1, 0, 0),
+  };
+  drawHalos(ctx, scene);
+  const o = (HALO_GAP + HALO_WIDTH / 2) / k;
+  const arcs = calls.filter(([name]) => name === "arc");
+  assert.deepEqual(arcs[0].slice(1, 4), [0, 0, 10 + o], "a circle's ring");
+  // A square: four corner arcs of radius o round its corners, each a quarter turn.
+  const corners = arcs.slice(1);
+  assert.equal(corners.length, 4);
+  for (const [, x, y, r, a0, a1] of corners) {
+    assert.deepEqual([Math.abs(x), Math.abs(y), r], [10, 10, o]);
+    const sweep = (((a1 - a0) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    assert.ok(Math.abs(sweep - Math.PI / 2) < 1e-9);
+  }
+  assert.deepEqual(
+    calls.filter(([name]) => name === "=strokeStyle").map(([, v]) => v),
+    ["#123456", "#abcdef"],
+  );
+  assert.ok(
+    calls.some(([name, v]) => name === "=lineWidth" && v === HALO_WIDTH / k),
+  );
+});
+
+test("a selection change redraws halos without rebuilding the edge pieces", () => {
+  withDom(() => {
+    const c = new GraphController(craftingSmall(), null, {
+      layout: "tree",
+      worker: false,
+      clock: () => 1000,
+    });
+    c.setViewport(800, 600, 1);
+    c.run(300, { start: 1000 });
+    const painter = new WebGLPainter(
+      globalThis.document.createElement("canvas"),
+    );
+    painter.draw(c.scene);
+    const pieces = painter.layer.gpu;
+    assert.ok(pieces, "the GPU draws this graph's edges");
+    assert.ok(c.select(c.graph.nodes[3].id));
+    c.run(50, { start: 1400 });
+    painter.draw(c.scene);
+    assert.equal(painter.layer.gpu, pieces, "the same pieces");
+    assert.equal(painter.layer.haloData.count, 1);
+    c.select(null);
+    c.run(50, { start: 1500 });
+    painter.draw(c.scene);
+    assert.equal(painter.layer.haloData.count, 0);
+    assert.equal(painter.layer.gpu, pieces);
+  });
+});
+
+import { labelsShown } from "../../next/engine/render.js";
+
+test("labels: kept-room labels show until they're a smudge, others until they're too small to read", () => {
+  const node = { labels: "on", labelSize: 12, labelCollide: true };
+  assert.ok(
+    labelsShown(node, { k: 0.2 }),
+    "2.4 px: still shown with room kept",
+  );
+  assert.ok(!labelsShown(node, { k: 0.1 }), "1.2 px: not rasterised at all");
+  assert.ok(!labelsShown({ ...node, labelCollide: false }, { k: 0.4 }));
+  assert.ok(labelsShown({ ...node, labelCollide: false }, { k: 0.5 }));
+  assert.ok(!labelsShown({ ...node, labels: "off" }, { k: 4 }));
+});

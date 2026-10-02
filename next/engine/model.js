@@ -394,6 +394,18 @@ function checkEnds(source, target, has, id, problem) {
 }
 
 /** The keys whose values differ, with their new values. */
+/**
+ * The keys of `given` options that the schema knows and that have a value, added to `onto` (a new set either way).
+ * @returns {Set<string>}
+ */
+function givenKeys(schema, given, onto = null) {
+  const out = new Set(onto);
+  const values = plain(given);
+  for (const o of schema)
+    if (Object.hasOwn(values, o.key) && values[o.key] != null) out.add(o.key);
+  return out;
+}
+
 function changes(before, after) {
   const out = {};
   for (const k of Object.keys(after))
@@ -534,6 +546,15 @@ export class GraphModel {
       node: resolve(NODE_OPTIONS, plain(node), warn),
       edge: resolve(EDGE_OPTIONS, plain(edge), warn),
     };
+    /**
+     * The options that were set on purpose (given here or to `setOptions`), by key: anything else is a default, and
+     * a view may put its own default in its place (a layout's edge defaults, see LAYOUTS). Read only.
+     * @type {{ node: ReadonlySet<string>, edge: ReadonlySet<string> }}
+     */
+    this.explicit = {
+      node: givenKeys(NODE_OPTIONS, node),
+      edge: givenKeys(EDGE_OPTIONS, edge),
+    };
     this.measure = measure ?? roughMeasure;
     /** Whether `measure` is a real text measurement (given, or a renderer's), not the estimate. */
     this.measured = !!measure;
@@ -613,33 +634,7 @@ export class GraphModel {
     this.#source = source;
     this.#target = target;
     this.#endsValid = m;
-    // Counting sort by source and by target: each node's edges stay in edge order.
-    const outStart = new Int32Array(n + 1),
-      inStart = new Int32Array(n + 1);
-    for (let i = 0; i < m; i++) {
-      outStart[source[i] + 1]++;
-      inStart[target[i] + 1]++;
-    }
-    for (let v = 0; v < n; v++) {
-      outStart[v + 1] += outStart[v];
-      inStart[v + 1] += inStart[v];
-    }
-    const outEdges = new Int32Array(m),
-      inEdges = new Int32Array(m);
-    const outAt = outStart.slice(0, n),
-      inAt = inStart.slice(0, n);
-    for (let i = 0; i < m; i++) {
-      outEdges[outAt[source[i]]++] = i;
-      inEdges[inAt[target[i]]++] = i;
-    }
-    this.#adj = Object.freeze({
-      source,
-      target,
-      outStart,
-      outEdges,
-      inStart,
-      inEdges,
-    });
+    this.#adj = compressedRows(n, source, target);
     return this.#adj;
   }
 
@@ -767,11 +762,14 @@ export class GraphModel {
   /**
    * Change how nodes and edges look: `{ node, edge }`, each all of NODE_OPTIONS / EDGE_OPTIONS or the part to
    * change. Numbers out of range are clamped; unknown keys and bad values are listed in the issues. A new label size
-   * measures labels again (each distinct one, once).
+   * measures labels again (each distinct one, once). The keys given count as set on purpose (`explicit`). With
+   * `reset`, the options become exactly what's given over the defaults, and only those keys are set on purpose.
+   * @param {{ node?: object, edge?: object }} options
+   * @param {{ reset?: boolean }} [how]
    * @returns {Change | null} what changed; null when nothing did (or when called from a listener: queued)
    */
-  setOptions(options) {
-    return this.#mutate(() => this.#setOptions(options));
+  setOptions(options, { reset = false } = {}) {
+    return this.#mutate(() => this.#setOptions(options, reset));
   }
 
   // ---- internals: telling listeners ------------------------------------------------------------------------------
@@ -1259,21 +1257,46 @@ export class GraphModel {
     return change;
   }
 
-  #setOptions(options) {
+  #setOptions(options, reset) {
     const { node, edge } = plain(options);
     const issues = [];
     const warn = this.#optionWarning(issues);
     const before = this.opts;
+    // Merged over what's set (or, with `reset`, over the defaults: only what's given is set).
     const next = {
-      node: node
-        ? resolve(NODE_OPTIONS, { ...before.node, ...plain(node) }, warn)
-        : before.node,
-      edge: edge
-        ? resolve(EDGE_OPTIONS, { ...before.edge, ...plain(edge) }, warn)
-        : before.edge,
+      node:
+        node || reset
+          ? resolve(
+              NODE_OPTIONS,
+              { ...(reset ? {} : before.node), ...plain(node) },
+              warn,
+            )
+          : before.node,
+      edge:
+        edge || reset
+          ? resolve(
+              EDGE_OPTIONS,
+              { ...(reset ? {} : before.edge), ...plain(edge) },
+              warn,
+            )
+          : before.edge,
     };
+    const explicit = {
+      node: givenKeys(NODE_OPTIONS, node, reset ? null : this.explicit.node),
+      edge: givenKeys(EDGE_OPTIONS, edge, reset ? null : this.explicit.edge),
+    };
+    // A key that becomes set on purpose (or stops being) is a change even at the same value: a view's own default
+    // for it may have been showing.
     const nodeChanged = changes(before.node, next.node),
       edgeChanged = changes(before.edge, next.edge);
+    for (const [was, now, out, values] of [
+      [this.explicit.node, explicit.node, nodeChanged, next.node],
+      [this.explicit.edge, explicit.edge, edgeChanged, next.edge],
+    ]) {
+      for (const k of now) if (!was.has(k)) out[k] = values[k];
+      for (const k of was) if (!now.has(k)) out[k] = values[k];
+    }
+    this.explicit = explicit;
     if (!Object.keys(nodeChanged).length && !Object.keys(edgeChanged).length) {
       if (issues.length) this.issues = issues;
       return null;
@@ -1307,70 +1330,9 @@ export class GraphModel {
    *   leaves: Int32Array, descendants: Int32Array, tree: Uint8Array, maxDepth: number }}
    */
   forest() {
-    return this.#cached("forest", () => {
-      const { target, outStart, outEdges, inStart } = this.adjacency();
-      const count = this.#nodeList.length;
-      const parent = new Int32Array(count).fill(-1),
-        depth = new Int32Array(count),
-        leaves = new Int32Array(count).fill(1),
-        descendants = new Int32Array(count),
-        tree = new Uint8Array(this.#edgeList.length);
-      const children = new Array(count);
-      for (let i = 0; i < count; i++) children[i] = [];
-      const roots = [],
-        order = [];
-      const seen = new Uint8Array(count);
-      // Breadth first from `root`, with `order` as the queue.
-      const grow = (root) => {
-        seen[root] = 1;
-        roots.push(root);
-        order.push(root);
-        for (let head = order.length - 1; head < order.length; head++) {
-          const at = order[head];
-          for (let k = outStart[at]; k < outStart[at + 1]; k++) {
-            const ei = outEdges[k];
-            const t = target[ei];
-            if (seen[t]) continue;
-            seen[t] = 1;
-            tree[ei] = 1;
-            parent[t] = at;
-            depth[t] = depth[at] + 1;
-            children[at].push(t);
-            order.push(t);
-          }
-        }
-      };
-      for (let i = 0; i < count; i++)
-        if (inStart[i] === inStart[i + 1]) grow(i);
-      for (let i = 0; i < count; i++) if (!seen[i]) grow(i);
-      let maxDepth = 0;
-      for (let k = order.length - 1; k >= 0; k--) {
-        const v = order[k];
-        const kids = children[v];
-        if (kids.length) {
-          let l = 0,
-            dsc = 0;
-          for (const c of kids) {
-            l += leaves[c];
-            dsc += descendants[c] + 1;
-          }
-          leaves[v] = l;
-          descendants[v] = dsc;
-        }
-        if (depth[v] > maxDepth) maxDepth = depth[v];
-      }
-      return {
-        roots,
-        order,
-        parent,
-        depth,
-        children,
-        leaves,
-        descendants,
-        tree,
-        maxDepth,
-      };
-    });
+    return this.#cached("forest", () =>
+      forestOf(this.#nodeList.length, this.adjacency()),
+    );
   }
 
   /**
@@ -1557,6 +1519,113 @@ export class GraphModel {
       })),
     };
   }
+}
+
+/**
+ * A structure as compressed sparse rows, from each edge's ends: each node's outgoing and incoming edges, in edge
+ * order (a counting sort by source and by target). For a model's adjacency, and for a working graph that shows only
+ * part of its model (graph.js).
+ * @param {number} n  nodes
+ * @param {Int32Array} source per edge, its source node's index
+ * @param {Int32Array} target per edge, its target node's index
+ * @returns {Adjacency}
+ */
+export function compressedRows(n, source, target) {
+  const m = source.length;
+  const outStart = new Int32Array(n + 1),
+    inStart = new Int32Array(n + 1);
+  for (let i = 0; i < m; i++) {
+    outStart[source[i] + 1]++;
+    inStart[target[i] + 1]++;
+  }
+  for (let v = 0; v < n; v++) {
+    outStart[v + 1] += outStart[v];
+    inStart[v + 1] += inStart[v];
+  }
+  const outEdges = new Int32Array(m),
+    inEdges = new Int32Array(m);
+  const outAt = outStart.slice(0, n),
+    inAt = inStart.slice(0, n);
+  for (let i = 0; i < m; i++) {
+    outEdges[outAt[source[i]]++] = i;
+    inEdges[inAt[target[i]]++] = i;
+  }
+  return Object.freeze({
+    source,
+    target,
+    outStart,
+    outEdges,
+    inStart,
+    inEdges,
+  });
+}
+
+/**
+ * A structure read as a forest (see GraphModel.forest): breadth-first from every node nothing points to (in node
+ * order), then from any node still unreached (cycles); the first edge to reach a node is its tree edge.
+ * @param {number} count nodes
+ * @param {Adjacency} adjacency
+ */
+export function forestOf(count, { target, outStart, outEdges, inStart }) {
+  const parent = new Int32Array(count).fill(-1),
+    depth = new Int32Array(count),
+    leaves = new Int32Array(count).fill(1),
+    descendants = new Int32Array(count),
+    tree = new Uint8Array(target.length);
+  const children = new Array(count);
+  for (let i = 0; i < count; i++) children[i] = [];
+  const roots = [],
+    order = [];
+  const seen = new Uint8Array(count);
+  // Breadth first from `root`, with `order` as the queue.
+  const grow = (root) => {
+    seen[root] = 1;
+    roots.push(root);
+    order.push(root);
+    for (let head = order.length - 1; head < order.length; head++) {
+      const at = order[head];
+      for (let k = outStart[at]; k < outStart[at + 1]; k++) {
+        const ei = outEdges[k];
+        const t = target[ei];
+        if (seen[t]) continue;
+        seen[t] = 1;
+        tree[ei] = 1;
+        parent[t] = at;
+        depth[t] = depth[at] + 1;
+        children[at].push(t);
+        order.push(t);
+      }
+    }
+  };
+  for (let i = 0; i < count; i++) if (inStart[i] === inStart[i + 1]) grow(i);
+  for (let i = 0; i < count; i++) if (!seen[i]) grow(i);
+  let maxDepth = 0;
+  for (let k = order.length - 1; k >= 0; k--) {
+    const v = order[k];
+    const kids = children[v];
+    if (kids.length) {
+      let l = 0,
+        dsc = 0;
+      for (const c of kids) {
+        l += leaves[c];
+        dsc += descendants[c] + 1;
+      }
+      leaves[v] = l;
+      descendants[v] = dsc;
+    }
+    if (depth[v] > maxDepth) maxDepth = depth[v];
+  }
+  return {
+    roots,
+    order,
+    parent,
+    depth,
+    children,
+    leaves,
+    descendants,
+    tree,
+    maxDepth,
+  };
 }
 
 /** Take the items at `gone` (ascending indices) out of `list`, in place, keeping the others in order. */

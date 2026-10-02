@@ -7,6 +7,12 @@
 // Pure: no DOM, no GL.
 
 /**
+ * A ghost's ancestors, as a chain shared between ghosts: `id` is one ancestor's, `up` the chain above it (null at
+ * the root). A removed subtree's ghosts all share their parents' chains, so making them costs one link each.
+ * @typedef {{ id: string, up: Ancestry | null }} Ancestry
+ */
+
+/**
  * @typedef {object} Ghost
  * @property {string} id
  * @property {string} label
@@ -15,22 +21,46 @@
  * @property {string} fill
  * @property {number} x0         where it was when it left
  * @property {number} y0
- * @property {string[]} ancestors ids from its parent up to its root, in the graph it left
+ * @property {Ancestry | null} up its ancestors in the graph it left, from its parent up to its root
+ * @property {string[]} ancestors the same, as a list of ids (made when read)
+ * @property {number} depth      how many ancestors it has
  * @property {number} start      when it left (ms, the view's clock)
  */
 
+/** The ids along an ancestry chain, nearest first. */
+export function ancestorIds(up) {
+  const out = [];
+  for (let a = up; a; a = a.up) out.push(a.id);
+  return out;
+}
+
 /**
  * The nodes of `previous` that aren't in `next`, as ghosts starting at `now`. `looks` are previous's radius and
- * fill per node.
+ * fill per node. Linear in the nodes that left: each one's ancestry is its parent's with one link added, made once.
  * @returns {Ghost[]}
  */
 export function departures(previous, next, looks, now) {
+  const { nodes } = previous;
+  // Per node of previous, the chain of its ancestors (made when first needed, parents before children).
+  const chains = new Array(nodes.length);
+  const depths = new Int32Array(nodes.length);
+  const chainOf = (i) => {
+    // Up to the nearest node whose chain is known (or past a root), then down again making each link once.
+    const path = [];
+    for (let at = i; at >= 0 && chains[at] === undefined; at = nodes[at].parent)
+      path.push(at);
+    for (let k = path.length - 1; k >= 0; k--) {
+      const v = path[k],
+        p = nodes[v].parent;
+      chains[v] = p < 0 ? null : { id: nodes[p].id, up: chains[p] };
+      depths[v] = p < 0 ? 0 : depths[p] + 1;
+    }
+    return chains[i];
+  };
   const out = [];
-  for (const n of previous.nodes) {
+  for (const n of nodes) {
     if (next.byId.has(n.id)) continue;
-    const ancestors = [];
-    for (let p = n.parent; p >= 0; p = previous.nodes[p].parent)
-      ancestors.push(previous.nodes[p].id);
+    const up = chainOf(n.index);
     out.push({
       id: n.id,
       label: n.label,
@@ -40,27 +70,41 @@ export function departures(previous, next, looks, now) {
       shape: looks.shape?.[n.index] ?? "circle",
       x0: n.x,
       y0: n.y,
-      ancestors,
+      up,
+      get ancestors() {
+        return ancestorIds(this.up);
+      },
+      depth: depths[n.index],
       start: now,
     });
   }
   // Parents before children, so a ghost following a ghost parent finds where that parent is this frame.
-  return out.sort((a, b) => a.ancestors.length - b.ancestors.length);
+  return out.sort((a, b) => a.depth - b.depth);
 }
 
 /**
  * Where a ghost folds to: its nearest ancestor that `graph` still has (a node), or that is itself a ghost still
- * leaving (a ghost id), or nothing (it fades where it is).
+ * leaving (a ghost id), or nothing (it fades where it is). Ghosts carry their ancestors as a chain (`up`); a plain
+ * list of ids (`ancestors`) works too.
  * @returns {{ node: object } | { ghost: string } | null}
  */
 export function foldTarget(ghost, graph, ghostIds) {
-  for (const id of ghost.ancestors) {
+  const ids = "up" in ghost ? chainIds(ghost.up) : ghost.ancestors;
+  for (const id of ids) {
     const node = graph.byId.get(id);
     if (node) return { node };
     if (ghostIds.has(id)) return { ghost: id };
   }
   return null;
 }
+
+/** The ids along an ancestry chain, one at a time (the walk usually stops at the first). */
+function* chainIds(up) {
+  for (let a = up; a; a = a.up) yield a.id;
+}
+
+/** A ghost's parent's id (its nearest ancestor), or undefined for a root. */
+const parentOf = (g) => ("up" in g ? g.up?.id : g.ancestors[0]);
 
 /**
  * The display graph for a frame: `graph`'s nodes and edges with the ghosts appended (nodes at their current
@@ -140,7 +184,7 @@ export function withGhosts(graph, ghosts, base, now, ms, ease) {
   }
   // An edge from each ghost's parent (its first ancestor) if that's still drawn, real or ghost.
   for (const g of live) {
-    const parentId = g.ancestors[0];
+    const parentId = parentOf(g);
     if (parentId === undefined) continue;
     const real = graph.byId.get(parentId);
     const source = real ? real.index : index.get(parentId);
