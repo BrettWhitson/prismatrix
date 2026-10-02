@@ -13,7 +13,7 @@
 // stands in, so labels never blink out.
 
 import { labelAnchor } from "./boxes.js";
-import { parseColour } from "./gl-pack.js";
+import { palette, room } from "./gl-pack.js";
 import {
   PILL,
   TEXT_HALO,
@@ -274,17 +274,8 @@ export class LabelLayer {
       return old ?? null;
     };
 
-    if (this.data.length < items.length * LABEL_STRIDE)
-      this.data = new Float32Array(
-        Math.ceil(items.length * 1.5) * LABEL_STRIDE,
-      );
-    const data = this.data;
-    const colours = new Map();
-    const rgb = (hex) => {
-      let c = colours.get(hex);
-      if (!c) colours.set(hex, (c = parseColour(hex)));
-      return c;
-    };
+    const data = (this.data = room(this.data, items.length * LABEL_STRIDE));
+    const rgb = palette();
     const groups = [];
     let at = 0;
     for (const item of items) {

@@ -609,7 +609,7 @@ class GLLayer {
       // An icon that came in grew the atlas: every node's icon rectangle changed.
       if (this.iconAtlas.moved !== moved) this.#packNodes(scene);
       else this.nodes.uploadRuns(this.nodeData, runsOf(indices));
-      this.haloData = packHalos(scene, this.haloData.data, this.origin);
+      this.haloData = packHalos(scene, this.nodeData, this.haloData.data);
       this.halos.upload(this.haloData.data, this.haloData.count);
     }
     if (shaded) {
@@ -638,7 +638,7 @@ class GLLayer {
       );
       this.ends.uploadAlpha(this.brightness.endAlpha, this.edgeData.endCount);
       if (this.gpu && changed) this.#shadePieces(perEdge);
-      this.haloData = packHalos(scene, this.haloData.data, this.origin);
+      this.haloData = packHalos(scene, this.nodeData, this.haloData.data);
       this.halos.upload(this.haloData.data, this.haloData.count);
       this.glyphData = packGlyphs(scene, this.glyphData.data, this.origin);
       this.glyphs.upload(this.glyphData.data, this.glyphData.count);

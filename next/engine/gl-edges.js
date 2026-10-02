@@ -10,7 +10,7 @@
 // positions texture's contents. Pure: no GL. (The shaders' geometry in JavaScript, for tests to check against the
 // CPU's own edge routes, is in tests/helpers/gl-twins.js.)
 
-import { parseColour, runsOf } from "./gl-pack.js";
+import { palette, runsOf } from "./gl-pack.js";
 import { BUNDLE_STEPS, END_ROOM, bundlePath, startTrims } from "./geometry.js";
 
 // The shaders (gl-shaders.js) take these from here, so the GPU and its JavaScript twins (tests/helpers/gl-twins.js)
@@ -91,12 +91,7 @@ export function packPieces(scene, origin) {
   const layered = routing.kind === "layered";
   const end = edge.arrow === "none" ? 0 : edge.arrowSize * END_ROOM;
   const kind = edge.arrow === "dot" ? 1 : 0;
-  const colours = new Map();
-  const colour = (hex) => {
-    let rgb = colours.get(hex);
-    if (!rgb) colours.set(hex, (rgb = parseColour(hex)));
-    return rgb;
-  };
+  const colour = palette();
   const edges = graph.edges;
   const starts = startTrims(scene);
   // Cross-links bundle (unless edges are straight); those whose path has nothing to bend round go straight.
@@ -318,12 +313,7 @@ export function packPositions(scene, origin, out) {
  */
 export function restylePieces(scene, data, dirty) {
   const { looks } = scene;
-  const colours = new Map();
-  const colour = (hex) => {
-    let rgb = colours.get(hex);
-    if (!rgb) colours.set(hex, (rgb = parseColour(hex)));
-    return rgb;
-  };
+  const colour = palette();
   /** @type {[string, Float32Array, Int32Array, number, number, number, number][]} */
   const kinds = [
     // kind, instances, their edges, count, stride, half-width at (-1: none), colour at

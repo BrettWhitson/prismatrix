@@ -43,24 +43,19 @@ export function parseColour(hex) {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
-/** A Float32Array of at least `floats`: `old` when it's big enough, else a bigger one holding what `old` held. */
-function room(old, floats) {
-  if (old && old.length >= floats) return old;
-  const grown = new Float32Array(Math.ceil(Math.max(floats, 1024) * 1.5));
-  if (old) grown.set(old);
-  return grown;
-}
-
-/** An Int32Array of at least `count`, keeping what `old` held. */
-function roomInt(old, count) {
-  if (old && old.length >= count) return old;
-  const grown = new Int32Array(Math.ceil(Math.max(count, 1024) * 1.5));
+/**
+ * A typed array (Float32Array unless `Type` says otherwise) of at least `n`: `old` when it's big enough, else a
+ * bigger one holding what `old` held.
+ */
+export function room(old, n, Type = Float32Array) {
+  if (old && old.length >= n) return old;
+  const grown = new Type(Math.ceil(Math.max(n, 1024) * 1.5));
   if (old) grown.set(old);
   return grown;
 }
 
 /** A cache of parsed colours, so each distinct colour is parsed once per frame. */
-function palette() {
+export function palette() {
   const seen = new Map();
   return (hex) => {
     let rgb = seen.get(hex);
@@ -162,31 +157,23 @@ function packNode(scene, n, out, origin, colour, iconAt) {
 const NONE = [0, 0, 0];
 
 /**
- * The selected nodes (scene.selected), packed as nodes are, for the halo shader: a handful of instances, refilled
- * when the selection, the shading or the positions change (nothing else is rebuilt for a selection).
+ * The selected nodes (scene.selected), for the halo shader: their rows of `nodeData` (from packNodes), a handful of
+ * instances, refilled when the selection, the shading or the positions change (nothing else is rebuilt for a
+ * selection).
+ * @param {Float32Array} nodeData
  * @returns {{ data: Float32Array, count: number }}
  */
-export function packHalos(scene, out, origin = ORIGIN) {
-  const { graph, looks, selected } = scene;
+export function packHalos(scene, nodeData, out = null) {
+  const { graph, selected } = scene;
   let count = 0;
   const total = selected ? Math.min(selected.length, graph.nodes.length) : 0;
   for (let i = 0; i < total; i++) if (selected[i]) count++;
   out = room(out, count * NODE_STRIDE);
-  if (!count) return { data: out, count };
-  const colour = palette();
   let o = 0;
   for (let i = 0; i < total; i++) {
     if (!selected[i]) continue;
-    const n = graph.nodes[i];
-    const rgb = colour(looks.fill[i]);
-    out[o] = n.x - origin.x;
-    out[o + 1] = n.y - origin.y;
-    out[o + 2] = looks.radius[i];
-    out[o + 3] = rgb[0];
-    out[o + 4] = rgb[1];
-    out[o + 5] = rgb[2];
-    out[o + 6] = nodeAlpha(scene, i);
-    out[o + 7] = SHAPE_IDS[looks.shape[i]] ?? 0;
+    // Centre, radius, colour, visibility and shape: what the halo shader reads.
+    out.set(nodeData.subarray(i * NODE_STRIDE, i * NODE_STRIDE + 8), o);
     o += NODE_STRIDE;
   }
   return { data: out, count };
@@ -244,7 +231,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
 
     const points = pts.length / 2;
     segments = room(segments, (segmentCount + points) * SEGMENT_STRIDE);
-    segmentEdge = roomInt(segmentEdge, segmentCount + points);
+    segmentEdge = room(segmentEdge, segmentCount + points, Int32Array);
     // A taper narrows from twice the width at the parent to a third of it at the child, by distance along the edge.
     let total = 0;
     if (edge.taper)
@@ -277,7 +264,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
       dx /= d;
       dy /= d;
       ends = room(ends, (endCount + 1) * END_STRIDE);
-      endEdge = roomInt(endEdge, endCount + 1);
+      endEdge = room(endEdge, endCount + 1, Int32Array);
       endEdge[endCount] = edgeIndex;
       const o = endCount++ * END_STRIDE;
       ends[o] = pts[n - 2] + dx * end - origin.x;
@@ -314,12 +301,8 @@ export function edgeBrightness(scene, packed, reuse = {}, perEdge = null) {
   perEdge ??= Float32Array.from(edges, (e) => edgeAlpha(scene, e));
   let bright = true;
   for (let i = 0; i < edges.length; i++) if (perEdge[i] < 1) bright = false;
-  let segmentAlpha = reuse.segmentAlpha;
-  if (!segmentAlpha || segmentAlpha.length < packed.segmentCount)
-    segmentAlpha = new Float32Array(Math.ceil(packed.segmentCount * 1.5) + 16);
-  let endAlpha = reuse.endAlpha;
-  if (!endAlpha || endAlpha.length < packed.endCount)
-    endAlpha = new Float32Array(Math.ceil(packed.endCount * 1.5) + 16);
+  const segmentAlpha = room(reuse.segmentAlpha, packed.segmentCount);
+  const endAlpha = room(reuse.endAlpha, packed.endCount);
   for (let i = 0; i < packed.segmentCount; i++)
     segmentAlpha[i] = perEdge[packed.segmentEdge[i]];
   for (let i = 0; i < packed.endCount; i++)

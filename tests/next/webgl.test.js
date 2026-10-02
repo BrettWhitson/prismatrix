@@ -568,7 +568,10 @@ test("selection halos: only selected real nodes, packed as nodes are; references
   // A fifth, display-only node past the real ones: the mask doesn't reach it.
   const graph = { nodes: [...g.nodes, { index: 4, x: 0, y: 0 }] };
   const scene = { graph, looks, selected: Uint8Array.of(0, 1, 0, 1) };
-  const { data, count } = packHalos(scene, null, { x: 1, y: 0 });
+  const { data, count } = packHalos(
+    scene,
+    packNodes(scene, null, { x: 1, y: 0 }),
+  );
   assert.equal(count, 2);
   assert.deepEqual(
     [...data.subarray(0, 8)],
