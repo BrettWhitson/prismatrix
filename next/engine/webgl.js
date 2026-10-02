@@ -30,7 +30,6 @@ import {
   patchNodes,
   runsOf,
 } from "./gl-pack.js";
-import { GLYPH_MIN_PX, LINK } from "./references.js";
 import { IconAtlas } from "./gl-icons.js";
 import { iconStore } from "./icons.js";
 import { DEFAULT_THEME } from "./theme.js";
@@ -48,7 +47,7 @@ import {
   packPositions,
   restylePieces,
 } from "./gl-edges.js";
-import { BUNDLE_STEPS, BUNDLE_STRENGTH } from "./geometry.js";
+import { BUNDLE_STEPS } from "./geometry.js";
 import {
   BUNDLE_TIP_VERTEX,
   BUNDLE_VERTEX,
@@ -703,15 +702,7 @@ class GLLayer {
       this.halos.draw(0, this.haloData.count);
     }
     if (this.glyphData.count) {
-      const g = this.#use(this.glyphProgram, scene);
-      gl.uniform1f(g.u_minimum, GLYPH_MIN_PX);
-      gl.uniform4f(
-        g.u_link,
-        LINK.offset,
-        LINK.length,
-        LINK.height,
-        LINK.stroke,
-      );
+      this.#use(this.glyphProgram, scene);
       this.glyphs.draw(0, this.glyphData.count);
     }
 
@@ -855,7 +846,6 @@ class GLLayer {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.positions.texture);
     gl.uniform1i(u.u_positions, 1);
-    gl.uniform1i(u.u_columns, POSITION_COLUMNS);
     if (u.u_shape) gl.uniform1i(u.u_shape, shape);
     if (u.u_axis) gl.uniformMatrix2fv(u.u_axis, false, g.axis);
     if (u.u_corner) gl.uniform1f(u.u_corner, scene.edge.corner);
@@ -867,7 +857,6 @@ class GLLayer {
         (routing.cy ?? 0) - this.origin.y,
       );
     if (u.u_morphing) gl.uniform1i(u.u_morphing, routing.morphing ? 1 : 0);
-    if (u.u_strength) gl.uniform1f(u.u_strength, BUNDLE_STRENGTH);
     gl.activeTexture(gl.TEXTURE0);
     return u;
   }

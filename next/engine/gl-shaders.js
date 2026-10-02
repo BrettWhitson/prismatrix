@@ -7,15 +7,22 @@
 // origin (the middle of the layout), and so is u_camera: 32-bit floats stay precise however far out a drawing
 // reaches.
 
-import { ARC_STEP, BUNDLE_STEPS, END_ROOM } from "./geometry.js";
+import {
+  ARC_STEP,
+  BUNDLE_STEPS,
+  BUNDLE_STRENGTH,
+  END_ROOM,
+} from "./geometry.js";
 import {
   CORNER_POINTS,
   CUT_STEPS,
   PIECE_POINTS,
+  POSITION_COLUMNS,
   RADIAL_ARC_POINTS,
   RADIAL_CORNER_POINTS,
   RADIAL_POINTS,
 } from "./gl-edges.js";
+import { GLYPH_MIN_PX, LINK } from "./references.js";
 import {
   ICON_FADE_PX,
   ICON_MIN_PX,
@@ -23,10 +30,11 @@ import {
   TILE_CORNER,
 } from "./icons.js";
 
-// Numbers the JavaScript twins of these shaders (gl-edges.js) use too, written into the GLSL: a float literal, and
-// the points of a piece (PIECE_POINTS: two ends and a rounded corner of CORNER_POINTS each) and of a radial step
-// (RADIAL_POINTS: two ends, a corner of RC points at each end of an arc of RA).
-const float = (n) => n.toFixed(1);
+// Numbers from the JavaScript (gl-edges.js, geometry.js, the shaders' twins in tests/helpers/gl-twins.js), written
+// into the GLSL: a float literal, and the points of a piece (PIECE_POINTS: two ends and a rounded corner of
+// CORNER_POINTS each) and of a radial step (RADIAL_POINTS: two ends, a corner of RC points at each end of an arc of
+// RA).
+const float = (n) => (Number.isInteger(n) ? n.toFixed(1) : String(n));
 const LAST = PIECE_POINTS - 1;
 const RC = RADIAL_CORNER_POINTS,
   RA = RADIAL_ARC_POINTS,
@@ -49,48 +57,6 @@ uniform float u_pixel;
 
 float cover(float d) {
   return clamp(0.5 - d / u_pixel, 0.0, 1.0);
-}`;
-
-/**
- * A node: its shape filled, its icon (a layer of the icon atlas, a texture array) in its box and clipped to the
- * shape, a border inside the shape's edge, and the outline. Instances as packNodes packs them.
- */
-export const NODE_VERTEX = `#version 300 es
-layout(location = 0) in vec2 a_corner;
-layout(location = 1) in vec2 a_centre;
-layout(location = 2) in float a_radius;
-layout(location = 3) in vec4 a_colour;
-layout(location = 4) in float a_shape;
-layout(location = 5) in vec4 a_stroke;  // colour r, g, b, width (world px, 0 for none)
-layout(location = 6) in vec4 a_uv;      // the icon's rectangle in its atlas page
-layout(location = 7) in vec3 a_icon;    // page (-1 for no icon), half the icon box's width and height
-${COMMON_VERTEX}
-uniform float u_outline;
-
-out vec2 v_local;
-flat out float v_radius;
-flat out vec4 v_colour;
-flat out float v_shape;
-flat out vec4 v_stroke;
-flat out vec4 v_uv;
-flat out vec4 v_icon;  // page, box half width, box half height, how much of the icon shows
-
-void main() {
-  float reach = a_shape == 3.0 ? 1.25 : a_shape == 4.0 ? 1.1 : 1.0;
-  float ring = a_shape == 5.0 ? max(1.5, a_radius * 0.35) * 0.5 : 0.0;
-  // Big enough for the shape, half its outline or ring stroke, and a couple of pixels of anti-aliasing.
-  float extent = a_radius * reach + max(u_outline * 0.5, ring) + 2.0 * u_pixel;
-  vec2 local = a_corner * extent;
-  gl_Position = toClip(a_centre + local);
-  v_local = local;
-  v_radius = a_radius;
-  v_colour = a_colour;
-  v_shape = a_shape;
-  v_stroke = a_stroke;
-  v_uv = a_uv;
-  // Icons fade in from ICON_MIN_PX across on screen to ICON_MIN_PX + ICON_FADE_PX (iconShown in icons.js).
-  float shown = clamp((2.0 * a_radius * u_camera.z - ${ICON_MIN_PX.toFixed(1)}) / ${ICON_FADE_PX.toFixed(1)}, 0.0, 1.0);
-  v_icon = vec4(a_icon, a_icon.x < 0.0 ? 0.0 : shown);
 }`;
 
 /**
@@ -144,6 +110,48 @@ float shapeReach(float shape) {
 
 float ringHalfStroke(float r) {
   return max(1.5, r * 0.35) * 0.5;
+}`;
+
+/**
+ * A node: its shape filled, its icon (a layer of the icon atlas, a texture array) in its box and clipped to the
+ * shape, a border inside the shape's edge, and the outline. Instances as packNodes packs them.
+ */
+export const NODE_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec2 a_centre;
+layout(location = 2) in float a_radius;
+layout(location = 3) in vec4 a_colour;
+layout(location = 4) in float a_shape;
+layout(location = 5) in vec4 a_stroke;  // colour r, g, b, width (world px, 0 for none)
+layout(location = 6) in vec4 a_uv;      // the icon's rectangle in its atlas page
+layout(location = 7) in vec3 a_icon;    // page (-1 for no icon), half the icon box's width and height
+${COMMON_VERTEX}
+${NODE_SHAPES}
+uniform float u_outline;
+
+out vec2 v_local;
+flat out float v_radius;
+flat out vec4 v_colour;
+flat out float v_shape;
+flat out vec4 v_stroke;
+flat out vec4 v_uv;
+flat out vec4 v_icon;  // page, box half width, box half height, how much of the icon shows
+
+void main() {
+  float ring = a_shape == 5.0 ? ringHalfStroke(a_radius) : 0.0;
+  // Big enough for the shape, half its outline or ring stroke, and a couple of pixels of anti-aliasing.
+  float extent = a_radius * shapeReach(a_shape) + max(u_outline * 0.5, ring) + 2.0 * u_pixel;
+  vec2 local = a_corner * extent;
+  gl_Position = toClip(a_centre + local);
+  v_local = local;
+  v_radius = a_radius;
+  v_colour = a_colour;
+  v_shape = a_shape;
+  v_stroke = a_stroke;
+  v_uv = a_uv;
+  // Icons fade in from ICON_MIN_PX across on screen to ICON_MIN_PX + ICON_FADE_PX (iconShown in icons.js).
+  float shown = clamp((2.0 * a_radius * u_camera.z - ${ICON_MIN_PX.toFixed(1)}) / ${ICON_FADE_PX.toFixed(1)}, 0.0, 1.0);
+  v_icon = vec4(a_icon, a_icon.x < 0.0 ? 0.0 : shown);
 }`;
 
 export const NODE_FRAGMENT = `#version 300 es
@@ -254,6 +262,25 @@ void main() {
   outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
+/**
+ * What an edge capsule hands SEGMENT_FRAGMENT, and corner c (x and y each -1 or 1) of the quad round the capsule
+ * from a to b, pad past it all round.
+ */
+const CAPSULE_CORNER = `
+out vec2 v_world;
+flat out vec4 v_ends;
+flat out vec2 v_half;
+flat out vec4 v_colour;
+
+vec2 capsuleCorner(vec2 a, vec2 b, vec2 c, float pad) {
+  vec2 along = b - a;
+  float length_ = length(along);
+  vec2 dir = length_ > 0.0 ? along / length_ : vec2(1.0, 0.0);
+  vec2 normal = vec2(-dir.y, dir.x);
+  float t = mix(-pad, length_ + pad, c.x * 0.5 + 0.5);
+  return a + dir * t + normal * c.y * pad;
+}`;
+
 /** An edge segment: a capsule whose radius runs from one half-width to the other, so joints come out round. */
 export const SEGMENT_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
@@ -262,21 +289,10 @@ layout(location = 2) in vec2 a_half;
 layout(location = 3) in vec3 a_colour;
 layout(location = 4) in float a_alpha;
 ${COMMON_VERTEX}
-
-out vec2 v_world;
-flat out vec4 v_ends;
-flat out vec2 v_half;
-flat out vec4 v_colour;
+${CAPSULE_CORNER}
 
 void main() {
-  vec2 a = a_ends.xy, b = a_ends.zw;
-  vec2 along = b - a;
-  float length_ = length(along);
-  vec2 dir = length_ > 0.0 ? along / length_ : vec2(1.0, 0.0);
-  vec2 normal = vec2(-dir.y, dir.x);
-  float pad = max(a_half.x, a_half.y) + 2.0 * u_pixel;
-  float t = mix(-pad, length_ + pad, a_corner.x * 0.5 + 0.5);
-  vec2 world = a + dir * t + normal * a_corner.y * pad;
+  vec2 world = capsuleCorner(a_ends.xy, a_ends.zw, a_corner, max(a_half.x, a_half.y) + 2.0 * u_pixel);
   gl_Position = toClip(world);
   v_world = world;
   v_ends = a_ends;
@@ -301,6 +317,26 @@ void main() {
   outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
 
+/**
+ * An edge end's quad (for END_FRAGMENT), at its tip pointing along dir; shape is its size and kind. Reads the
+ * instance's a_corner, a_colour and a_alpha.
+ */
+const END_QUAD = `
+out vec2 v_local;
+flat out vec2 v_shape;
+flat out vec4 v_colour;
+
+void endQuad(vec2 tip, vec2 dir, vec2 shape) {
+  vec2 normal = vec2(-dir.y, dir.x);
+  float size = shape.x;
+  // Local frame: x runs back from the tip along the edge, y across it.
+  vec2 local = vec2(0.45 * size, 0.0) + a_corner * (0.75 * size + 2.0 * u_pixel);
+  gl_Position = toClip(tip - dir * local.x + normal * local.y);
+  v_local = local;
+  v_shape = shape;
+  v_colour = vec4(a_colour, a_alpha);
+}`;
+
 /** An edge's end: an arrowhead (a triangle pointing along the edge) or a dot, just short of the target. */
 export const END_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
@@ -309,21 +345,10 @@ layout(location = 2) in vec2 a_shape;  // size, kind
 layout(location = 3) in vec3 a_colour;
 layout(location = 4) in float a_alpha;
 ${COMMON_VERTEX}
-
-out vec2 v_local;
-flat out vec2 v_shape;
-flat out vec4 v_colour;
+${END_QUAD}
 
 void main() {
-  vec2 dir = a_tip.zw;
-  vec2 normal = vec2(-dir.y, dir.x);
-  float size = a_shape.x;
-  // Local frame: x runs back from the tip along the edge, y across it.
-  vec2 local = vec2(0.45 * size, 0.0) + a_corner * (0.75 * size + 2.0 * u_pixel);
-  gl_Position = toClip(a_tip.xy - dir * local.x + normal * local.y);
-  v_local = local;
-  v_shape = a_shape;
-  v_colour = vec4(a_colour, a_alpha);
+  endQuad(a_tip.xy, a_tip.zw, a_shape);
 }`;
 
 export const END_FRAGMENT = `#version 300 es
@@ -432,15 +457,15 @@ void main() {
 
 /**
  * A reference chip's link glyph: two interlocked links (stadiums, stroked), turned 45 degrees, as a distance field.
- * The shapes are in units of the glyph's radius (u_link: offset of each link's centre, length, height, stroke),
- * as the Canvas 2D painter strokes them. Glyphs smaller on screen than u_minimum CSS px are left out.
+ * The shapes are in units of the glyph's radius (LINK in references.js: offset of each link's centre, length,
+ * height, stroke), as the Canvas 2D painter strokes them. Glyphs smaller on screen than GLYPH_MIN_PX CSS px are left
+ * out.
  */
 export const GLYPH_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec3 a_glyph;  // centre x, y, radius (world)
 layout(location = 2) in vec4 a_colour; // r, g, b, alpha
 ${COMMON_VERTEX}
-uniform float u_minimum;
 
 out vec2 v_local;
 flat out float v_radius;
@@ -449,7 +474,7 @@ flat out vec4 v_colour;
 void main() {
   float r = a_glyph.z;
   vec2 local = a_corner * (r + 2.0 * u_pixel);
-  gl_Position = r * u_camera.z < u_minimum ? vec4(0.0) : toClip(a_glyph.xy + local);
+  gl_Position = r * u_camera.z < ${float(GLYPH_MIN_PX)} ? vec4(0.0) : toClip(a_glyph.xy + local);
   v_local = local;
   v_radius = r;
   v_colour = a_colour;
@@ -461,7 +486,7 @@ in vec2 v_local;
 flat in float v_radius;
 flat in vec4 v_colour;
 ${COMMON_FRAGMENT}
-uniform vec4 u_link;
+const vec4 LINK = vec4(${[LINK.offset, LINK.length, LINK.height, LINK.stroke].map(float)});
 out vec4 outColour;
 
 // Distance to a stadium centred at (cx, 0): a bar hl long each way, rounded at radius r.
@@ -475,8 +500,8 @@ void main() {
   vec2 p = v_local / v_radius;
   // Undo the turn: the links lie along x before it.
   vec2 q = vec2(p.x - p.y, p.x + p.y) * 0.70710678;
-  float hl = u_link.y * 0.5, r = u_link.z * 0.5;
-  float d = min(abs(stadium(q, -u_link.x, hl, r)), abs(stadium(q, u_link.x, hl, r))) - u_link.w * 0.5;
+  float hl = LINK.y * 0.5, r = LINK.z * 0.5;
+  float d = min(abs(stadium(q, -LINK.x, hl, r)), abs(stadium(q, LINK.x, hl, r))) - LINK.w * 0.5;
   float alpha = cover(d * v_radius) * v_colour.a;
   outColour = vec4(v_colour.rgb * alpha, alpha);
 }`;
@@ -488,11 +513,11 @@ void main() {
  */
 const STOPS = `
 uniform highp sampler2D u_positions;
-uniform int u_columns;
+const int COLUMNS = ${POSITION_COLUMNS};
 
 vec4 nodeAt(float index) {
   int i = int(index + 0.5);
-  return texelFetch(u_positions, ivec2(i % u_columns, i / u_columns), 0);
+  return texelFetch(u_positions, ivec2(i % COLUMNS, i / COLUMNS), 0);
 }
 
 vec2 stopAt(vec4 stop, vec4 s, vec4 t) {
@@ -504,11 +529,7 @@ vec2 stopAt(vec4 stop, vec4 s, vec4 t) {
  * The capsule from a to b that six vertices of an edge instance draw (gl_VertexID % 6 picks the corner), as the
  * segment shader draws one; nothing when draw is false. Reads the instance's a_half, a_colour and a_alpha.
  */
-const CAPSULE = `
-out vec2 v_world;
-flat out vec4 v_ends;
-flat out vec2 v_half;
-flat out vec4 v_colour;
+const CAPSULE = `${CAPSULE_CORNER}
 
 void capsule(vec2 a, vec2 b, bool draw) {
   if (!draw) {
@@ -519,13 +540,7 @@ void capsule(vec2 a, vec2 b, bool draw) {
   // Two triangles: corners (-1,-1) (1,-1) (-1,1) / (-1,1) (1,-1) (1,1).
   vec2 c = vec2(corner == 1 || corner == 4 || corner == 5 ? 1.0 : -1.0,
                 corner == 2 || corner == 3 || corner == 5 ? 1.0 : -1.0);
-  vec2 along = b - a;
-  float length_ = length(along);
-  vec2 dir = length_ > 0.0 ? along / length_ : vec2(1.0, 0.0);
-  vec2 normal = vec2(-dir.y, dir.x);
-  float pad = a_half + 2.0 * u_pixel;
-  float along_ = mix(-pad, length_ + pad, c.x * 0.5 + 0.5);
-  vec2 world = a + dir * along_ + normal * c.y * pad;
+  vec2 world = capsuleCorner(a, b, c, a_half + 2.0 * u_pixel);
   gl_Position = toClip(world);
   v_world = world;
   v_ends = vec4(a, b);
@@ -535,14 +550,14 @@ void capsule(vec2 a, vec2 b, bool draw) {
 
 /**
  * Bundled edges: control points (a node on the tree path, pulled towards the line between the edge's ends), a
- * point of a uniform cubic B-spline span, and trimming a capsule off a node's disc (clipDisc in gl-edges.js).
+ * point of a uniform cubic B-spline span, and trimming a capsule off a node's disc.
  */
 const SPLINE = `
 const float STEPS = ${BUNDLE_STEPS}.0;
-uniform float u_strength;
+const float STRENGTH = ${float(BUNDLE_STRENGTH)};
 
 vec2 control(float node, float along, vec2 S, vec2 T) {
-  return mix(mix(S, T, along), nodeAt(node).xy, u_strength);
+  return mix(mix(S, T, along), nodeAt(node).xy, STRENGTH);
 }
 
 vec2 splineAt(float t, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
@@ -568,34 +583,15 @@ bool clipDisc(inout vec2 a, inout vec2 b, vec2 c, float r) {
 }`;
 
 /**
- * The curves edge pieces and their ends share: a tree curve in the layout's axis frame (leaving and arriving
- * along the axis, bending halfway between, mid), a general cubic for radial curves, where each is cut a distance
- * from its end, and how far a radial step has turned into a curve.
+ * The curves edge pieces and their ends share: a cubic (a tree curve is one in the layout's axis frame, leaving and
+ * arriving along the axis through (A.x, mid) and (B.x, mid), mid halfway between; a radial curve bends at the ring
+ * halfway between), where it is cut a distance from its end, how far a radial step has turned into a curve, and a
+ * radial piece's frame.
  */
 const CURVES = `
 uniform vec2 u_centre;
 uniform bool u_morphing;
-
-// A curve from A to B leaving and arriving along the axis, at t (0–1).
-vec2 curveAt(float t, vec2 A, vec2 B, float mid) {
-  float u = 1.0 - t;
-  float w0 = u * u * u, w1 = 3.0 * u * u * t, w2 = 3.0 * u * t * t, w3 = t * t * t;
-  return vec2((w0 + w1) * A.x + (w2 + w3) * B.x, w0 * A.y + (w1 + w2) * mid + w3 * B.y);
-}
-
-// Where the curve is reach from its end (t = 0 at A, or t = 1 at B when fromB): the curve is cut there, off
-// the node, as the CPU cuts its traced curves.
-float curveCut(float reach, vec2 A, vec2 B, float mid, bool fromB) {
-  if (reach <= 0.0) return fromB ? 1.0 : 0.0;
-  vec2 end = fromB ? B : A;
-  float lo = 0.0, hi = 0.5;
-  for (int k = 0; k < ${CUT_STEPS}; k++) {
-    float m = (lo + hi) * 0.5;
-    if (length(curveAt(fromB ? 1.0 - m : m, A, B, mid) - end) < reach) lo = m;
-    else hi = m;
-  }
-  return fromB ? 1.0 - lo : lo;
-}
+uniform int u_shape;
 
 vec2 ray(float angle) {
   return vec2(cos(angle), sin(angle));
@@ -612,7 +608,8 @@ vec2 cubicTangent(float t, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
   return u * u * (p1 - p0) + 2.0 * u * t * (p2 - p1) + t * t * (p3 - p2);
 }
 
-// Where a cubic is reach from its start (or, fromB, its end).
+// Where a cubic is reach from its start (or, fromB, its end): the curve is cut there, off the node, as the CPU
+// cuts its traced curves.
 float cubicCut(float reach, vec2 p0, vec2 p1, vec2 p2, vec2 p3, bool fromB) {
   if (reach <= 0.0) return fromB ? 1.0 : 0.0;
   vec2 end = fromB ? p3 : p0;
@@ -633,13 +630,35 @@ float stepCurveWeight(float rs, float rt, float hs, float ht, float arc, float c
   float inside = smoothstep(-gap / 4.0, 1.0, rs - rt);
   float loops = smoothstep(0.9, 1.0, arc / (1.75 * chord + 10.0));
   return max(off, max(inside, loops));
+}
+
+// A radial piece from S to T round the centre (s and t: its nodes, with their homes): the angles of its ends, the
+// ring halfway between (rm), the turn between them the short way round (delta), and how far a step has eased into
+// a curve (w; 1 for a curve). Returns whether the source is at the centre (or laid out there): it has no angle of
+// its own, and its edges are spokes.
+bool radialFrame(vec2 S, vec2 T, vec4 s, vec4 t, out float as_, out float at, out float rm, out float delta, out float w) {
+  vec2 c = u_centre;
+  float rs = length(S - c), rt = length(T - c);
+  at = atan(T.y - c.y, T.x - c.x);
+  bool centred = rs < 1e-6 || length(s.zw - c) < 1e-6;
+  as_ = centred ? at : atan(S.y - c.y, S.x - c.x);
+  rm = (rs + rt) * 0.5;
+  delta = at - as_;
+  if (delta > 3.14159265) delta -= 6.28318531;
+  if (delta < -3.14159265) delta += 6.28318531;
+  // Off its ring (unless a layout morph is moving it), inside its parent, or an arc that would loop: a step eases
+  // into a curve.
+  w = u_shape == 2 ? 1.0
+    : u_shape == 1 && !centred ? stepCurveWeight(rs, rt, length(s.zw - c), length(t.zw - c), rm * abs(delta), length(T - S))
+    : 0.0;
+  return centred;
 }`;
 
 /**
  * An edge piece, built on the GPU: from its two stops (looked up in the positions texture), the shader traces the
  * piece's shape (u_shape: 0 straight, 1 step with rounded corners, 2 curve) in the layout's axis frame (u_axis: y
  * runs from parent to child) as 16 points, and each instance's vertices draw the capsule between two of them
- * (gl_VertexID / 6 picks which). The same geometry as piecePoints in gl-edges.js.
+ * (gl_VertexID / 6 picks which). The same geometry as piecePoints in tests/helpers/gl-twins.js.
  */
 export const PIECE_VERTEX = `#version 300 es
 layout(location = 0) in vec4 a_stopA;
@@ -653,7 +672,6 @@ ${COMMON_VERTEX}
 ${STOPS}
 ${CAPSULE}
 ${CURVES}
-uniform int u_shape;
 uniform mat2 u_axis;
 uniform float u_corner;
 uniform bool u_radial;
@@ -663,7 +681,7 @@ const float HALF_PI = 1.5707963;
 // Point i (0–${LAST}) of the piece from A to B, in the axis frame. Curves run between t0 and t1.
 vec2 pointAt(int i, vec2 A, vec2 B, float mid, float r1, float r2, float sx, float sy, bool straight, vec2 cut) {
   if (straight) return i == 0 ? A : B;
-  if (u_shape == 2) return curveAt(mix(cut.x, cut.y, float(i) / ${float(LAST)}), A, B, mid);
+  if (u_shape == 2) return cubicAt(mix(cut.x, cut.y, float(i) / ${float(LAST)}), A, vec2(A.x, mid), vec2(B.x, mid), B);
   if (i == 0) return A;
   if (i == ${LAST}) return B;
   if (i <= ${CORNER_POINTS}) {
@@ -690,7 +708,8 @@ void treePart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
     A += dir * a_trim.x;
     B -= dir * a_trim.y;
   } else if (u_shape == 2) {
-    cut = vec2(curveCut(a_trim.x, A, B, mid, false), curveCut(a_trim.y, A, B, mid, true));
+    vec2 p1 = vec2(A.x, mid), p2 = vec2(B.x, mid);
+    cut = vec2(cubicCut(a_trim.x, A, p1, p2, B, false), cubicCut(a_trim.y, A, p1, p2, B, true));
   } else {
     A.y += sy * a_trim.x;
     B.y -= sy * a_trim.y;
@@ -757,26 +776,10 @@ float stepAlong(int i, vec2 A, vec2 B, vec2 q1, vec2 j1, vec2 r1, vec2 q2, vec2 
 void radialPart(int part, vec4 s, vec4 t, out vec2 a, out vec2 b) {
   vec2 c = u_centre;
   vec2 S = s.xy, T = t.xy;
-  float rs = length(S - c), rt = length(T - c);
-  float at = atan(T.y - c.y, T.x - c.x);
-  // A source at the centre (or laid out there) has no angle of its own: its edges are spokes.
-  bool centred = rs < 1e-6 || length(s.zw - c) < 1e-6;
-  float as_ = centred ? at : atan(S.y - c.y, S.x - c.x);
-  float rm = (rs + rt) * 0.5;
-  float delta = at - as_;
-  if (delta > 3.14159265) delta -= 6.28318531;
-  if (delta < -3.14159265) delta += 6.28318531;
+  float as_, at, rm, delta, w;
+  bool centred = radialFrame(S, T, s, t, as_, at, rm, delta, w);
   int mode = u_shape; // 0 straight, 1 step, 2 curve
-  float w = 0.0; // a step's way to a curve
-  if (mode == 1) {
-    if (centred) mode = 0;
-    else {
-      // Off its ring (unless a layout morph is moving it), inside its parent, or an arc that would loop: it eases
-      // into a curve.
-      w = stepCurveWeight(rs, rt, length(s.zw - c), length(t.zw - c), rm * abs(delta), length(T - S));
-      if (w >= 1.0) mode = 2;
-    }
-  }
+  if (mode == 1) mode = centred ? 0 : w >= 1.0 ? 2 : 1;
   if (mode == 0) {
     vec2 d = T - S;
     float len = length(d);
@@ -835,10 +838,10 @@ void main() {
 /**
  * A bundled cross-link's span, built on the GPU: a uniform cubic B-spline span whose four control points are nodes
  * on the tree path between the edge's ends (looked up in the positions texture), each pulled towards the straight
- * line between the ends by (1 - u_strength). Each instance draws the span as u_steps capsules (BUNDLE_STEPS close
- * up, fewer zoomed out: bundleSteps in gl-edges.js); each capsule is cut where it enters the disc of its source or
- * target (the trims), so the edge stops at the nodes. The same geometry as bundleSpanCapsules in gl-edges.js, and
- * bspline in geometry.js.
+ * line between the ends by (1 - BUNDLE_STRENGTH). Each instance draws the span as u_steps capsules (BUNDLE_STEPS
+ * close up, fewer zoomed out: bundleSteps in gl-edges.js); each capsule is cut where it enters the disc of its
+ * source or target (the trims), so the edge stops at the nodes. The same geometry as bspline in geometry.js (and
+ * bundleSpanCapsules, its twin in tests/helpers/gl-twins.js).
  */
 export const BUNDLE_VERTEX = `#version 300 es
 layout(location = 0) in vec4 a_controls;
@@ -869,7 +872,7 @@ void main() {
  * A bundled cross-link's end (arrowhead or dot): walking back from the target along the curve's last three spans
  * (its last four control nodes), the first point at least the target's radius plus the end's room from the
  * target; the tip sits that room on from where the curve crosses that distance, pointing the way the curve runs
- * there. The same as bundleTip in gl-edges.js.
+ * there. The same as bundleTip in tests/helpers/gl-twins.js.
  */
 export const BUNDLE_TIP_VERTEX = `#version 300 es
 layout(location = 0) in vec2 a_corner;
@@ -882,10 +885,7 @@ layout(location = 6) in float a_alpha;
 ${COMMON_VERTEX}
 ${STOPS}
 ${SPLINE}
-
-out vec2 v_local;
-flat out vec2 v_shape;
-flat out vec4 v_colour;
+${END_QUAD}
 
 void main() {
   vec2 S = nodeAt(a_nodes.x).xy, T = nodeAt(a_nodes.y).xy;
@@ -917,14 +917,7 @@ void main() {
     dir = normalize(T - previous + vec2(0.0, 1e-9));
     tip = T - dir * (reach - end);
   }
-  // As END_VERTEX: x runs back from the tip along the edge, y across it.
-  vec2 normal = vec2(-dir.y, dir.x);
-  float size = a_shape.y;
-  vec2 local = vec2(0.45 * size, 0.0) + a_corner * (0.75 * size + 2.0 * u_pixel);
-  gl_Position = toClip(tip - dir * local.x + normal * local.y);
-  v_local = local;
-  v_shape = a_shape.yz;
-  v_colour = vec4(a_colour, a_alpha);
+  endQuad(tip, dir, a_shape.yz);
 }`;
 
 /**
@@ -943,13 +936,9 @@ layout(location = 5) in float a_alpha;
 ${COMMON_VERTEX}
 ${STOPS}
 ${CURVES}
-uniform int u_shape;
+${END_QUAD}
 uniform mat2 u_axis;
 uniform bool u_radial;
-
-out vec2 v_local;
-flat out vec2 v_shape;
-flat out vec4 v_colour;
 
 const vec2 TINY = vec2(0.0, 1e-9);
 
@@ -964,18 +953,11 @@ void main() {
   bool curved = false;
   if (u_radial) {
     vec2 c = u_centre;
-    float rs = length(from - c), rt = length(to - c);
-    bool centred = rs < 1e-6 || length(s.zw - c) < 1e-6;
+    float as_, at, rm, delta, w;
+    bool centred = radialFrame(from, to, s, t, as_, at, rm, delta, w);
     if (u_shape == 0 || centred) dir = normalize(to - from + TINY);
     else {
       // Steps arrive along the target's spoke, curves along their tangent; a step easing into a curve, between.
-      float at = atan(to.y - c.y, to.x - c.x), as_ = atan(from.y - c.y, from.x - c.x);
-      float rm = (rs + rt) * 0.5;
-      float delta = at - as_;
-      if (delta > 3.14159265) delta -= 6.28318531;
-      if (delta < -3.14159265) delta += 6.28318531;
-      float w = u_shape == 2 ? 1.0
-        : stepCurveWeight(rs, rt, length(s.zw - c), length(t.zw - c), rm * abs(delta), length(to - from));
       vec2 spoke = normalize(to - c + TINY);
       dir = spoke;
       if (w > 0.0) {
@@ -994,19 +976,12 @@ void main() {
     else if (u_shape == 1) dir = transpose(u_axis) * vec2(0.0, B.y >= A.y ? 1.0 : -1.0);
     else {
       float mid = (A.y + B.y) * 0.5;
-      float t1 = curveCut(reach, A, B, mid, true);
       vec2 p1 = vec2(A.x, mid), p2 = vec2(B.x, mid);
+      float t1 = cubicCut(reach, A, p1, p2, B, true);
       dir = transpose(u_axis) * normalize(cubicTangent(t1, A, p1, p2, B) + TINY);
-      cut = transpose(u_axis) * curveAt(t1, A, B, mid);
+      cut = transpose(u_axis) * cubicAt(t1, A, p1, p2, B);
       curved = true;
     }
   }
-  vec2 tip = curved ? cut + dir * end : to - dir * a_shape.x;
-  vec2 normal = vec2(-dir.y, dir.x);
-  float size = a_shape.y;
-  vec2 local = vec2(0.45 * size, 0.0) + a_corner * (0.75 * size + 2.0 * u_pixel);
-  gl_Position = toClip(tip - dir * local.x + normal * local.y);
-  v_local = local;
-  v_shape = a_shape.yz;
-  v_colour = vec4(a_colour, a_alpha);
+  endQuad(curved ? cut + dir * end : to - dir * a_shape.x, dir, a_shape.yz);
 }`;
