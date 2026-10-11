@@ -3,7 +3,7 @@
   "version": "0.5.0",
   "private": true,
   "license": "MIT",
-  "description": "Lightning fast and lightweight Graph Rendering and Physics Engine",
+  "description": "Force Graph Layout and Rendering Engine",
   "type": "module",
   "exports": {
     ".": {
@@ -60,7 +60,6 @@
     "webgl2",
     "force-directed",
     "layout",
-    "physics",
     "renderer"
   ],
   "repository": {

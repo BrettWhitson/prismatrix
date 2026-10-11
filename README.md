@@ -1,6 +1,6 @@
 # Prismatrix
 
-**Lightning fast and lightweight Graph Rendering and Physics Engine.**
+**Force Graph Layout and Rendering Engine.**
 
 Give it nodes and edges. It lays them out, draws them on the GPU (WebGL2, with Canvas 2D as the fallback), moves them
 believably when you drag them, and morphs from one version of the graph to the next. It was built for crafting trees,

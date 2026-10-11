@@ -1,7 +1,7 @@
 # Changelog
 
-Prismatrix: a lightning fast and lightweight graph rendering and physics engine. Versions follow `0.MINOR.PATCH`
-until the first stable release, continuing Prism's numbering.
+Prismatrix: a force graph layout and rendering engine. Versions follow `0.MINOR.PATCH` until the first stable
+release, continuing Prism's numbering.
 
 ## 0.5.0
 
