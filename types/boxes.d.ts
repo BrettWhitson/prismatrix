@@ -1,3 +1,5 @@
+/** Whether display node `i` is whole: a real node, or a copy of one (references "crossing"), not a chip or ghost. */
+export declare const isWhole: (scene: any, i: any) => boolean;
 export declare const LABEL_GAP = 4;
 /** Line height of a label, as a multiple of its font size. */
 export declare const LINE = 1.25;

@@ -446,6 +446,8 @@ export declare const AURA_RINGS = 10;
 export declare const AURA_ALPHA = 0.6;
 /** How far a stacked copy's fill goes toward the background (so it reads as behind). */
 export declare const STACK_FADE = 0.45;
+/** "#rrggbb" `a` mixed toward `b` by `t` (0: a, 1: b). */
+export declare function mixHex(a: any, b: any, t: any): string;
 /** The Canvas 2D painter: everything on the renderer's canvas. Also the reference the WebGL painter is checked against. */
 export declare class CanvasPainter {
   name: string;

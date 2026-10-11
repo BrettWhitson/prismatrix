@@ -104,20 +104,10 @@ export const NODE_COLOUR_DEFAULT = NODE_OPTIONS.find(
   (o) => o.key === "color",
 ).default;
 
-const TOKENS = [
-  "background",
-  "text",
-  "textHalo",
-  "edge",
-  "node",
-  "root",
-  "ancestors",
-  "descendants",
-  "highlight",
-  "focus",
-  "card",
-  "cardBorder",
-];
+/** The colour tokens a theme object may set: every preset key but its name and palette. */
+const TOKENS = Object.keys(DEFAULT_THEME).filter(
+  (k) => k !== "name" && k !== "palette",
+);
 
 /**
  * A complete theme from a preset name or an object of tokens over a preset (`base`, "dark" by default). Unknown

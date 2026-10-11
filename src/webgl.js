@@ -13,7 +13,13 @@
 // Everything is drawn relative to an origin in the middle of the layout (nodes, labels, CPU segments and GPU
 // pieces alike), so 32-bit floats stay precise far from the world's 0, 0.
 
-import { HALO_GAP, HALO_WIDTH, clearTo, flowShift } from "./render.js";
+import {
+  HALO_GAP,
+  HALO_WIDTH,
+  clearTo,
+  flowShift,
+  realCount,
+} from "./render.js";
 import { LABEL_STRIDE, LabelLayer, textKey } from "./gl-text.js";
 import {
   END_STRIDE,
@@ -672,7 +678,7 @@ export class WebGLPainter {
     else if (restyle) {
       // The restyled nodes, and the display-only ones past the real graph (references take their ingredient's
       // colour).
-      const real = Math.min(scene.matrix?.count ?? nodeCount, nodeCount);
+      const real = realCount(scene);
       const indices = [...restyle.nodes];
       for (let i = real; i < nodeCount; i++) indices.push(i);
       const moved = this.iconAtlas.moved;

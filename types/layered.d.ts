@@ -18,17 +18,7 @@
  */
 export declare function layeredLayout(
   graph: import("./graph.js").Graph,
-  {
-    direction,
-    levelGap,
-    nodeGap,
-    ranking,
-    ordering,
-    placement,
-    references,
-    shareMin,
-    stability,
-  }?: {
+  options?: {
     direction?: string;
     levelGap?: number;
     nodeGap?: number;

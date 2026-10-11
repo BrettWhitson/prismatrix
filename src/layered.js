@@ -74,7 +74,12 @@ const PULL = 4;
  */
 export function layeredLayout(
   graph,
-  {
+  options = {},
+  sizing = DEFAULT_SIZING,
+  hint = null,
+  collect = false,
+) {
+  const {
     direction = "TB",
     levelGap = 90,
     nodeGap = 16,
@@ -84,11 +89,7 @@ export function layeredLayout(
     references = "crossing",
     shareMin = 3,
     stability = STABILITY,
-  } = {},
-  sizing = DEFAULT_SIZING,
-  hint = null,
-  collect = false,
-) {
+  } = options;
   const { nodes, edges } = graph;
   const n = nodes.length;
   const flip = direction === "BT" || direction === "RL";
@@ -166,36 +167,26 @@ export function layeredLayout(
   const refs = [];
   // "crossing": the cross-links that still cross something once ordered without references (null: too big to
   // check, so busy ingredients get chips as with "hubs").
-  const split = /** @type {Set<number> | null} */ (
-    /** @type {unknown} */ (
-      references === "crossing" && !collect
-        ? layeredLayout(
+  /** @type {Set<number> | null} */
+  const split =
+    references === "crossing"
+      ? /** @type {any} */ (
+          layeredLayout(
             graph,
-            {
-              direction,
-              levelGap,
-              nodeGap,
-              ranking,
-              ordering,
-              placement,
-              references: "off",
-              shareMin,
-              stability,
-            },
+            { ...options, references: "off" },
             sizing,
             hint,
             true,
           )
-        : null
-    )
-  );
+        )
+      : null;
   const copies = !!split;
   // A split stays split while its edge lasts (the hint knows it ended at a reference): which edges cross can tip
   // with any change, and copies coming and going would move everything round them.
   if (split && hint?.refX)
     for (let ei = 0; ei < edges.length; ei++)
       if (!Number.isNaN(hint.refX[ei])) split.add(ei);
-  if (references === "hubs" || (references === "crossing" && !collect)) {
+  if (references === "hubs" || references === "crossing") {
     const uses = new Int32Array(n);
     edges.forEach((e) => uses[e.target]++);
     edges.forEach((e, ei) => {
@@ -283,12 +274,8 @@ export function layeredLayout(
   };
   // ---- 4a. with a hint (the layout before a change): where each kept node was, along its layer and across them.
   // With stability above 0, the order starts from the old one (seedFromHint, orderFromHint).
-  let was = null,
-    wasDepth = null;
-  if (hint) {
-    was = across ? hint.y : hint.x;
-    wasDepth = across ? hint.x : hint.y;
-  }
+  const was = hint && (across ? hint.y : hint.x),
+    wasDepth = hint && (across ? hint.x : hint.y);
   const keep = hint && stability > 0;
   const seeded = keep
     ? seedFromHint(was, wasDepth, layers, {

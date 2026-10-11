@@ -1,7 +1,7 @@
 // Edge geometry: the polyline an edge follows, from its source node's centre to its target's, for a routing and a
 // shape. Pure functions, no drawing.
 
-import { LINE, reach, startTrim } from "./boxes.js";
+import { LINE, isWhole, reach, startTrim } from "./boxes.js";
 import { labelPlace } from "./style.js";
 
 /** Radians per point along a ring arc (the CPU's radial steps; the GPU's pieces size their corners by it too). */
@@ -112,15 +112,9 @@ export function fanJunctions(graph, routing) {
 function curve(routing, s, t, trimA = 0, trimB = 0) {
   let c1, c2;
   if (routing.kind === "tree") {
-    if (routing.direction === "LR" || routing.direction === "RL") {
-      const mid = turnAt(s.x, t.x, trimA, trimB);
-      c1 = [mid, s.y];
-      c2 = [mid, t.y];
-    } else {
-      const mid = turnAt(s.y, t.y, trimA, trimB);
-      c1 = [s.x, mid];
-      c2 = [t.x, mid];
-    }
+    const p = treeStep(routing.direction, s, t, trimA, trimB);
+    c1 = [p[2], p[3]];
+    c2 = [p[4], p[5]];
   } else [c1, c2] = radialControls(routing, s, t);
   return cubic([s.x, s.y], c1, c2, [t.x, t.y]);
 }
@@ -586,8 +580,7 @@ export function endTrims(scene) {
 
 /** How far an edge stays off node `i` when nothing else is in the way: its radius, or its card's half height. */
 export function clearOf(scene, i) {
-  const real = scene.matrix?.count ?? Infinity;
-  return scene.node?.look === "card" && (i < real || scene.graph.nodes[i]?.copy)
+  return scene.node?.look === "card" && isWhole(scene, i)
     ? scene.node.cardHeight / 2
     : scene.looks.radius[i];
 }

@@ -573,55 +573,16 @@ export declare class GraphController {
     y: Float64Array<ArrayBuffer>;
     start: number;
   };
-  cameraTween:
-    | {
-        from: {
-          x: number;
-          y: number;
-          k: number;
-        };
-        to: cam.Camera;
-        start: number;
-        node?: undefined;
-      }
-    | {
-        from: {
-          x: number;
-          y: number;
-          k: number;
-        };
-        to: {
-          k: number;
-          x: number;
-          y: number;
-        };
-        start: number;
-        node: string;
-      }
-    | {
-        node?: undefined;
-        from: {
-          x: number;
-          y: number;
-          k: number;
-        };
-        to: {
-          x: number;
-          y: number;
-          k: number;
-        };
-        start: number;
-      }
-    | {
-        node?: undefined;
-        from: {
-          x: number;
-          y: number;
-          k: number;
-        };
-        to: cam.Camera;
-        start: number;
-      };
+  cameraTween: {
+    from: {
+      x: number;
+      y: number;
+      k: number;
+    };
+    to: cam.Camera;
+    start: number;
+    node: string;
+  };
   last: number;
   version: number;
   shadeVersion: number;

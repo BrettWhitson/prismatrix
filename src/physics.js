@@ -745,6 +745,7 @@ export class Simulation {
   #separateBoxes(a, b, half) {
     const m = this.matrix;
     const { x, y, boxX0, boxY0, boxX1, boxY1 } = m;
+    const { offX, offY } = this;
     const ox =
       Math.min(x[a] + boxX1[a], x[b] + boxX1[b]) -
       Math.max(x[a] + boxX0[a], x[b] + boxX0[b]) +
@@ -761,18 +762,13 @@ export class Simulation {
     this.shoved[a] = this.shoved[b] = 1;
     this.away[a] = this.away[b] = 1;
     if (ox < oy) {
-      const dir =
-        x[a] + (boxX0[a] + boxX1[a]) / 2 <= x[b] + (boxX0[b] + boxX1[b]) / 2
-          ? -1
-          : 1;
+      // Footprint centres (#collide set offX/offY this step).
+      const dir = x[a] + offX[a] <= x[b] + offX[b] ? -1 : 1;
       x[a] += dir * ox * shares[0];
       x[b] -= dir * ox * shares[1];
       settle(m, a, b, 1, 0, shares);
     } else {
-      const dir =
-        y[a] + (boxY0[a] + boxY1[a]) / 2 <= y[b] + (boxY0[b] + boxY1[b]) / 2
-          ? -1
-          : 1;
+      const dir = y[a] + offY[a] <= y[b] + offY[b] ? -1 : 1;
       y[a] += dir * oy * shares[0];
       y[b] -= dir * oy * shares[1];
       settle(m, a, b, 0, 1, shares);
@@ -990,16 +986,11 @@ export class NearGrid {
       gx1 = Math.floor(x1 / cell),
       gy0 = Math.floor(y0 / cell),
       gy1 = Math.floor(y1 / cell);
+    const hit = (p) =>
+      placeX[p] >= x0 && placeX[p] <= x1 && placeY[p] >= y0 && placeY[p] <= y1;
     // More cells than points: quicker to look at every point.
     if ((gx1 - gx0 + 1) * (gy1 - gy0 + 1) > placed) {
-      for (let p = 0; p < placed; p++)
-        if (
-          placeX[p] >= x0 &&
-          placeX[p] <= x1 &&
-          placeY[p] >= y0 &&
-          placeY[p] <= y1
-        )
-          visit(items[p]);
+      for (let p = 0; p < placed; p++) if (hit(p)) visit(items[p]);
       return;
     }
     if (++this.search > 0x7fffffff - 1) {
@@ -1013,14 +1004,7 @@ export class NearGrid {
         if (seen[s] === search) continue;
         seen[s] = search;
         const end = start[s + 1];
-        for (let p = start[s]; p < end; p++)
-          if (
-            placeX[p] >= x0 &&
-            placeX[p] <= x1 &&
-            placeY[p] >= y0 &&
-            placeY[p] <= y1
-          )
-            visit(items[p]);
+        for (let p = start[s]; p < end; p++) if (hit(p)) visit(items[p]);
       }
   }
 }

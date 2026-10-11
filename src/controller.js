@@ -59,6 +59,9 @@ const RESTYLE_LOG = 16;
 const sameInts = (a, b) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
+/** Whether two sets hold the same values. */
+const sameSet = (a, b) => a.size === b.size && [...a].every((v) => b.has(v));
+
 /**
  * @typedef {object} TickResult
  * @property {boolean} busy   something is still moving or fading: keep ticking
@@ -501,8 +504,7 @@ export class GraphController {
    */
   #patchRecords({ nodesChanged, edgesChanged }) {
     const { graph, model } = this;
-    if (graph.model !== model || graph.structure !== this.#disclosure().key)
-      return;
+    if (!this.#isCurrent()) return;
     for (const id of nodesChanged) {
       const i = graph.indexOf(model.index.get(id));
       if (i >= 0) graph.nodes[i].record = model.node(id);
@@ -545,11 +547,7 @@ export class GraphController {
     this.styleVersion++;
     let nodes = null,
       edges = null;
-    if (
-      change &&
-      graph.model === model &&
-      graph.structure === this.#disclosure().key
-    ) {
+    if (change && this.#isCurrent()) {
       // By their index in the graph on screen; nodes and edges folded away aren't there.
       const shown = (ids, index, local) =>
         ids.map((id) => local(index.get(id))).filter((i) => i >= 0);
@@ -934,16 +932,7 @@ export class GraphController {
     if (this.layoutPending) this.pendingFit = animate ? "animate" : "instant";
     if (!this.graph.nodes.length) return this.#changed();
     const target = this.#framing(!!this.tween);
-    if (animate)
-      this.cameraTween = {
-        from: { ...this.camera },
-        to: target,
-        start: this.clock(),
-      };
-    else {
-      this.camera = target;
-      this.cameraTween = null;
-    }
+    this.#aim(target, animate);
     this.#changed();
     // While a layout is on its way this frames the graph on screen, and another "fit" follows when it lands.
     this.#emit("fit", {
@@ -976,17 +965,7 @@ export class GraphController {
     this.glide = null;
     this.shift = null;
     const to = { ...this.#whereTo(n.index), k };
-    if (animate)
-      this.cameraTween = {
-        from: { ...this.camera },
-        to,
-        start: this.clock(),
-        node: id,
-      };
-    else {
-      this.camera = to;
-      this.cameraTween = null;
-    }
+    this.#aim(to, animate, id);
     this.#changed();
     this.#emit("focus", { node: id, k });
     return true;
@@ -1009,13 +988,7 @@ export class GraphController {
     if (![to.x, to.y, to.k].every(Number.isFinite)) return;
     this.#userCamera();
     this.shift = null;
-    if (animate && this.anim.camera > 0)
-      this.cameraTween = {
-        from: { ...this.camera },
-        to,
-        start: this.clock(),
-      };
-    else this.camera = to;
+    this.#aim(to, animate && this.anim.camera > 0);
     this.#changed();
   }
 
@@ -1147,6 +1120,26 @@ export class GraphController {
     this.focused = null;
   }
 
+  /**
+   * Glide the camera to `to` (following node `node` on the way, if given), or jump there.
+   * @param {import("./camera.js").Camera} to
+   * @param {boolean} animate
+   * @param {string} [node]
+   */
+  #aim(to, animate, node) {
+    if (animate)
+      this.cameraTween = {
+        from: { ...this.camera },
+        to,
+        start: this.clock(),
+        node,
+      };
+    else {
+      this.camera = to;
+      this.cameraTween = null;
+    }
+  }
+
   /** A camera framing the graph, at its positions or its homes. */
   #framing(homes) {
     return cam.framing(
@@ -1261,9 +1254,7 @@ export class GraphController {
    *   on the spot whatever the graph's size
    */
   #relayout({ fit = null, sync = false } = {}) {
-    const rebuilding =
-      this.graph.model !== this.model ||
-      this.graph.structure !== this.#disclosure().key;
+    const rebuilding = !this.#isCurrent();
     const target = rebuilding
       ? new Graph(this.model, this.#disclosure().part)
       : this.graph;
@@ -1386,11 +1377,7 @@ export class GraphController {
     this.#startTween();
     if (fit === "animate") {
       this.framed = true;
-      this.cameraTween = {
-        from: { ...this.camera },
-        to: this.#framing(true),
-        start: this.clock(),
-      };
+      this.#aim(this.#framing(true), true);
     } else if (!fit && !this.cameraTween) this.#holdPlace(anchor);
     if (asked && fit)
       this.#emit("fit", {
@@ -1848,8 +1835,7 @@ export class GraphController {
       if (this.model.node(id)) next.add(id);
     }
     const before = this.highlightIds;
-    if (next.size === before.size && [...next].every((id) => before.has(id)))
-      return false;
+    if (sameSet(next, before)) return false;
     this.highlightIds = next;
     this.highlightVersion++;
     this.selectionVersion++;
@@ -2017,22 +2003,13 @@ export class GraphController {
 
   /** Make `next` the collapsed set: lay out what it shows (if that changed) and tell listeners. */
   #setFolds(next, type, detail) {
-    if (
-      next.size === this.folds.size &&
-      [...next].every((id) => this.folds.has(id))
-    )
-      return false;
+    if (sameSet(next, this.folds)) return false;
     this.folds = next;
     this.foldVersion++;
     this.version++; // the collapsed marks are drawn
     const d = this.#disclosure();
     this.pivot = detail.node;
-    if (
-      this.layoutPending ||
-      this.graph.model !== this.model ||
-      this.graph.structure !== d.key
-    )
-      this.#relayout();
+    if (this.layoutPending || !this.#isCurrent()) this.#relayout();
     else {
       this.pivot = null; // the same nodes are shown: only the marks change
       this.#changed();
@@ -2044,6 +2021,14 @@ export class GraphController {
       hidden: this.model.size - visible,
     });
     return true;
+  }
+
+  /** Whether the graph on screen is the one made for the model and folds as they are now. */
+  #isCurrent() {
+    const { graph } = this;
+    return (
+      graph.model === this.model && graph.structure === this.#disclosure().key
+    );
   }
 
   /**
@@ -2132,7 +2117,7 @@ export class GraphController {
       const counts = (d.counts ??= hiddenBelow(model, d));
       // The graph on screen is usually the one made for this disclosure (its rows are the part's nodes); while a
       // newer layout is on its way it may be an older one, matched by id.
-      const current = graph.model === model && graph.structure === d.key;
+      const current = this.#isCurrent();
       const count = graph.nodes.length;
       const collapsed = new Uint8Array(count),
         hidden = new Int32Array(count);

@@ -346,6 +346,13 @@ function idOf(value) {
 const labelOf = (id, raw) =>
   raw?.label === undefined ? id : String(raw.label);
 
+/** A change's label, style and data, with the record's for those it leaves out. */
+const merged = (c, old) => ({
+  label: "label" in c ? c.label : old.label,
+  style: "style" in c ? c.style : old.style,
+  data: "data" in c ? c.data : old.data,
+});
+
 /** A node as the caller gave it is the same as a model node: nothing to copy or check again. */
 const sameNode = (raw, node) =>
   labelOf(node.id, raw) === node.label &&
@@ -690,21 +697,7 @@ export class GraphModel {
   #arrays() {
     if (this.#views) return this.#views;
     const { source, target } = this.adjacency();
-    const n = this.#nodeList.length,
-      m = this.#edgeList.length;
-    const ends = new Array(m),
-      outgoing = new Array(n),
-      incoming = new Array(n);
-    for (let v = 0; v < n; v++) {
-      outgoing[v] = [];
-      incoming[v] = [];
-    }
-    for (let i = 0; i < m; i++) {
-      ends[i] = [source[i], target[i]];
-      outgoing[source[i]].push(i);
-      incoming[target[i]].push(i);
-    }
-    this.#views = { ends, outgoing, incoming };
+    this.#views = edgeLists(this.#nodeList.length, source, target);
     return this.#views;
   }
 
@@ -1159,11 +1152,7 @@ export class GraphModel {
         continue;
       }
       const old = changedNodes.get(id) ?? oldNodes[this.index.get(id)];
-      const raw = {
-        label: "label" in c ? c.label : old.label,
-        style: "style" in c ? c.style : old.style,
-        data: "data" in c ? c.data : old.data,
-      };
+      const raw = merged(c, old);
       if (sameNode(raw, old)) continue;
       const original = oldNodes[this.index.get(id)];
       const made = makeNode(id, raw, problem);
@@ -1192,11 +1181,7 @@ export class GraphModel {
         continue;
       }
       const old = changedEdges.get(i) ?? oldEdges[i];
-      const raw = {
-        label: "label" in c ? c.label : old.label,
-        style: "style" in c ? c.style : old.style,
-        data: "data" in c ? c.data : old.data,
-      };
+      const raw = merged(c, old);
       if (sameEdge(raw, old)) continue;
       const made = makeEdge(id, old.source, old.target, raw, problem);
       if (sameEdge(made, oldEdges[i])) changedEdges.delete(i);
@@ -1464,6 +1449,25 @@ export class GraphModel {
  */
 export function cardTextWidth(node) {
   return Math.max(0, node.cardWidth - node.cardHeight - LABEL_GAP);
+}
+
+/**
+ * `n` nodes' edges (`source` and `target` per edge) as arrays of arrays: per edge `[source, target]`, per node the
+ * edges out of it and into it, in edge order. For a model's structure and a working graph's part (graph.js).
+ * @param {number} n
+ * @param {ArrayLike<number>} source
+ * @param {ArrayLike<number>} target
+ * @returns {{ ends: number[][], outgoing: number[][], incoming: number[][] }}
+ */
+export function edgeLists(n, source, target) {
+  const ends = Array.from(source, (s, i) => [s, target[i]]);
+  const outgoing = Array.from({ length: n }, () => []),
+    incoming = Array.from({ length: n }, () => []);
+  for (let i = 0; i < source.length; i++) {
+    outgoing[source[i]].push(i);
+    incoming[target[i]].push(i);
+  }
+  return { ends, outgoing, incoming };
 }
 
 /**

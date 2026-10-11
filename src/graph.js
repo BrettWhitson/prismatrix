@@ -12,7 +12,7 @@
 // their descendants away). Its nodes and edges are then the part's, renumbered from 0 with their ids kept, and its
 // forest is the part's own; `indexOf` and `edgeIndexOf` turn model indices into its own.
 
-import { GraphModel, compressedRows, forestOf } from "./model.js";
+import { GraphModel, compressedRows, edgeLists, forestOf } from "./model.js";
 import { Matrix } from "./matrix.js";
 
 /** A node of the working graph: its model record, its place in the forest, and its row of the matrix. */
@@ -149,13 +149,11 @@ export class Graph {
         part.nodes.length,
         compressedRows(part.nodes.length, source, target),
       );
-      ends = Array.from(source, (s, i) => [s, target[i]]);
-      outgoing = Array.from(part.nodes, () => []);
-      incoming = Array.from(part.nodes, () => []);
-      for (let i = 0; i < source.length; i++) {
-        outgoing[source[i]].push(i);
-        incoming[target[i]].push(i);
-      }
+      ({ ends, outgoing, incoming } = edgeLists(
+        part.nodes.length,
+        source,
+        target,
+      ));
       this.local = local;
       this.localEdges = localEdges;
     }

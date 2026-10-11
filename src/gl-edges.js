@@ -188,9 +188,7 @@ export function packPieces(scene, origin) {
         spans[o + 10] = clearOf(scene, e.source) + rooms.source;
         spans[o + 11] = trimB;
         spans[o + 12] = half;
-        spans[o + 13] = rgb[0];
-        spans[o + 14] = rgb[1];
-        spans[o + 15] = rgb[2];
+        spans.set(rgb, o + 13);
         spans[o + 16] = dash;
         spans[o + 17] = glow;
         spanEdge[s] = ei;
@@ -210,9 +208,7 @@ export function packPieces(scene, origin) {
         bundleTips[o + 10] = clearOf(scene, backwards ? e.source : e.target);
         bundleTips[o + 11] = edge.arrowSize;
         bundleTips[o + 12] = kind;
-        bundleTips[o + 13] = rgb[0];
-        bundleTips[o + 14] = rgb[1];
-        bundleTips[o + 15] = rgb[2];
+        bundleTips.set(rgb, o + 13);
         bundleTipEdge[b++] = ei;
       }
       continue;
@@ -234,9 +230,7 @@ export function packPieces(scene, origin) {
       pieces[o + 10] = i === 0 ? trimA : 0;
       pieces[o + 11] = i + 2 === stops.length ? trimB : 0;
       pieces[o + 12] = half;
-      pieces[o + 13] = rgb[0];
-      pieces[o + 14] = rgb[1];
-      pieces[o + 15] = rgb[2];
+      pieces.set(rgb, o + 13);
       pieces[o + 16] = dash;
       pieces[o + 17] = glow;
       pieceEdge[at] = ei;
@@ -253,9 +247,7 @@ export function packPieces(scene, origin) {
       tips[o + 6] = backwards ? starts[ei] : targetTrims[ei];
       tips[o + 7] = edge.arrowSize;
       tips[o + 8] = kind;
-      tips[o + 9] = rgb[0];
-      tips[o + 10] = rgb[1];
-      tips[o + 11] = rgb[2];
+      tips.set(rgb, o + 9);
       tips[o + 12] = backwards ? trimB : trimA;
       tipEdge[at] = ei;
     }
@@ -375,9 +367,7 @@ export function restylePieces(scene, data, dirty) {
       const o = i * stride;
       if (half >= 0) values[o + half] = looks.edgeWidth[e] / 2;
       const rgb = colour(looks.edgeColour[e]);
-      values[o + at] = rgb[0];
-      values[o + at + 1] = rgb[1];
-      values[o + at + 2] = rgb[2];
+      values.set(rgb, o + at);
       if (style >= 0) {
         values[o + style] = looks.edgeDash?.[e] ?? 0;
         values[o + style + 1] = looks.edgeGlow?.[e] ?? 0;

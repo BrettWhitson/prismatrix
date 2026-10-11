@@ -6,6 +6,8 @@
 //
 // Pure: no DOM, no GL.
 
+import { extendNodes } from "./references.js";
+
 /**
  * A ghost's ancestors, as a chain shared between ghosts: `id` is one ancestor's, `up` the chain above it (null at
  * the root). A removed subtree's ghosts all share their parents' chains, so making them costs one link each.
@@ -78,17 +80,12 @@ export function departures(previous, next, looks, now) {
  * @returns {{ node: import("./render.js").DisplayNode, ghost?: undefined } | { ghost: string, node?: undefined } | null}
  */
 export function foldTarget(ghost, graph, ghostIds) {
-  for (const id of chainIds(ghost.up)) {
-    const node = graph.byId.get(id);
+  for (let a = ghost.up; a; a = a.up) {
+    const node = graph.byId.get(a.id);
     if (node) return { node };
-    if (ghostIds.has(id)) return { ghost: id };
+    if (ghostIds.has(a.id)) return { ghost: a.id };
   }
   return null;
-}
-
-/** The ids along an ancestry chain, one at a time (the walk usually stops at the first). */
-function* chainIds(up) {
-  for (let a = up; a; a = a.up) yield a.id;
 }
 
 /**
@@ -106,31 +103,17 @@ function* chainIds(up) {
 export function withGhosts(graph, ghosts, base, now, ms, ease) {
   const live = ghosts.filter((g) => ms > 0 && now - g.start < ms);
   const count = graph.nodes.length;
-  if (!live.length)
-    return {
-      graph,
-      looks: base.looks,
-      shade: base.shade,
-      appear: base.appear,
-      live,
-    };
+  if (!live.length) return { ...base, graph, live };
 
   const ids = new Set(live.map((g) => g.id));
   const index = new Map(live.map((g, k) => [g.id, count + k]));
   const nodes = graph.nodes.slice();
   const edges = graph.edges.slice();
-  const radius = new Float64Array(count + live.length);
-  const fill = new Array(count + live.length);
-  const shape = new Array(count + live.length);
-  const shade = new Float32Array(count + live.length).fill(1);
-  const appear = new Float32Array(count + live.length).fill(1);
-  radius.set(base.looks.radius);
-  for (let i = 0; i < count; i++) {
-    fill[i] = base.looks.fill[i];
-    shape[i] = base.looks.shape[i];
-  }
-  shade.set(base.shade.subarray(0, count));
-  appear.set(base.appear.subarray(0, count));
+  const { radius, fill, shape, shade, appear } = extendNodes(
+    base,
+    count,
+    live.length,
+  );
 
   // Positions. A ghost parent always comes before its ghost children (departures sorts them so), so a ghost
   // following a ghost finds where it is this frame.

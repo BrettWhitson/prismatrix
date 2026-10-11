@@ -587,6 +587,23 @@ export declare function cardTextWidth(node: {
   cardHeight: number;
 }): number;
 /**
+ * `n` nodes' edges (`source` and `target` per edge) as arrays of arrays: per edge `[source, target]`, per node the
+ * edges out of it and into it, in edge order. For a model's structure and a working graph's part (graph.js).
+ * @param {number} n
+ * @param {ArrayLike<number>} source
+ * @param {ArrayLike<number>} target
+ * @returns {{ ends: number[][], outgoing: number[][], incoming: number[][] }}
+ */
+export declare function edgeLists(
+  n: number,
+  source: ArrayLike<number>,
+  target: ArrayLike<number>,
+): {
+  ends: number[][];
+  outgoing: number[][];
+  incoming: number[][];
+};
+/**
  * A structure as compressed sparse rows, from each edge's ends: each node's outgoing and incoming edges, in edge
  * order (a counting sort by source and by target). For a model's adjacency, and for a working graph that shows only
  * part of its model (graph.js).

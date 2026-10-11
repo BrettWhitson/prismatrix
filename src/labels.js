@@ -20,7 +20,7 @@
 //
 // Pure: no DOM, no GL. Text is measured by the painter, the way it draws it (`fit`).
 
-import { fitLabel, labelAnchor, reach } from "./boxes.js";
+import { fitLabel, isWhole, labelAnchor, reach } from "./boxes.js";
 import {
   fanJunctions,
   pathLength,
@@ -28,7 +28,13 @@ import {
   trimmedRoute,
 } from "./geometry.js";
 import { ringStroke } from "./references.js";
-import { edgeAlpha, labelAlpha, nodeAlpha } from "./render.js";
+import {
+  edgeAlpha,
+  labelAlpha,
+  mixHex,
+  nodeAlpha,
+  realCount,
+} from "./render.js";
 import { DEFAULT_THEME } from "./theme.js";
 import { labelPlace } from "./style.js";
 import { CARD_TEXT, cardBox, cardRuns, cardTextArea } from "./cards.js";
@@ -60,19 +66,6 @@ export const PILL = { pad: 0.45, height: 1.35 };
 /** How far quieter text (edge labels, counts) is taken from the text colour towards the background. */
 const QUIET = 0.28;
 
-/** `a` taken `f` of the way to `b` ("#rrggbb" both). */
-function mix(a, b, f) {
-  const x = parseInt(a.slice(1), 16),
-    y = parseInt(b.slice(1), 16);
-  let out = 0;
-  for (const shift of [16, 8, 0]) {
-    const p = (x >> shift) & 255,
-      q = (y >> shift) & 255;
-    out |= Math.round(p + (q - p) * f) << shift;
-  }
-  return `#${out.toString(16).padStart(6, "0")}`;
-}
-
 /**
  * The colours text is drawn in, from the scene's theme (theme.js): `label` (the theme's text; an app badge's pill
  * too), `quiet` (edge labels and counts: the text a little towards the background), `halo` (the theme's textHalo),
@@ -82,7 +75,7 @@ function mix(a, b, f) {
 export function textColours(theme = DEFAULT_THEME) {
   return {
     label: theme.text,
-    quiet: mix(theme.text, theme.background, QUIET),
+    quiet: mixHex(theme.text, theme.background, QUIET),
     halo: theme.textHalo ?? theme.background,
     pillText: theme.background,
   };
@@ -219,7 +212,7 @@ export function textVisibility(scene) {
  */
 export function pinnedNodes(scene) {
   const { graph } = scene;
-  const real = Math.min(scene.matrix?.count ?? Infinity, graph.nodes.length);
+  const real = realCount(scene);
   const out = new Map();
   const roots = graph.roots ?? [];
   if (roots.length <= PINNED_ROOTS)
@@ -245,15 +238,25 @@ export function pinnedNodes(scene) {
  * @returns {(text: string, size: number, max: number) => string}
  */
 export function textFitter(measure) {
-  const fits = new Map();
-  return (text, size, max) => {
-    if (!(max > 0)) return text;
-    const key = `${size}|${max}|${text}`;
-    let out = fits.get(key);
+  const fits = kept();
+  return (text, size, max) =>
+    max > 0
+      ? fits(
+          `${size}|${max}|${text}`,
+          () => fitLabel(text, max, (t) => measure(t, size)).text,
+        )
+      : text;
+}
+
+/** A memo: `(key, compute)` is the answer kept for `key`, computed once (forgotten all at once past 50000). */
+function kept() {
+  const answers = new Map();
+  return (key, compute) => {
+    let out = answers.get(key);
     if (out === undefined) {
-      if (fits.size > 50000) fits.clear();
-      out = fitLabel(text, max, (t) => measure(t, size)).text;
-      fits.set(key, out);
+      if (answers.size > 50000) answers.clear();
+      out = compute();
+      answers.set(key, out);
     }
     return out;
   };
@@ -264,18 +267,12 @@ export function textFitter(measure) {
  * (textFitter).
  */
 export function textMeasurer(ctx) {
-  const widths = new Map();
-  const measure = (text, size) => {
-    const key = `${size}|${text}`;
-    let w = widths.get(key);
-    if (w === undefined) {
-      if (widths.size > 50000) widths.clear();
+  const widths = kept();
+  const measure = (text, size) =>
+    widths(`${size}|${text}`, () => {
       ctx.font = font(size);
-      w = ctx.measureText(text).width;
-      widths.set(key, w);
-    }
-    return w;
-  };
+      return ctx.measureText(text).width;
+    });
   return { measure, fit: textFitter(measure) };
 }
 
@@ -337,7 +334,7 @@ export function planText(scene, { fit, measure = null, near = null }) {
         n.x >= near.x0 && n.x <= near.x1 && n.y >= near.y0 && n.y <= near.y1
     : () => true;
   const reachOf = (i) => looks.radius[i] * reach(looks.shape[i]);
-  const real = Math.min(scene.matrix?.count ?? Infinity, graph.nodes.length);
+  const real = realCount(scene);
   const labelled = labelPlace(node) !== "off";
   const max = node.labelMaxWidth ?? 0;
   const pinned = labelled ? pinnedNodes(scene) : new Map();
@@ -370,7 +367,7 @@ export function planText(scene, { fit, measure = null, near = null }) {
     // Real nodes, and copies of them (references "crossing"): their badges too.
     for (let i = 0; i < graph.nodes.length; i++) {
       const n = graph.nodes[i];
-      if (i >= real && !n.copy) continue;
+      if (!isWhole(scene, i)) continue;
       if (!scene.collapsed?.[i] && !n.style?.badge) continue;
       if (!inside(n)) continue;
       const alpha = nodeAlpha(scene, i);
@@ -469,7 +466,7 @@ export function planText(scene, { fit, measure = null, near = null }) {
   if (cards && show.labels)
     for (let i = 0; i < graph.nodes.length; i++) {
       const n = graph.nodes[i];
-      if ((i < real || n.copy) && inside(n))
+      if (isWhole(scene, i) && inside(n))
         cardText(scene, n, show.small, colours, fit, measure, items);
     }
   else if (labelled && show.labels) {

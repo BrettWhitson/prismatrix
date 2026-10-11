@@ -78,6 +78,30 @@ export function linkGlyphs(scene, minimum = GLYPH_MIN_PX) {
 }
 
 /**
+ * The real graph's per-node radius, fill, shape, shade and appear (`base`, for its `count` nodes), with room for
+ * `more` display-only nodes after them (lit and shown until set).
+ * @param {Omit<import("./render.js").Shown, "graph">} base
+ * @param {number} count
+ * @param {number} more
+ */
+export function extendNodes(base, count, more) {
+  const total = count + more;
+  const radius = new Float64Array(total);
+  const fill = new Array(total);
+  const shape = new Array(total);
+  const shade = new Float32Array(total).fill(1);
+  const appear = new Float32Array(total).fill(1);
+  radius.set(base.looks.radius);
+  for (let i = 0; i < count; i++) {
+    fill[i] = base.looks.fill[i];
+    shape[i] = base.looks.shape[i];
+  }
+  shade.set(base.shade.subarray(0, count));
+  appear.set(base.appear.subarray(0, count));
+  return { radius, fill, shape, shade, appear };
+}
+
+/**
  * The display graph with references: `graph`'s nodes plus one per reference, and its edges with each referenced
  * one ending at its reference (same index, so per-edge looks still line up). Per-node arrays are extended to match.
  * The display graph's `uses` maps each referenced ingredient's index to its in-degree.
@@ -93,18 +117,11 @@ export function withReferences(graph, references, base) {
   const nodes = graph.nodes.slice();
   const edges = graph.edges.slice();
   const index = new Map(graph.edges.map((e, i) => [e, i]));
-  const radius = new Float64Array(total);
-  const fill = new Array(total);
-  const shape = new Array(total);
-  const shade = new Float32Array(total);
-  const appear = new Float32Array(total);
-  radius.set(base.looks.radius);
-  for (let i = 0; i < count; i++) {
-    fill[i] = base.looks.fill[i];
-    shape[i] = base.looks.shape[i];
-  }
-  shade.set(base.shade.subarray(0, count));
-  appear.set(base.appear.subarray(0, count));
+  const { radius, fill, shape, shade, appear } = extendNodes(
+    base,
+    count,
+    references.length,
+  );
   // The looks only copies use, extended (a chip's: none, and a whole fill).
   const extra = {};
   for (const key of COPIED) {

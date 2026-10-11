@@ -136,17 +136,13 @@ function packNode(scene, n, out, origin, colour, iconAt) {
   out[o] = n.x - origin.x;
   out[o + 1] = n.y - origin.y;
   out[o + 2] = radius;
-  out[o + 3] = rgb[0];
-  out[o + 4] = rgb[1];
-  out[o + 5] = rgb[2];
+  out.set(rgb, o + 3);
   out[o + 6] = nodeAlpha(scene, i);
   out[o + 7] = SHAPE_IDS[shape] ?? 0;
   const stroke = looks.stroke?.[i];
   const strokeWidth = stroke ? looks.strokeWidth[i] : 0;
   const s = strokeWidth > 0 ? colour(stroke) : NONE;
-  out[o + 8] = s[0];
-  out[o + 9] = s[1];
-  out[o + 10] = s[2];
+  out.set(s, o + 8);
   out[o + 11] = strokeWidth;
   const source = shape === "ring" ? null : looks.icon?.[i];
   const at = source && iconAt ? iconAt(source) : null;
@@ -171,15 +167,11 @@ function packNode(scene, n, out, origin, colour, iconAt) {
   }
   const ring = looks.ring?.[i];
   const rr = ring ? colour(ring) : NONE;
-  out[o + 19] = rr[0];
-  out[o + 20] = rr[1];
-  out[o + 21] = rr[2];
+  out.set(rr, o + 19);
   out[o + 22] = ring ? 1 : 0;
   const aura = looks.aura?.[i];
   const ar = aura ? colour(aura) : NONE;
-  out[o + 23] = ar[0];
-  out[o + 24] = ar[1];
-  out[o + 25] = ar[2];
+  out.set(ar, o + 23);
   out[o + 26] = aura ? 1 : 0;
   out[o + 27] = looks.strokeStyle?.[i] ?? 0;
   out[o + 28] = looks.stack?.[i] ?? 0;
@@ -219,9 +211,7 @@ export function packHalos(scene, nodeData, out = null) {
     // Centre, radius, colour, visibility and shape: what the halo shader reads; then the gap.
     out.set(nodeData.subarray(i * NODE_STRIDE, i * NODE_STRIDE + 8), o);
     const rgb = colour(h.colour);
-    out[o + 3] = rgb[0];
-    out[o + 4] = rgb[1];
-    out[o + 5] = rgb[2];
+    out.set(rgb, o + 3);
     out[o + 6] *= h.alpha;
     out[o + 8] = h.gap;
     out[o + 9] = nodeData[i * NODE_STRIDE + 35];
@@ -294,9 +284,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
       segments[o + 9] = walked;
       walked += length;
       segments[o + 5] = half(walked);
-      segments[o + 6] = rgb[0];
-      segments[o + 7] = rgb[1];
-      segments[o + 8] = rgb[2];
+      segments.set(rgb, o + 6);
       segments[o + 10] = dash;
       segments[o + 11] = glow;
     }
@@ -323,9 +311,7 @@ export function packEdges(scene, reuse = {}, only = null, origin = ORIGIN) {
       ends[o + 3] = dy;
       ends[o + 4] = edge.arrowSize;
       ends[o + 5] = kind;
-      ends[o + 6] = rgb[0];
-      ends[o + 7] = rgb[1];
-      ends[o + 8] = rgb[2];
+      ends.set(rgb, o + 6);
     }
   }
   return {
@@ -398,9 +384,7 @@ export function packGlyphs(scene, out, origin = ORIGIN) {
     out[o] = g.x - origin.x;
     out[o + 1] = g.y - origin.y;
     out[o + 2] = g.radius;
-    out[o + 3] = rgb[0];
-    out[o + 4] = rgb[1];
-    out[o + 5] = rgb[2];
+    out.set(rgb, o + 3);
     out[o + 6] = nodeAlpha(scene, g.index);
   });
   return { data: out, count: glyphs.length };

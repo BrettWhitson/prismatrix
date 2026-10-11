@@ -5,6 +5,10 @@
 
 import { TREE_LABEL_ANGLE } from "./layouts.js";
 
+/** Whether display node `i` is whole: a real node, or a copy of one (references "crossing"), not a chip or ghost. */
+export const isWhole = (scene, i) =>
+  i < (scene.matrix?.count ?? Infinity) || !!scene.graph.nodes[i]?.copy;
+
 export const LABEL_GAP = 4;
 /** Line height of a label, as a multiple of its font size. */
 export const LINE = 1.25;

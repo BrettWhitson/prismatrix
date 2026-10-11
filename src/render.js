@@ -10,7 +10,7 @@ import {
   trimmedRoute,
 } from "./geometry.js";
 import { TEXT_HALO, font, planText, textBox, textMeasurer } from "./labels.js";
-import { LINK, linkGlyphs } from "./references.js";
+import { LINK, linkGlyphs, ringStroke } from "./references.js";
 import {
   ROUNDED_CORNER,
   TILE_CORNER,
@@ -19,6 +19,7 @@ import {
   iconStore,
 } from "./icons.js";
 import { CARD, cardBox } from "./cards.js";
+import { isWhole, reach as shapeReach } from "./boxes.js";
 import {
   DEFAULT_THEME,
   EDGE_COLOUR_DEFAULT,
@@ -528,7 +529,7 @@ function haloPath(ctx, shape, x, y, r, o, card = null) {
         }),
       );
     case "ring":
-      return ctx.arc(x, y, r + Math.max(1.5, r * 0.35) / 2 + o, 0, Math.PI * 2);
+      return ctx.arc(x, y, r + ringStroke(r) / 2 + o, 0, Math.PI * 2);
     default:
       ctx.arc(x, y, r + o, 0, Math.PI * 2);
   }
@@ -539,8 +540,7 @@ export const realCount = (scene) =>
   Math.min(scene.matrix?.count ?? Infinity, scene.graph.nodes.length);
 
 /** Whether display node `i` is drawn as a card: cards on, and a real node or a copy of one (not a chip or ghost). */
-export const isCard = (scene, i) =>
-  !!scene.looks.card && (i < realCount(scene) || !!scene.graph.nodes[i]?.copy);
+export const isCard = (scene, i) => !!scene.looks.card && isWhole(scene, i);
 
 /** Fill the canvas with `colour`, or clear it to transparent when there's none. */
 export function clearTo(ctx, { width, height, dpr }, colour) {
@@ -888,6 +888,13 @@ function drawEdge(ctx, pts, edge, looks, ei, colour = null, flow = null) {
     ctx.lineDashOffset = -offset;
     ctx.lineCap = dash === 1 ? "butt" : "round";
   };
+  // The whole edge as one path, corners rounded (worked out once, when first needed).
+  let path = null;
+  const trace = () => {
+    path ??= rounded(pts, edge.corner);
+    ctx.beginPath();
+    for (let i = 0; i < path.length; i += 2) ctx.lineTo(path[i], path[i + 1]);
+  };
 
   if (looks.edgeGlow?.[ei]) {
     // A wide, faint stroke under the edge, in its colour.
@@ -897,9 +904,7 @@ function drawEdge(ctx, pts, edge, looks, ei, colour = null, flow = null) {
     ctx.lineWidth = width + reach * 2;
     ctx.lineCap = "round";
     ctx.setLineDash([]);
-    ctx.beginPath();
-    const glow = rounded(pts, edge.corner);
-    for (let i = 0; i < glow.length; i += 2) ctx.lineTo(glow[i], glow[i + 1]);
+    trace();
     ctx.stroke();
     ctx.restore();
   }
@@ -920,9 +925,7 @@ function drawEdge(ctx, pts, edge, looks, ei, colour = null, flow = null) {
     }
   } else {
     line(width);
-    ctx.beginPath();
-    const path = rounded(pts, edge.corner);
-    for (let i = 0; i < path.length; i += 2) ctx.lineTo(path[i], path[i + 1]);
+    trace();
     ctx.stroke();
   }
   ctx.setLineDash([]);
@@ -937,9 +940,7 @@ function drawEdge(ctx, pts, edge, looks, ei, colour = null, flow = null) {
     ctx.lineCap = "butt";
     ctx.setLineDash([FLOW.period * FLOW.on, FLOW.period * (1 - FLOW.on)]);
     ctx.lineDashOffset = -flow.sign * flow.shift;
-    ctx.beginPath();
-    const path = rounded(pts, edge.corner);
-    for (let i = 0; i < path.length; i += 2) ctx.lineTo(path[i], path[i + 1]);
+    trace();
     ctx.stroke();
     ctx.restore();
   }
@@ -992,8 +993,8 @@ function nodeReach(look) {
       Math.max(auraOf(c.half), c.half * MARKS.stackShift * 1.5);
     return far;
   }
-  let reach = r * (shape === "diamond" ? 1.25 : shape === "hexagon" ? 1.1 : 1);
-  if (shape === "ring") reach += Math.max(1.5, r * 0.35) / 2;
+  let reach = r * shapeReach(shape);
+  if (shape === "ring") reach += ringStroke(r) / 2;
   let out = reach;
   if (look.aura) out = Math.max(out, reach + auraOf(r));
   if (look.ring) {
@@ -1055,7 +1056,7 @@ function drawNode(ctx, look) {
   const card = look.card;
   const outer = card ? "card" : shape === "ring" ? "circle" : shape;
   // A ring's stroke reaches past its circle: marks are measured from its outside.
-  const pad = !card && shape === "ring" ? Math.max(1.5, r * 0.35) / 2 : 0;
+  const pad = !card && shape === "ring" ? ringStroke(r) / 2 : 0;
   // A card's marks are sized by the card, not its icon.
   const mr = card ? card.half : r;
   if (look.aura) {
@@ -1093,7 +1094,7 @@ function drawNode(ctx, look) {
     ctx.globalAlpha = alpha;
     ctx.fillStyle = background;
     ctx.fill();
-    ctx.lineWidth = Math.max(1.5, r * 0.35);
+    ctx.lineWidth = ringStroke(r);
     ctx.strokeStyle = fill;
     ctx.setLineDash(dashPattern(look.strokeStyle, "circle", r));
     ctx.stroke();
@@ -1196,7 +1197,7 @@ function drawBadge(ctx, look) {
 }
 
 /** "#rrggbb" `a` mixed toward `b` by `t` (0: a, 1: b). */
-function mixHex(a, b, t) {
+export function mixHex(a, b, t) {
   const pa = parseInt(a.slice(1), 16),
     pb = parseInt(b.slice(1), 16);
   let out = 0;

@@ -10,6 +10,7 @@
 //
 // Pure apart from the default loader (an Image element).
 
+import { reach } from "./boxes.js";
 import { warnOnce } from "./schema.js";
 
 /** Nodes smaller than this across on screen (CSS px) show no icon... */
@@ -32,8 +33,7 @@ export function iconShown(radius, zoom) {
 export function iconBox(shape, fit, aspect, radius, strokeWidth = 0) {
   const a = aspect > 0 && Number.isFinite(aspect) ? aspect : 1;
   if (fit !== "contain") {
-    const reach = shape === "diamond" ? 1.25 : shape === "hexagon" ? 1.1 : 1;
-    const r = radius * reach;
+    const r = radius * reach(shape);
     return a >= 1 ? [r * a, r] : [r, r / a];
   }
   const r = Math.max(0, radius - strokeWidth);

@@ -37,6 +37,24 @@ export declare function linkGlyphs(
   colour: string;
 }[];
 /**
+ * The real graph's per-node radius, fill, shape, shade and appear (`base`, for its `count` nodes), with room for
+ * `more` display-only nodes after them (lit and shown until set).
+ * @param {Omit<import("./render.js").Shown, "graph">} base
+ * @param {number} count
+ * @param {number} more
+ */
+export declare function extendNodes(
+  base: Omit<import("./render.js").Shown, "graph">,
+  count: number,
+  more: number,
+): {
+  radius: Float64Array<ArrayBuffer>;
+  fill: any[];
+  shape: any[];
+  shade: Float32Array<ArrayBuffer>;
+  appear: Float32Array<ArrayBuffer>;
+};
+/**
  * The display graph with references: `graph`'s nodes plus one per reference, and its edges with each referenced
  * one ending at its reference (same index, so per-edge looks still line up). Per-node arrays are extended to match.
  * The display graph's `uses` maps each referenced ingredient's index to its in-degree.
